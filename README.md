@@ -36,6 +36,10 @@
 
 > 💡 **No.** Installing the VSIX is enough. The MCP server is bundled inside the extension — no Python, no Node.js, no separate installs required.
 
+<a href="https://glama.ai/mcp/servers/IcyHot09/opengrok-mcp-server">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/IcyHot09/opengrok-mcp-server/badge" alt="OpenGrok Server MCP server" />
+</a>
+
 ---
 
 ## Installation
