@@ -23,6 +23,15 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [3.3.3] - 2026-03-14
+
+### Fixed
+
+- **Security: bump `undici` to 7.24.2** — addressed multiple high/moderate severity CVEs including WebSocket 64-bit length overflow (GHSA-f269-vfmq-vjvj), HTTP request/response smuggling (GHSA-2mjp-6q6p-2qxm), unbounded memory consumption in WebSocket permessage-deflate decompression (GHSA-vrm6-8vpv-qv8q), unhandled exception in WebSocket client (GHSA-v9p9-hfj2-hcw8), and CRLF injection via `upgrade` option (GHSA-4992-7rv2-5pvq).
+- **Fix `testConnection` test**: mock updated to return a JSON array (matching the real `/api/v1/projects` endpoint) instead of HTML, fixing a false-negative assertion..
+
+---
+
 ## [3.3.2] - 2026-03-09
 
 ### Fixed
