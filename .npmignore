@@ -15,4 +15,8 @@ vitest.config.ts
 
 # Build artifacts not needed at runtime
 *.vsix
+*.tar.gz
+*.zip
+*.tgz
+release-body.md
 package-lock.json

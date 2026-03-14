@@ -53,6 +53,8 @@ jobs:
             opengrok-mcp-server-${{ steps.version.outputs.version }}-win.zip
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: |
+          chmod +x out/server/main.js
+          npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
