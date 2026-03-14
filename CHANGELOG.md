@@ -23,6 +23,15 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [3.3.4] - 2026-03-14
+
+### Changed
+
+- **MCP Registry Support**: Added `mcpName` property to `package.json` and created `server.json` to publish the extension to the official Model Context Protocol (MCP) Registry.
+- Updated extension description to meet registry character limits and content guidelines.
+
+---
+
 ## [3.3.3] - 2026-03-14
 
 ### Fixed
