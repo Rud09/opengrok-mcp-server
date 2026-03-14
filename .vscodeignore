@@ -1,0 +1,48 @@
+# Controls what gets included in the VSIX package
+
+# Exclude development files
+.gitignore
+.vscode/
+src/
+*.ts
+tsconfig.json
+esbuild.js
+node_modules/
+.vscode-test/
+package-lock.json
+
+# Exclude extra documentation
+CONTRIBUTING.md
+CHANGELOG.md
+
+# Exclude backups
+*.bak
+
+# Exclude vitest config
+vitest.config.ts
+
+# Exclude coverage reports
+coverage/
+
+# Exclude eslint config
+eslint.config.mjs
+
+# Exclude nvmrc
+.nvmrc
+
+# Exclude platform archives (standalone distribution, not part of VS Code extension)
+*.tar.gz
+*.zip
+
+# Exclude unrelated CI/infra
+.github/
+
+# Exclude standalone scripts
+scripts/
+
+# Include only production files
+# out/
+# images/
+# package.json
+# README.md
+# LICENSE

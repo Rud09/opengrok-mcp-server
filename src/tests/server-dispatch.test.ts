@@ -1,0 +1,574 @@
+/**
+ * Comprehensive tests for server.ts — dispatchTool handlers.
+ * Directly exercises all 14 tool dispatch cases + compound handlers.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  _dispatchTool as dispatchTool,
+  _buildLocalLayer as buildLocalLayer,
+  _tryLocalRead as tryLocalRead,
+  _readFileAtAbsPath as readFileAtAbsPath,
+} from '../server/server.js';
+import type { _LocalLayer as LocalLayer } from '../server/server.js';
+import type { Config } from '../server/config.js';
+import type { CompileInfo } from '../server/local/compile-info.js';
+
+// -----------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------
+
+function makeConfig(overrides: Partial<Config> = {}): Config {
+  return {
+    OPENGROK_BASE_URL: 'https://example.com/source/',
+    OPENGROK_USERNAME: '',
+    OPENGROK_PASSWORD: '',
+    OPENGROK_PASSWORD_FILE: '',
+    OPENGROK_PASSWORD_KEY: '',
+    OPENGROK_VERIFY_SSL: true,
+    OPENGROK_TIMEOUT: 30,
+    OPENGROK_DEFAULT_MAX_RESULTS: 25,
+    OPENGROK_CACHE_ENABLED: false,
+    OPENGROK_CACHE_SEARCH_TTL: 300,
+    OPENGROK_CACHE_FILE_TTL: 600,
+    OPENGROK_CACHE_HISTORY_TTL: 1800,
+    OPENGROK_CACHE_PROJECTS_TTL: 3600,
+    OPENGROK_CACHE_MAX_SIZE: 500,
+    OPENGROK_CACHE_MAX_BYTES: 52428800,
+    OPENGROK_RATELIMIT_ENABLED: false,
+    OPENGROK_RATELIMIT_RPM: 60,
+    HTTP_PROXY: '',
+    HTTPS_PROXY: '',
+    OPENGROK_LOCAL_COMPILE_DB_PATHS: '',
+    OPENGROK_DEFAULT_PROJECT: 'release-2.x',
+    ...overrides,
+  } as Config;
+}
+
+function makeMockClient() {
+  return {
+    search: vi.fn(),
+    suggest: vi.fn(),
+    getFileContent: vi.fn(),
+    getFileHistory: vi.fn(),
+    browseDirectory: vi.fn(),
+    listProjects: vi.fn(),
+    getAnnotate: vi.fn(),
+    getFileSymbols: vi.fn(),
+    testConnection: vi.fn(),
+    close: vi.fn(),
+  };
+}
+
+function emptyLocal(): LocalLayer {
+  return { enabled: false, roots: [], index: new Map(), suffixIndex: new Map() };
+}
+
+const config = makeConfig();
+
+// -----------------------------------------------------------------------
+// search_code
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — search_code', () => {
+  it('dispatches search and returns formatted output', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'test',
+      searchType: 'full',
+      totalCount: 1,
+      results: [{ project: 'proj', path: '/file.cpp', matches: [{ lineNumber: 10, lineContent: 'test' }] }],
+    });
+    const result = await dispatchTool('search_code', { query: 'test', search_type: 'full' }, client as any, config, emptyLocal());
+    expect(result).toContain('test');
+    expect(client.search).toHaveBeenCalledOnce();
+  });
+
+  it('includes file_type param', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({ query: 'x', searchType: 'full', totalCount: 0, results: [] });
+    await dispatchTool('search_code', { query: 'x', search_type: 'full', file_type: 'cxx' }, client as any, config, emptyLocal());
+    expect(client.search).toHaveBeenCalledWith('x', 'full', ['release-2.x'], 10, 0, 'cxx');
+  });
+
+  it('applies default project when projects not specified', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({ query: 'x', searchType: 'full', totalCount: 0, results: [] });
+    await dispatchTool('search_code', { query: 'x', search_type: 'full' }, client as any, config, emptyLocal());
+    expect(client.search.mock.calls[0][2]).toEqual(['release-2.x']);
+  });
+});
+
+// -----------------------------------------------------------------------
+// find_file
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — find_file', () => {
+  it('delegates to search with path type', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({ query: 'main.cpp', searchType: 'path', totalCount: 1, results: [{ project: 'proj', path: '/main.cpp', matches: [] }] });
+    const result = await dispatchTool('find_file', { path_pattern: 'main.cpp' }, client as any, config, emptyLocal());
+    expect(client.search).toHaveBeenCalledWith('main.cpp', 'path', ['release-2.x'], 10, 0);
+    expect(result).toBeDefined();
+  });
+});
+
+// -----------------------------------------------------------------------
+// get_file_content
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — get_file_content', () => {
+  it('fetches from remote API', async () => {
+    const client = makeMockClient();
+    client.getFileContent.mockResolvedValue({
+      project: 'proj',
+      path: 'file.cpp',
+      content: 'int main() {}',
+      lineCount: 1,
+      sizeBytes: 14,
+    });
+    const result = await dispatchTool('get_file_content', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    expect(result).toContain('int main()');
+  });
+
+  it('tries local layer when enabled', async () => {
+    const client = makeMockClient();
+    client.getFileContent.mockResolvedValue({
+      project: 'proj', path: 'file.cpp', content: 'remote content', lineCount: 1, sizeBytes: 14,
+    });
+    const info: CompileInfo = {
+      file: '/build/src/file.cpp', directory: '/build', compiler: 'g++',
+      includes: [], defines: [], standard: 'c++17', extraFlags: [],
+    };
+    const local: LocalLayer = {
+      enabled: true,
+      roots: ['/build/src'],
+      index: new Map([['/build/src/file.cpp', info]]),
+      suffixIndex: new Map([['/src/file.cpp', '/build/src/file.cpp']]),
+    };
+    // readFileAtAbsPath will fail since the file doesn't exist on disk, fall through to API
+    const result = await dispatchTool('get_file_content', { project: 'proj', path: 'src/file.cpp' }, client as any, config, local);
+    expect(result).toContain('remote content');
+  });
+});
+
+// -----------------------------------------------------------------------
+// get_file_history
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — get_file_history', () => {
+  it('fetches file history', async () => {
+    const client = makeMockClient();
+    client.getFileHistory.mockResolvedValue({
+      project: 'proj', path: 'file.cpp',
+      entries: [{ revision: 'abc123', author: 'dev', date: '2024-01-01', message: 'fix' }],
+    });
+    const result = await dispatchTool('get_file_history', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    expect(result).toContain('abc123');
+  });
+});
+
+// -----------------------------------------------------------------------
+// browse_directory
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — browse_directory', () => {
+  it('fetches directory listing', async () => {
+    const client = makeMockClient();
+    client.browseDirectory.mockResolvedValue([
+      { name: 'src', isDirectory: true, size: null },
+      { name: 'file.cpp', isDirectory: false, size: '1234' },
+    ]);
+    const result = await dispatchTool('browse_directory', { project: 'proj', path: 'root' }, client as any, config, emptyLocal());
+    expect(result).toContain('src');
+    expect(result).toContain('file.cpp');
+  });
+});
+
+// -----------------------------------------------------------------------
+// list_projects
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — list_projects', () => {
+  it('lists all projects', async () => {
+    const client = makeMockClient();
+    client.listProjects.mockResolvedValue([
+      { name: 'release-2.x', indexedDate: '2024-01-01' },
+      { name: 'release-2.x-win', indexedDate: '2024-01-01' },
+    ]);
+    const result = await dispatchTool('list_projects', {}, client as any, config, emptyLocal());
+    expect(result).toContain('release-2.x');
+    expect(result).toContain('release-2.x-win');
+  });
+
+  it('lists projects with filter', async () => {
+    const client = makeMockClient();
+    client.listProjects.mockResolvedValue([{ name: 'release-2.x', indexedDate: '2024-01-01' }]);
+    await dispatchTool('list_projects', { filter: 'release' }, client as any, config, emptyLocal());
+    expect(client.listProjects).toHaveBeenCalledWith('release');
+  });
+});
+
+// -----------------------------------------------------------------------
+// get_file_annotate
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — get_file_annotate', () => {
+  it('fetches annotate data', async () => {
+    const client = makeMockClient();
+    client.getAnnotate.mockResolvedValue({
+      project: 'proj', path: 'file.cpp',
+      lines: [{ lineNumber: 1, revision: 'abc', author: 'dev', date: '2024', content: 'code' }],
+    });
+    const result = await dispatchTool('get_file_annotate', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    expect(result).toContain('abc');
+  });
+
+  it('with line range', async () => {
+    const client = makeMockClient();
+    client.getAnnotate.mockResolvedValue({
+      project: 'proj', path: 'file.cpp',
+      lines: [
+        { lineNumber: 1, revision: 'r1', author: 'a', date: '2024', content: 'line1' },
+        { lineNumber: 2, revision: 'r2', author: 'a', date: '2024', content: 'line2' },
+        { lineNumber: 3, revision: 'r3', author: 'a', date: '2024', content: 'line3' },
+      ],
+    });
+    const result = await dispatchTool('get_file_annotate', { project: 'proj', path: 'file.cpp', start_line: 2, end_line: 3 }, client as any, config, emptyLocal());
+    expect(result).toContain('line2');
+  });
+});
+
+// -----------------------------------------------------------------------
+// search_suggest
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — search_suggest', () => {
+  it('returns suggestions', async () => {
+    const client = makeMockClient();
+    client.suggest.mockResolvedValue({ suggestions: ['main', 'malloc'], time: 5, partialResult: false });
+    const result = await dispatchTool('search_suggest', { query: 'ma' }, client as any, config, emptyLocal());
+    expect(result).toContain('main');
+    expect(result).toContain('malloc');
+  });
+
+  it('returns no suggestions message', async () => {
+    const client = makeMockClient();
+    client.suggest.mockResolvedValue({ suggestions: [], time: 10, partialResult: false });
+    const result = await dispatchTool('search_suggest', { query: 'zzz' }, client as any, config, emptyLocal());
+    expect(result).toContain('No suggestions found');
+  });
+
+  it('returns empty index message when time is 0', async () => {
+    const client = makeMockClient();
+    client.suggest.mockResolvedValue({ suggestions: [], time: 0, partialResult: false });
+    const result = await dispatchTool('search_suggest', { query: 'zzz' }, client as any, config, emptyLocal());
+    expect(result).toContain('suggester index');
+  });
+});
+
+// -----------------------------------------------------------------------
+// batch_search
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — batch_search', () => {
+  it('handles multiple queries', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({ query: 'q', searchType: 'full', totalCount: 0, results: [] });
+    const result = await dispatchTool('batch_search', {
+      queries: [
+        { query: 'foo', search_type: 'full' },
+        { query: 'bar', search_type: 'defs' },
+      ],
+    }, client as any, config, emptyLocal());
+    expect(client.search).toHaveBeenCalledTimes(2);
+    expect(result).toBeDefined();
+  });
+});
+
+// -----------------------------------------------------------------------
+// search_and_read
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — search_and_read', () => {
+  it('searches and reads file content', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'main', searchType: 'full', totalCount: 1,
+      results: [{ project: 'proj', path: '/src/main.cpp', matches: [{ lineNumber: 10, lineContent: 'int main()' }] }],
+    });
+    client.getFileContent.mockResolvedValue({
+      project: 'proj', path: 'src/main.cpp', content: 'int main() { return 0; }', lineCount: 1, sizeBytes: 24,
+    });
+    const result = await dispatchTool('search_and_read', {
+      query: 'main', search_type: 'full',
+    }, client as any, config, emptyLocal());
+    expect(result).toContain('main');
+  });
+
+  it('handles file read failure gracefully', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'test', searchType: 'full', totalCount: 1,
+      results: [{ project: 'proj', path: '/file.cpp', matches: [{ lineNumber: 5, lineContent: 'test' }] }],
+    });
+    client.getFileContent.mockRejectedValue(new Error('not found'));
+    const result = await dispatchTool('search_and_read', { query: 'test', search_type: 'full' }, client as any, config, emptyLocal());
+    // should not throw, just skip that file
+    expect(result).toBeDefined();
+  });
+
+  it('respects context_lines', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'x', searchType: 'full', totalCount: 1,
+      results: [{ project: 'p', path: '/f.cpp', matches: [{ lineNumber: 50, lineContent: 'x' }] }],
+    });
+    client.getFileContent.mockResolvedValue({ project: 'p', path: 'f.cpp', content: 'ctx', lineCount: 1, sizeBytes: 3 });
+    await dispatchTool('search_and_read', { query: 'x', search_type: 'full', context_lines: 20 }, client as any, config, emptyLocal());
+    // The startLine/endLine should be 30,70 with context_lines=20
+    const call = client.getFileContent.mock.calls[0];
+    expect(call[2]).toBe(30); // startLine
+    expect(call[3]).toBe(70); // endLine
+  });
+});
+
+// -----------------------------------------------------------------------
+// get_symbol_context
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — get_symbol_context', () => {
+  it('returns not-found when no definitions', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({ query: 'Unknown', searchType: 'defs', totalCount: 0, results: [] });
+    const result = await dispatchTool('get_symbol_context', { symbol: 'Unknown' }, client as any, config, emptyLocal());
+    expect(result).toContain('not found');
+  });
+
+  it('returns full context on found symbol', async () => {
+    const client = makeMockClient();
+    // Defs search (first call — uses 'defs' which goes through web search internally)
+    client.search.mockResolvedValueOnce({
+      query: 'MyClass', searchType: 'defs', totalCount: 1,
+      results: [{ project: 'proj', path: '/src/my_class.cpp', matches: [{ lineNumber: 15, lineContent: 'class MyClass' }] }],
+    });
+    client.getFileContent.mockResolvedValueOnce({
+      project: 'proj', path: 'src/my_class.cpp', content: 'class MyClass { };', lineCount: 1, sizeBytes: 19,
+    });
+    client.getFileSymbols.mockResolvedValueOnce({
+      project: 'proj', path: 'src/my_class.cpp',
+      symbols: [{ symbol: 'MyClass', type: 'class', line: 15, lineStart: 15 }],
+    });
+    // Header search (include_header defaults to true, path is .cpp)
+    client.search.mockResolvedValueOnce({
+      query: 'MyClass', searchType: 'defs', totalCount: 0, results: [],
+    });
+    // Refs search (called after header search)
+    client.search.mockResolvedValueOnce({
+      query: 'MyClass', searchType: 'refs', totalCount: 2,
+      results: [{ project: 'proj', path: '/other.cpp', matches: [{ lineNumber: 5, lineContent: 'MyClass obj;' }] }],
+    });
+    const result = await dispatchTool('get_symbol_context', { symbol: 'MyClass' }, client as any, config, emptyLocal());
+    expect(result).toContain('MyClass');
+    expect(result).toContain('References');
+  });
+
+  it('searches header for cpp files when include_header is true', async () => {
+    const client = makeMockClient();
+    // First defs search (finds .cpp)
+    client.search.mockResolvedValueOnce({
+      query: 'Func', searchType: 'defs', totalCount: 1,
+      results: [{ project: 'p', path: '/src/file.cpp', matches: [{ lineNumber: 10, lineContent: 'void Func()' }] }],
+    });
+    client.getFileContent.mockResolvedValueOnce({
+      project: 'p', path: 'src/file.cpp', content: 'void Func() {}', lineCount: 1, sizeBytes: 15,
+    });
+    client.getFileSymbols.mockResolvedValueOnce({ project: 'p', path: 'src/file.cpp', symbols: [] });
+    // Header search (finds .h)
+    client.search.mockResolvedValueOnce({
+      query: 'Func', searchType: 'defs', totalCount: 2,
+      results: [
+        { project: 'p', path: '/src/file.cpp', matches: [{ lineNumber: 10, lineContent: 'void Func()' }] },
+        { project: 'p', path: '/include/file.h', matches: [{ lineNumber: 5, lineContent: 'void Func();' }] },
+      ],
+    });
+    client.getFileContent.mockResolvedValueOnce({
+      project: 'p', path: 'include/file.h', content: 'void Func();', lineCount: 1, sizeBytes: 12,
+    });
+    // Refs search
+    client.search.mockResolvedValueOnce({
+      query: 'Func', searchType: 'refs', totalCount: 0, results: [],
+    });
+    const result = await dispatchTool('get_symbol_context', {
+      symbol: 'Func', include_header: true,
+    }, client as any, config, emptyLocal());
+    expect(result).toContain('Func');
+  });
+
+  it('handles fileSymbols failure gracefully', async () => {
+    const client = makeMockClient();
+    // Defs search
+    client.search.mockResolvedValueOnce({
+      query: 'Sym', searchType: 'defs', totalCount: 1,
+      results: [{ project: 'p', path: '/f.cpp', matches: [{ lineNumber: 5, lineContent: 'Sym' }] }],
+    });
+    client.getFileContent.mockResolvedValueOnce({
+      project: 'p', path: 'f.cpp', content: 'code', lineCount: 1, sizeBytes: 4,
+    });
+    client.getFileSymbols.mockRejectedValueOnce(new Error('no symbols'));
+    // Header search (include_header defaults to true, path is .cpp)
+    client.search.mockResolvedValueOnce({
+      query: 'Sym', searchType: 'defs', totalCount: 0, results: [],
+    });
+    // Refs search
+    client.search.mockResolvedValueOnce({ query: 'Sym', searchType: 'refs', totalCount: 0, results: [] });
+    const result = await dispatchTool('get_symbol_context', { symbol: 'Sym' }, client as any, config, emptyLocal());
+    expect(result).toContain('Sym');
+  });
+});
+
+// -----------------------------------------------------------------------
+// index_health
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — index_health', () => {
+  it('reports connected', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(true);
+    const result = await dispatchTool('index_health', {}, client as any, config, emptyLocal());
+    expect(result).toContain('connected');
+  });
+
+  it('reports connection failed', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(false);
+    const result = await dispatchTool('index_health', {}, client as any, config, emptyLocal());
+    expect(result).toContain('failed');
+  });
+});
+
+// -----------------------------------------------------------------------
+// get_compile_info
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — get_compile_info', () => {
+  it('reports local layer not enabled', async () => {
+    const client = makeMockClient();
+    const result = await dispatchTool('get_compile_info', { path: 'file.cpp' }, client as any, config, emptyLocal());
+    expect(result).toContain('not enabled');
+  });
+
+  it('reports no compile entries loaded', async () => {
+    const client = makeMockClient();
+    const local: LocalLayer = { enabled: true, roots: [], index: new Map(), suffixIndex: new Map() };
+    const result = await dispatchTool('get_compile_info', { path: 'file.cpp' }, client as any, config, local);
+    expect(result).toContain('no compile entries');
+  });
+
+  it('not found by basename', async () => {
+    const client = makeMockClient();
+    const info: CompileInfo = {
+      file: '/build/src/other.cpp', directory: '/build', compiler: 'g++',
+      includes: [], defines: [], standard: 'c++17', extraFlags: [],
+    };
+    const local: LocalLayer = {
+      enabled: true, roots: ['/build/src'],
+      index: new Map([['/build/src/other.cpp', info]]),
+      suffixIndex: new Map(),
+    };
+    const result = await dispatchTool('get_compile_info', { path: 'unknown.cpp' }, client as any, config, local);
+    expect(result).toContain('No compile information');
+  });
+});
+
+// -----------------------------------------------------------------------
+// get_file_symbols
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — get_file_symbols', () => {
+  it('returns symbols', async () => {
+    const client = makeMockClient();
+    client.getFileSymbols.mockResolvedValue({
+      project: 'proj', path: 'file.cpp',
+      symbols: [
+        { symbol: 'main', type: 'Function', line: 10, lineStart: 10, signature: 'int main()' },
+        { symbol: 'MyClass', type: 'Class', line: 3, lineStart: 3, signature: '' },
+      ],
+    });
+    const result = await dispatchTool('get_file_symbols', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    expect(result).toContain('main');
+    expect(result).toContain('MyClass');
+  });
+
+  it('returns no-symbols message', async () => {
+    const client = makeMockClient();
+    client.getFileSymbols.mockResolvedValue({ project: 'proj', path: 'file.cpp', symbols: [] });
+    const result = await dispatchTool('get_file_symbols', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    expect(result).toContain('No symbols found');
+  });
+});
+
+// -----------------------------------------------------------------------
+// unknown tool
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — unknown', () => {
+  it('returns error for unknown tool name', async () => {
+    const client = makeMockClient();
+    const result = await dispatchTool('nonexistent_tool', {}, client as any, config, emptyLocal());
+    expect(result).toContain('Unknown tool');
+  });
+});
+
+// -----------------------------------------------------------------------
+// buildLocalLayer
+// -----------------------------------------------------------------------
+
+describe('buildLocalLayer', () => {
+  it('returns disabled when no paths configured', () => {
+    const local = buildLocalLayer(makeConfig());
+    expect(local.enabled).toBe(false);
+    expect(local.index.size).toBe(0);
+  });
+
+  it('returns disabled when paths are whitespace', () => {
+    const local = buildLocalLayer(makeConfig({ OPENGROK_LOCAL_COMPILE_DB_PATHS: '   ' }));
+    expect(local.enabled).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------
+// tryLocalRead
+// -----------------------------------------------------------------------
+
+describe('tryLocalRead', () => {
+  it('returns null for traversal paths', async () => {
+    const result = await tryLocalRead('../../../etc/passwd', ['/some/root']);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for non-existent roots', async () => {
+    const result = await tryLocalRead('file.cpp', ['/nonexistent/root/path']);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for bare ".."', async () => {
+    const result = await tryLocalRead('..', ['/tmp']);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for path ending in "/..."', async () => {
+    const result = await tryLocalRead('foo/..', ['/tmp']);
+    expect(result).toBeNull();
+  });
+});
+
+// -----------------------------------------------------------------------
+// readFileAtAbsPath
+// -----------------------------------------------------------------------
+
+describe('readFileAtAbsPath', () => {
+  it('returns null for non-existent file', async () => {
+    const result = await readFileAtAbsPath('/nonexistent/file/path.cpp');
+    expect(result).toBeNull();
+  });
+});

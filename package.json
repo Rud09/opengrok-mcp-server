@@ -1,0 +1,157 @@
+{
+  "name": "opengrok-mcp-server",
+  "displayName": "OpenGrok Code Search for Copilot",
+  "description": "Search your OpenGrok code index directly from GitHub Copilot Chat",
+  "version": "3.3.2",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "publisher": "IcyHot09",
+  "author": "Rudra Roy",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IcyHot09/opengrok-mcp-server"
+  },
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=22.0.0"
+  },
+  "categories": [
+    "AI",
+    "Other",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "opengrok",
+    "code search",
+    "copilot",
+    "mcp",
+    "model context protocol",
+    "model-context-protocol",
+    "ai",
+    "github-copilot",
+    "code-search"
+  ],
+  "galleryBanner": {
+    "color": "#1a1a2e",
+    "theme": "dark"
+  },
+  "pricing": "Free",
+  "activationEvents": [
+    "onStartupFinished",
+    "onExtension:github.copilot-chat"
+  ],
+  "main": "./out/extension.js",
+  "bin": {
+    "opengrok-mcp-server": "./out/server/main.js"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "opengrok-mcp.configure",
+        "title": "OpenGrok: Configure Credentials"
+      },
+      {
+        "command": "opengrok-mcp.configureUI",
+        "title": "OpenGrok: Manage Configuration"
+      },
+      {
+        "command": "opengrok-mcp.test",
+        "title": "OpenGrok: Test Connection"
+      },
+      {
+        "command": "opengrok-mcp.showLogs",
+        "title": "OpenGrok: Show Server Logs"
+      },
+      {
+        "command": "opengrok-mcp.statusMenu",
+        "title": "OpenGrok: Status Menu"
+      },
+      {
+        "command": "opengrok-mcp.checkUpdate",
+        "title": "OpenGrok: Check for Updates"
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "opengrok-mcp-server",
+        "label": "OpenGrok Code Search"
+      }
+    ],
+    "configuration": {
+      "title": "OpenGrok MCP",
+      "properties": {
+        "opengrok-mcp.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "OpenGrok server base URL",
+          "order": 1
+        },
+        "opengrok-mcp.username": {
+          "type": "string",
+          "default": "",
+          "description": "OpenGrok username (password stored securely in system keychain)",
+          "order": 2
+        },
+        "opengrok-mcp.verifySsl": {
+          "type": "boolean",
+          "default": false,
+          "description": "Verify SSL certificates (disable for self-signed/internal CA certs)",
+          "order": 3
+        },
+        "opengrok-mcp.proxy": {
+          "type": "string",
+          "default": "",
+          "description": "HTTP proxy URL (e.g., http://proxy.company.com:8080)",
+          "order": 4
+        },
+        "opengrok-mcp.hasPromptedConfig": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the user has been prompted to configure OpenGrok credentials at least once",
+          "order": 5,
+          "scope": "application"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "tsc --noEmit && eslint src/",
+    "vsix": "node scripts/build-vsix.js",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version",
+    "package-server": "node scripts/package-server.js",
+    "release:patch": "npm run version:patch && npm run compile && npm run package-server && npm run vsix",
+    "release:minor": "npm run version:minor && npm run compile && npm run package-server && npm run vsix",
+    "release:major": "npm run version:major && npm run compile && npm run package-server && npm run vsix"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "node-html-parser": "^6.1.0",
+    "p-retry": "^7.0.0",
+    "undici": "^7.22.0",
+    "zod": "^4.0.0",
+    "zod-to-json-schema": "^3.25.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
+    "@vitest/coverage-v8": "^3.1.4",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.25.0",
+    "eslint": "^10.0.3",
+    "eslint-config-prettier": "^10.1.8",
+    "typescript": "^5.3.0",
+    "typescript-eslint": "^8.56.1",
+    "vitest": "^3.1.4"
+  }
+}

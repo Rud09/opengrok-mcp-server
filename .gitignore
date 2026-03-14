@@ -1,0 +1,29 @@
+# Ignore secrets and local config
+.env
+*.env.local
+
+# Node.js / TypeScript
+node_modules/
+out/
+*.js.map
+
+# VS Code Extension packaging
+*.vsix
+.vscode-test/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Coverage
+coverage/
+
+# Logs
+*.log
+
+# Backup files
+*.bak
+
+# Test output
+test-output.txt

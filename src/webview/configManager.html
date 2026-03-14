@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
+    <title>OpenGrok Configuration</title>
+    <style>
+
+        :root {
+            /* VS Code theme tokens → our semantic vars */
+            --bg-base:   var(--vscode-editor-background);
+            --bg-panel:  var(--vscode-editorWidget-background, var(--vscode-editor-background));
+            --bg-card:   var(--vscode-list-hoverBackground, rgba(128,128,128,0.07));
+            --bg-input:  var(--vscode-input-background);
+
+            --border-subtle: var(--vscode-input-border, rgba(128,128,128,0.2));
+            --border-hover:  var(--vscode-focusBorder);
+
+            --text-main:  var(--vscode-foreground);
+            --text-muted: var(--vscode-descriptionForeground);
+
+            --accent:       var(--vscode-button-background);
+            --accent-hover: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+            --accent-fg:    var(--vscode-button-foreground);
+
+            --btn2-bg:    var(--vscode-button-secondaryBackground, var(--bg-card));
+            --btn2-fg:    var(--vscode-button-secondaryForeground, var(--text-main));
+            --btn2-hover: var(--vscode-button-secondaryHoverBackground, var(--bg-input));
+
+            --focus-ring: var(--vscode-focusBorder);
+            --error-fg:   var(--vscode-errorForeground, #f48771);
+            --success-fg: #4daa57;
+
+            --glass-border: 1px solid var(--vscode-panel-border, var(--border-subtle));
+            --glass-shadow: 0 8px 32px var(--vscode-widget-shadow, rgba(0,0,0,0.25));
+
+            --transition-speed: 0.2s;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--vscode-font-family), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: var(--vscode-font-size, 13px);
+            color: var(--text-main);
+            background: var(--bg-base);
+            min-height: 100vh;
+            overflow: hidden;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        /* Hide scrollbars for whole app to keep it extremely clean */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        .app-container {
+            display: flex;
+            min-height: 100vh;
+            height: 100vh;
+            width: 100vw;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Background Effects */
+        .ambient-bg {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            overflow: hidden;
+            z-index: 0;
+            pointer-events: none;
+        }
+        .ambient-bg::before, .ambient-bg::after {
+            content: '';
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.15;
+            animation: float 20s infinite ease-in-out alternate;
+        }
+        .ambient-bg::before {
+            background: var(--accent);
+            width: 600px;
+            height: 600px;
+            top: -200px;
+            right: -100px;
+        }
+        .ambient-bg::after {
+            background: var(--accent);
+            width: 500px;
+            height: 500px;
+            bottom: -150px;
+            left: -150px;
+            animation-delay: -10s;
+        }
+        .vscode-light .ambient-bg::before,
+        .vscode-light .ambient-bg::after {
+            opacity: 0.06;
+        }
+
+        @keyframes float {
+            0% { transform: translate(0, 0) scale(1); }
+            100% { transform: translate(-50px, 50px) scale(1.1); }
+        }
+
+        /* ================= MAIN CONTENT (Centered) ================= */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: safe center;
+            overflow-y: auto;
+            padding: 40px 20px;
+            z-index: 10;
+            min-height: 0;
+        }
+
+        /* Header / Logo bar */
+        .app-header {
+            display: flex;
+            width: 100%;
+            max-width: 640px;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            animation: fadeInDown 0.6s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+        }
+
+        .brand-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .brand-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: var(--accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent-fg);
+            box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 30%, transparent);
+        }
+
+
+
+        /* Glass Panel */
+        .glass-panel {
+            background: var(--bg-panel);
+            backdrop-filter: blur(40px);
+            -webkit-backdrop-filter: blur(40px);
+            border: var(--glass-border);
+            border-radius: 24px;
+            padding: 48px;
+            box-shadow: var(--glass-shadow);
+            width: 100%;
+            max-width: 640px; /* Highly focused */
+            flex-shrink: 0;
+            animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) backwards 0.1s;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .panel-header {
+            margin-bottom: 32px;
+            text-align: center;
+        }
+        
+        .panel-title {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin-bottom: 8px;
+            color: var(--text-main);
+        }
+
+        .panel-subtitle {
+            font-size: 15px;
+            color: var(--text-muted);
+        }
+
+        /* ================= FORM GRID ================= */
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 24px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .field label {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+
+        .field input[type="text"],
+        .field input[type="password"],
+        .field input[type="url"] {
+            font-family: var(--vscode-font-family), sans-serif;
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 16px 18px;
+            font-size: 15px;
+            color: var(--text-main);
+            transition: all 0.2s;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
+            outline: none;
+        }
+        
+        .field input:hover {
+            border-color: var(--border-hover);
+        }
+        
+        .field input:focus {
+            border-color: var(--focus-ring);
+            outline: 1px solid var(--focus-ring);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 20%, transparent);
+        }
+        
+        .field input::placeholder {
+            color: var(--text-muted);
+            opacity: 0.5;
+        }
+
+        .hint {
+            font-size: 13px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 4px;
+        }
+
+        .checkbox-field {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+        .checkbox-field:hover {
+            border-color: var(--border-hover);
+        }
+
+        .checkbox-field input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .checkbox-field label {
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .checkbox-copy {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .checkbox-subtext {
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 500;
+            margin-top: 2px;
+        }
+
+        /* ================= BUTTONS & ACTIONS ================= */
+        .actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 40px;
+            padding-top: 32px;
+            border-top: var(--glass-border);
+        }
+
+        .actions-right {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            font-family: inherit;
+            font-size: 15px;
+            font-weight: 600;
+            padding: 14px 28px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            letter-spacing: 0.3px;
+        }
+
+        .btn:active { transform: scale(0.97); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        .btn-secondary {
+            background: var(--btn2-bg);
+            color: var(--btn2-fg);
+            border: 1px solid var(--border-subtle);
+        }
+        .btn-secondary:hover:not(:disabled) {
+            border-color: var(--border-hover);
+            background: var(--btn2-hover);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--text-muted);
+            padding: 14px 16px;
+        }
+        .btn-ghost:hover:not(:disabled) {
+            color: var(--text-main);
+            background: var(--border-subtle);
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--accent-fg);
+            box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 30%, transparent);
+            min-width: 200px;
+        }
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-hover);
+            box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 40%, transparent);
+            transform: translateY(-2px);
+        }
+
+        /* Status Indicator */
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            background: var(--bg-card);
+            color: var(--text-muted);
+            transition: all 0.3s ease;
+        }
+        .status-pill.active {
+            background: color-mix(in srgb, var(--accent) 15%, transparent);
+            color: var(--accent);
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            opacity: 0.5;
+        }
+        .status-pill.active .status-dot {
+            opacity: 1;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        /* ================= TOASTS & OVERLAYS ================= */
+        .toast-container {
+            position: fixed;
+            bottom: 32px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        .toast {
+            background: var(--bg-panel);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: var(--glass-border);
+            border-radius: 14px;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            box-shadow: var(--glass-shadow);
+            transform: translateY(100px) scale(0.9);
+            opacity: 0;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            max-width: 480px;
+        }
+
+        .toast.show { 
+            transform: translateY(0) scale(1); 
+            opacity: 1;
+        }
+
+        .toast-icon { font-size: 20px; }
+        .toast-content { flex: 1; font-size: 14px; font-weight: 500; line-height: 1.4; color: var(--text-main); }
+        
+        .toast.error { border-bottom: 3px solid var(--error-fg); }
+        .toast.success { border-bottom: 3px solid var(--success-fg); }
+        .toast.info { border-bottom: 3px solid var(--accent); }
+
+        /* ================= RESPONSIVE ================= */
+        @media (max-height: 700px) {
+            .main-content { padding: 20px 16px; }
+            .app-header { margin-bottom: 16px; }
+            .glass-panel { padding: 28px 32px; border-radius: 18px; }
+            .panel-header { margin-bottom: 20px; }
+            .panel-title { font-size: 22px; }
+            .form-grid { gap: 16px; }
+            .field input[type="text"],
+            .field input[type="password"],
+            .field input[type="url"] { padding: 12px 14px; font-size: 14px; }
+            .checkbox-field { padding: 12px 14px; }
+            .actions { margin-top: 24px; padding-top: 20px; }
+            .btn { padding: 10px 20px; font-size: 14px; }
+            .btn-primary { min-width: 160px; }
+        }
+
+        @media (max-height: 520px) {
+            .main-content { padding: 12px 12px; }
+            .app-header { margin-bottom: 10px; }
+            .glass-panel { padding: 18px 20px; border-radius: 14px; }
+            .panel-header { margin-bottom: 14px; }
+            .panel-title { font-size: 18px; }
+            .panel-subtitle { font-size: 13px; }
+            .form-grid { gap: 10px; }
+            .field label { font-size: 11px; }
+            .field input[type="text"],
+            .field input[type="password"],
+            .field input[type="url"] { padding: 8px 10px; font-size: 13px; border-radius: 8px; }
+            .checkbox-field { padding: 8px 10px; border-radius: 8px; }
+            .actions { margin-top: 14px; padding-top: 12px; }
+            .btn { padding: 8px 14px; font-size: 13px; border-radius: 8px; }
+            .btn-primary { min-width: 140px; }
+        }
+
+        @media (max-width: 500px) {
+            .glass-panel { padding: 24px 18px; border-radius: 16px; }
+            .actions { flex-direction: column; gap: 12px; align-items: stretch; }
+            .actions-right { justify-content: flex-end; }
+            .btn-primary { min-width: unset; flex: 1; }
+        }
+
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Ambient Background -->
+        <div class="ambient-bg"></div>
+
+        <!-- MAIN CONTENT -->
+        <div class="main-content">
+            
+            <div class="app-header">
+                <div class="brand-title">
+                    <div class="brand-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                    </div>
+                    OpenGrok MCP
+                </div>
+                
+
+            </div>
+
+            <div class="glass-panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">Server Configuration</h2>
+                    <p class="panel-subtitle">Connect GitHub Copilot Chat to your internal OpenGrok source code server.</p>
+                </div>
+
+                <div class="form-grid">
+                    <div class="field">
+                        <label>OpenGrok Server URL</label>
+                        <input type="url" id="baseUrl" placeholder="https://opengrok.example.com/source/">
+                    </div>
+
+                    <div class="field">
+                        <label>Username</label>
+                        <input type="text" id="username" placeholder="e.g. jdoe">
+                    </div>
+
+                    <div class="field">
+                        <label>Password</label>
+                        <input type="password" id="password" placeholder="Enter your password">
+                        <div class="hint" id="passwordHint">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                            Stored securely in the OS Keychain
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label>HTTP Proxy</label>
+                        <input type="text" id="proxy" placeholder="e.g. http://proxy.company.com:8080">
+                        <div class="hint">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+                            Leave blank for direct connection
+                        </div>
+                    </div>
+
+                    <label class="checkbox-field">
+                        <input type="checkbox" id="verifySsl" checked>
+                        <span class="checkbox-copy">
+                            <span>Verify SSL Certificate</span>
+                            <span class="checkbox-subtext">Disable for self-signed or internal CA certs</span>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="actions">
+                    <div class="status-pill" id="statusPill">
+                        <div class="status-dot"></div>
+                        <span id="statusText">Not Configured</span>
+                    </div>
+
+                    <div class="actions-right">
+                        <button class="btn btn-ghost" onclick="clearForm()" id="clearBtn" title="Clear form">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                        <button class="btn btn-secondary" onclick="testConnection()" id="testBtn">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+                            Test
+                        </button>
+                        <button class="btn btn-primary" onclick="saveConfiguration()" id="saveBtn">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                            Save Settings
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+
+            <div style="margin-top: 32px; color: var(--text-muted); font-size: 13px; display: flex; align-items: center; gap: 8px; opacity: 0.7;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+                Changes apply immediately to your Copilot session
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let currentConfig = {};
+
+        function showToast(type, text) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            
+            let icon = 'ℹ️';
+            if(type === 'success') icon = '✅';
+            if(type === 'error') icon = '❌';
+            if(type === 'info' && text.includes('Testing')) icon = '⏳';
+
+            toast.innerHTML = '';
+            const iconDiv = document.createElement('div');
+            iconDiv.className = 'toast-icon';
+            iconDiv.textContent = icon;
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'toast-content';
+            contentDiv.textContent = text;
+            toast.appendChild(iconDiv);
+            toast.appendChild(contentDiv);
+            
+            container.appendChild(toast);
+            
+            requestAnimationFrame(() => {
+                toast.classList.add('show');
+            });
+            
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 400);
+            }, 4000);
+        }
+        
+        function updateStatusDisplay(configured) {
+            const pill = document.getElementById('statusPill');
+            const text = document.getElementById('statusText');
+            
+            if (configured) {
+                pill.classList.add('active');
+                text.textContent = 'Active Setup';
+            } else {
+                pill.classList.remove('active');
+                text.textContent = 'Not Configured';
+            }
+        }
+        
+        function clearForm() {
+            document.getElementById('baseUrl').value = '';
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+            document.getElementById('proxy').value = '';
+            document.getElementById('verifySsl').checked = true;
+        }
+
+        function setLoading(btnId, isLoading, originalText) {
+            const btn = document.getElementById(btnId);
+            if (isLoading) {
+                btn.disabled = true;
+                btn.innerHTML = `<svg class="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg> ${originalText}...`;
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+        
+        const style = document.createElement('style');
+        style.innerHTML = '@keyframes spin { 100% { transform: rotate(360deg); } }';
+        document.head.appendChild(style);
+        
+        function testConnection() {
+            const baseUrl = document.getElementById('baseUrl').value.trim();
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const verifySsl = document.getElementById('verifySsl').checked;
+            
+            if (!baseUrl || !username) {
+                showToast('error', 'URL and Username are required');
+                return;
+            }
+            if (!password && !currentConfig.hasPassword) {
+                showToast('error', 'Password is required to test a new connection');
+                return;
+            }
+            
+            setLoading('testBtn', true, 'Testing');
+            const proxy = document.getElementById('proxy').value.trim();
+            vscode.postMessage({ 
+                type: 'testConnection', 
+                data: { baseUrl, username, password, proxy, verifySsl }
+            });
+        }
+        
+        function saveConfiguration() {
+            const baseUrl = document.getElementById('baseUrl').value.trim();
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const proxy = document.getElementById('proxy').value.trim();
+            const verifySsl = document.getElementById('verifySsl').checked;
+            
+            if (!baseUrl || !username) {
+                showToast('error', 'URL and Username are required');
+                return;
+            }
+            if (!password && !currentConfig.hasPassword) {
+                 showToast('error', 'Password is required for a new connection');
+                 return;
+            }
+            
+            try { new URL(baseUrl); } catch {
+                showToast('error', 'Please enter a valid URL');
+                return;
+            }
+            
+            setLoading('saveBtn', true, 'Saving');
+            vscode.postMessage({ 
+                type: 'saveConfiguration', 
+                data: { baseUrl, username, password, proxy, verifySsl }
+            });
+        }
+        
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.type) {
+                case 'loadConfig':
+                    currentConfig = message.config || {};
+                    const bUrl = currentConfig.baseUrl || '';
+                    document.getElementById('baseUrl').value = bUrl;
+                    document.getElementById('username').value = currentConfig.username || '';
+                    document.getElementById('proxy').value = currentConfig.proxy || '';
+                    document.getElementById('verifySsl').checked = currentConfig.verifySsl !== false;
+                    document.getElementById('password').value = '';
+                    
+                    const pInput = document.getElementById('password');
+                    const pHint = document.getElementById('passwordHint');
+                    if(currentConfig.hasPassword) {
+                        pInput.placeholder = 'Leave empty to keep existing password';
+                        pHint.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg> Existing password securely stored`;
+                    } else {
+                        pInput.placeholder = 'Enter your password';
+                        pHint.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> Stored securely in OS keychain`;
+                    }
+                    
+                    updateStatusDisplay(!!currentConfig.username);
+                    break;
+                case 'error':
+                    showToast('error', message.message);
+                    setLoading('testBtn', false, '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg> Test');
+                    setLoading('saveBtn', false, '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg> Save Settings');
+                    break;
+                case 'success':
+                    showToast('success', message.message);
+                    currentConfig.hasPassword = true; 
+                    updateStatusDisplay(true);
+                    setLoading('saveBtn', false, '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg> Save Settings');
+                    // Automatically click test connection after a successful save
+                    setTimeout(() => testConnection(), 600);
+                    break;
+                case 'testSuccess':
+                    showToast('success', message.message);
+                    setLoading('testBtn', false, '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg> Test');
+                    break;
+                case 'testing':
+                    showToast('info', message.message);
+                    break;
+            }
+        });
+        
+        // Request current configuration on load
+        vscode.postMessage({ type: 'getConfig' });
+    </script>
+</body>
+</html>

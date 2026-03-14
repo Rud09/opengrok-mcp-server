@@ -1,0 +1,18 @@
+# Exclude TypeScript source and dev tooling from npm package
+src/
+.github/
+.vscode/
+coverage/
+
+# Config files
+tsconfig.json
+esbuild.js
+eslint.config.mjs
+vitest.config.ts
+.vscodeignore
+.gitignore
+.nvmrc
+
+# Build artifacts not needed at runtime
+*.vsix
+package-lock.json

@@ -1,0 +1,952 @@
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as http from 'http';
+import * as https from 'https';
+import * as os from 'os';
+import * as path from 'path';
+import * as crypto from 'crypto';
+import { execSync } from 'child_process';
+
+const MCP_SERVER_NAME = 'opengrok';
+
+// Credential files older than this are considered stale and will be cleaned up
+const CREDENTIAL_FILE_MAX_AGE_MS = 60000; // 60 seconds
+
+// Auto-update check
+const GITHUB_REPO_OWNER = 'IcyHot09';
+const GITHUB_REPO_NAME = 'opengrok-mcp-server';
+const GITHUB_API_BASE = 'https://api.github.com';
+const RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases`;
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+let outputChannel: vscode.OutputChannel;
+let statusBarItem: vscode.StatusBarItem;
+let secretStorage: vscode.SecretStorage;
+let mcpProvider: OpenGrokMcpProvider | undefined;
+
+// Tracks if the extension was activated without credentials, requiring a window reload to populate tools
+let needsReloadForTools = false;
+
+/**
+ * Clean up stale credential files from temp directory.
+ * Files older than CREDENTIAL_FILE_MAX_AGE_MS are deleted.
+ * This handles cases where the server crashed before reading the file.
+ */
+function cleanupStaleCredentialFiles(): void {
+    try {
+        const tempDir = os.tmpdir();
+        const files = fs.readdirSync(tempDir);
+        const now = Date.now();
+        
+        for (const file of files) {
+            if (file.startsWith('opengrok-cred-') && file.endsWith('.tmp')) {
+                const filepath = path.join(tempDir, file);
+                try {
+                    const stat = fs.statSync(filepath);
+                    const ageMs = now - stat.mtimeMs;
+                    
+                    if (ageMs > CREDENTIAL_FILE_MAX_AGE_MS) {
+                        fs.unlinkSync(filepath);
+                        log(`Cleaned up stale credential file (${Math.round(ageMs / 1000)}s old): ${filepath}`);
+                    }
+                } catch (err) {
+                    // File might have been deleted by server, ignore
+                }
+            }
+        }
+    } catch (err) {
+        log(`Warning: Failed to clean up stale credential files: ${err}`);
+    }
+}
+
+/**
+ * Clean up ALL credential files (used on extension deactivation)
+ */
+function cleanupAllCredentialFiles(): void {
+    try {
+        const tempDir = os.tmpdir();
+        const files = fs.readdirSync(tempDir);
+        
+        for (const file of files) {
+            if (file.startsWith('opengrok-cred-') && file.endsWith('.tmp')) {
+                const filepath = path.join(tempDir, file);
+                try {
+                    fs.unlinkSync(filepath);
+                    log(`Credential file cleaned up: ${filepath}`);
+                } catch (err) {
+                    // Ignore errors during cleanup
+                }
+            }
+        }
+    } catch (err) {
+        log(`Warning: Failed to clean up credential files: ${err}`);
+    }
+}
+
+/**
+ * Get the current extension version from package.json
+ */
+function getExtensionVersion(): string {
+    const ext = vscode.extensions.getExtension('IcyHot09.opengrok-mcp-server');
+    return ext?.packageJSON.version || '0.0.0';
+}
+
+/**
+ * Signal VS Code to re-query our MCP provider for updated server definitions.
+ * This uses the official onDidChangeMcpServerDefinitions event API.
+ */
+function notifyMcpServerChanged(): void {
+    if (mcpProvider) {
+        mcpProvider.fireChanged();
+        log('Notified VS Code of MCP server definition change.');
+    }
+}
+
+/**
+ * Check for version updates and notify user
+ */
+async function checkVersionUpdate(context: vscode.ExtensionContext): Promise<void> {
+    const currentVersion = getExtensionVersion();
+    const previousVersion = context.globalState.get<string>('extensionVersion');
+
+    // Save current version first — must happen before any await that might
+    // trigger a reload, otherwise the notification reappears on every reload.
+    await context.globalState.update('extensionVersion', currentVersion);
+
+    if (previousVersion && previousVersion !== currentVersion) {
+        // Version has been updated
+        log(`Extension updated: ${previousVersion} → ${currentVersion}`);
+
+        const action = await vscode.window.showInformationMessage(
+            `OpenGrok MCP updated to v${currentVersion}! To use the latest features in Copilot Chat, please reload the window, then enable OpenGrok in the 🔧 Tools menu.`,
+            'Reload Window',
+            'View Changelog',
+            'Later'
+        );
+
+        if (action === 'Reload Window') {
+            vscode.commands.executeCommand('workbench.action.reloadWindow');
+        } else if (action === 'View Changelog') {
+            vscode.env.openExternal(vscode.Uri.parse(`https://github.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/blob/main/CHANGELOG.md`));
+        }
+
+        // New version may have new/changed tools — notify VS Code to re-query our provider
+        notifyMcpServerChanged();
+    }
+}
+
+/**
+ * Check GitHub Releases for a newer stable version and offer to install it.
+ * No authentication needed — the repository is public.
+ * In automatic mode (default) the check is throttled to once per 24 hours.
+ * In manual mode (options.manual = true) the throttle is skipped and the user
+ * is always told whether they are up to date.
+ */
+async function checkForRemoteUpdate(
+    context: vscode.ExtensionContext,
+    options?: { manual?: boolean }
+): Promise<void> {
+    const manual = options?.manual ?? false;
+    const config = vscode.workspace.getConfiguration('opengrok-mcp');
+    const verifySsl = config.get<boolean>('verifySsl') ?? true;
+
+    // Throttle automatic checks to once per UPDATE_CHECK_INTERVAL_MS
+    if (!manual) {
+        const lastCheck = context.globalState.get<number>('lastUpdateCheck', 0);
+        if (Date.now() - lastCheck < UPDATE_CHECK_INTERVAL_MS) {
+            log('Update check skipped — checked recently.');
+            return;
+        }
+    }
+
+    try {
+        log('Checking for extension updates...');
+
+        const releasesUrl = new URL(
+            `${GITHUB_API_BASE}/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases?per_page=5`
+        );
+        const headers: Record<string, string> = {
+            'User-Agent': 'OpenGrok-MCP-UpdateCheck/1.0',
+            'Accept': 'application/vnd.github+json',
+        };
+
+        const releases: any[] = await httpGetJson(releasesUrl, headers, verifySsl);
+        await context.globalState.update('lastUpdateCheck', Date.now());
+
+        // Find the latest stable release (skip beta/alpha/rc/prerelease)
+        let latestRelease: any = null;
+        let latestVersion = '';
+        for (const rel of releases) {
+            if (rel.prerelease || rel.draft) { continue; }
+            const tag = (rel.tag_name ?? '').replace(/^v/, '');
+            if (!tag || /beta|alpha|rc/i.test(tag)) { continue; }
+            if (!latestVersion || semverCompare(tag, latestVersion) > 0) {
+                latestVersion = tag;
+                latestRelease = rel;
+            }
+        }
+
+        if (!latestVersion) {
+            log('No stable version found in releases.');
+            if (manual) {
+                vscode.window.showInformationMessage('OpenGrok MCP: No stable release found.');
+            }
+            return;
+        }
+
+        const currentVersion = getExtensionVersion();
+        log(`Update check: installed=${currentVersion}, latest=${latestVersion}`);
+
+        if (semverCompare(latestVersion, currentVersion) <= 0) {
+            log('Already on the latest version.');
+            if (manual) {
+                vscode.window.showInformationMessage(
+                    `OpenGrok MCP: You are on the latest version (v${currentVersion}).`
+                );
+            }
+            return;
+        }
+
+        // Find .vsix asset in release assets
+        const vsixAsset = latestRelease.assets?.find(
+            (a: any) => /\.vsix$/i.test(a.name ?? '')
+        );
+        const vsixUrl: string | undefined = vsixAsset?.browser_download_url;
+        const releaseUrl = `${RELEASES_PAGE_URL}/tag/v${latestVersion}`;
+
+        const actions: string[] = ['View Release Notes', 'Dismiss'];
+        if (vsixUrl) { actions.unshift('Install Update'); }
+
+        const action = await vscode.window.showInformationMessage(
+            `OpenGrok MCP v${latestVersion} is available (you have v${currentVersion}).`,
+            ...actions
+        );
+
+        if (action === 'Install Update' && vsixUrl) {
+            const tmpPath = path.join(os.tmpdir(), `opengrok-mcp-${latestVersion}.vsix`);
+
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: `Downloading OpenGrok MCP v${latestVersion}...`, cancellable: false },
+                async () => {
+                    await downloadToFile(new URL(vsixUrl), tmpPath, verifySsl);
+                }
+            );
+
+            await vscode.commands.executeCommand(
+                'workbench.extensions.installExtension',
+                vscode.Uri.file(tmpPath)
+            );
+
+            try { fs.unlinkSync(tmpPath); } catch { /* ignore cleanup errors */ }
+
+            const reload = await vscode.window.showInformationMessage(
+                `OpenGrok MCP updated to v${latestVersion}! Reload to activate the new version.`,
+                'Reload Window'
+            );
+            if (reload === 'Reload Window') {
+                vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
+        } else if (action === 'View Release Notes') {
+            vscode.env.openExternal(vscode.Uri.parse(releaseUrl));
+        }
+    } catch (err: any) {
+        log(`Update check failed (non-fatal): ${err?.message ?? err}`);
+        if (manual) {
+            vscode.window.showWarningMessage(
+                `OpenGrok MCP: Could not check for updates. ${err?.message ?? ''}`
+            );
+        }
+    }
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+    secretStorage = context.secrets;
+
+    outputChannel = vscode.window.createOutputChannel('OpenGrok MCP');
+    context.subscriptions.push(outputChannel);
+
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBarItem.command = 'opengrok-mcp.showLogs';
+    context.subscriptions.push(statusBarItem);
+
+    const currentVersion = getExtensionVersion();
+    log(`OpenGrok MCP v${currentVersion} activating...`);
+
+    // Check for version updates
+    await checkVersionUpdate(context);
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('opengrok-mcp.configure', configureCredentials),
+        vscode.commands.registerCommand('opengrok-mcp.configureUI', () => openConfigurationPanel(context)),
+        vscode.commands.registerCommand('opengrok-mcp.test', testConnection),
+        vscode.commands.registerCommand('opengrok-mcp.showLogs', () => outputChannel.show()),
+        vscode.commands.registerCommand('opengrok-mcp.statusMenu', showStatusMenu),
+        vscode.commands.registerCommand('opengrok-mcp.checkUpdate', () => checkForRemoteUpdate(context, { manual: true })),
+    );
+
+    // Fire-and-forget: check for remote updates (throttled to once per 24 h)
+    checkForRemoteUpdate(context);
+
+    const config = vscode.workspace.getConfiguration('opengrok-mcp');
+    const username = config.get<string>('username');
+
+    // Register native MCP Provider for Copilot Chat
+    if (vscode.lm && vscode.lm.registerMcpServerDefinitionProvider) {
+        mcpProvider = new OpenGrokMcpProvider();
+        context.subscriptions.push(
+            vscode.lm.registerMcpServerDefinitionProvider('opengrok-mcp-server', mcpProvider)
+        );
+        log('Registered native MCP Server Definition Provider.');
+    } else {
+        log('Warning: This version of VS Code does not support native MCP Server Definition Providers. Copilot features may not work.');
+    }
+
+    if (username) {
+        updateStatusBar('ready');
+    } else {
+        needsReloadForTools = true;
+        updateStatusBar('unconfigured');
+        const action = await vscode.window.showInformationMessage(
+            'OpenGrok MCP: To enable Copilot codebase search, please configure your OpenGrok credentials.',
+            'Configure Now',
+            'Later'
+        );
+        if (action === 'Configure Now') {
+            openConfigurationPanel(context);
+        } else if (!config.get<boolean>('hasPromptedConfig')) {
+            // First time setup: popup automatically 
+            openConfigurationPanel(context);
+            await config.update('hasPromptedConfig', true, vscode.ConfigurationTarget.Global);
+        }
+    }
+
+    log(`OpenGrok MCP v${currentVersion} activated`);
+}
+
+function log(message: string): void {
+    outputChannel.appendLine(`[${new Date().toISOString()}] ${message}`);
+}
+
+function updateStatusBar(state: 'ready' | 'error' | 'unconfigured'): void {
+    switch (state) {
+        case 'ready':
+            statusBarItem.text = '$(search) OpenGrok';
+            statusBarItem.tooltip = 'OpenGrok MCP: Ready - Click for options';
+            statusBarItem.backgroundColor = undefined;
+            statusBarItem.command = 'opengrok-mcp.statusMenu';
+            break;
+        case 'error':
+            statusBarItem.text = '$(warning) OpenGrok';
+            statusBarItem.tooltip = 'OpenGrok MCP: Error - Click for options';
+            statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+            statusBarItem.command = 'opengrok-mcp.statusMenu';
+            break;
+        case 'unconfigured':
+            statusBarItem.text = '$(gear) OpenGrok';
+            statusBarItem.tooltip = 'OpenGrok MCP: Not configured - Click to setup';
+            statusBarItem.command = 'opengrok-mcp.configureUI';
+            break;
+    }
+    statusBarItem.show();
+}
+
+async function showStatusMenu(): Promise<void> {
+    const action = await vscode.window.showQuickPick([
+        { label: '$(zap) Test Connection', detail: 'Verify connection to the OpenGrok server', command: 'opengrok-mcp.test' },
+        { label: '$(settings-gear) Configuration Manager', detail: 'Open visual configuration panel', command: 'opengrok-mcp.configureUI' },
+        { label: '$(gear) Quick Configure', detail: 'Update credentials via input prompts', command: 'opengrok-mcp.configure' },
+        { label: '$(output) Show Server Logs', detail: 'View diagnostic logs for learning and debugging', command: 'opengrok-mcp.showLogs' },
+        { label: '$(cloud-download) Check for Updates', detail: 'Check for new extension versions on GitHub', command: 'opengrok-mcp.checkUpdate' }
+    ], {
+        placeHolder: 'OpenGrok MCP Options'
+    });
+
+    if (action) {
+        vscode.commands.executeCommand(action.command);
+    }
+}
+
+async function configureCredentials(): Promise<void> {
+    const config = vscode.workspace.getConfiguration('opengrok-mcp');
+
+    const currentUrl = config.get<string>('baseUrl') || '';
+    const baseUrl = await vscode.window.showInputBox({
+        prompt: 'Enter OpenGrok server URL',
+        value: currentUrl,
+        ignoreFocusOut: true,
+        validateInput: (value) => {
+            try { new URL(value); return null; }
+            catch { return 'Please enter a valid URL'; }
+        }
+    });
+    if (!baseUrl) return;
+
+    const currentUsername = config.get<string>('username') || '';
+    const username = await vscode.window.showInputBox({
+        prompt: 'Enter your OpenGrok username',
+        value: currentUsername,
+        ignoreFocusOut: true
+    });
+    if (!username) return;
+
+    const password = await vscode.window.showInputBox({
+        prompt: 'Enter your OpenGrok password',
+        password: true,
+        ignoreFocusOut: true
+    });
+    if (!password) return;
+
+    await config.update('baseUrl', baseUrl, vscode.ConfigurationTarget.Global);
+    await config.update('username', username, vscode.ConfigurationTarget.Global);
+
+    // Store password in VS Code SecretStorage (encrypted, per-user, never in settings.json)
+    await secretStorage.store(`opengrok-password-${username}`, password);
+    log(`Credentials saved for user: ${username}`);
+
+    vscode.window.showInformationMessage(
+        'OpenGrok credentials saved securely! Copilot Chat can now search your codebase.',
+        'Test Connection'
+    ).then(action => {
+        if (action === 'Test Connection') testConnection();
+    });
+
+    updateStatusBar('ready');
+}
+
+// Automatically prompt for reload on first configuration
+function promptForReload() {
+    vscode.window.showInformationMessage(
+        'Connection successful! First-time setup requires a window reload to enable OpenGrok tools in Copilot.',
+        'Reload Window'
+    ).then(selection => {
+        if (selection === 'Reload Window') {
+            vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
+    });
+}
+
+/**
+ * Test connection using Node's https module — properly supports rejectUnauthorized
+ * for internal/self-signed certificates on corporate networks.
+ */
+async function testConnection(): Promise<void> {
+    const config = vscode.workspace.getConfiguration('opengrok-mcp');
+    const username = config.get<string>('username');
+    const baseUrl = config.get<string>('baseUrl');
+    const verifySsl = config.get<boolean>('verifySsl') ?? true;
+
+    if (!username) {
+        vscode.window.showErrorMessage('OpenGrok: No username configured.', 'Configure Now')
+            .then(a => { if (a === 'Configure Now') vscode.commands.executeCommand('opengrok-mcp.configureUI'); });
+        return;
+    }
+
+    const password = await secretStorage.get(`opengrok-password-${username}`);
+    if (!password) {
+        vscode.window.showErrorMessage('OpenGrok: No password found. Please configure credentials.', 'Configure Now')
+            .then(a => { if (a === 'Configure Now') vscode.commands.executeCommand('opengrok-mcp.configureUI'); });
+        return;
+    }
+
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Testing OpenGrok connection...',
+        cancellable: false
+    }, async () => {
+        try {
+            const targetUrl = baseUrl || '';
+            const parsed = new URL(targetUrl);
+            const b64 = Buffer.from(`${username}:${password}`).toString('base64');
+
+            const statusCode = await httpGet(parsed, {
+                'Authorization': `Basic ${b64}`,
+                'User-Agent': 'OpenGrok-MCP/2.0.0'
+            }, verifySsl);
+
+            if (statusCode >= 200 && statusCode < 400) {
+                log(`Connection test successful (HTTP ${statusCode})`);
+                vscode.window.showInformationMessage('✓ OpenGrok connection successful!');
+                updateStatusBar('ready');
+
+                if (needsReloadForTools) {
+                    promptForReload();
+                    // Don't prompt again if they test multiple times
+                    needsReloadForTools = false;
+                }
+            } else if (statusCode === 401) {
+                log('Authentication failed (401)');
+                vscode.window.showErrorMessage('✗ Authentication failed. Check your username and password.');
+                updateStatusBar('error');
+            } else {
+                log(`Unexpected status: ${statusCode}`);
+                vscode.window.showWarningMessage(`OpenGrok returned HTTP ${statusCode}`);
+            }
+        } catch (err: any) {
+            const msg: string = err.message ?? String(err);
+            log(`Connection test failed: ${msg}`);
+            if (msg.includes('certificate') || msg.includes('self-signed') || msg.includes('CERT') || msg.includes('SSL')) {
+                vscode.window.showErrorMessage(
+                    '✗ SSL certificate error. If using a self-signed/internal CA, disable SSL verification in Settings.',
+                    'Open Settings'
+                ).then(a => {
+                    if (a === 'Open Settings') {
+                        vscode.commands.executeCommand('workbench.action.openSettings', 'opengrok-mcp.verifySsl');
+                    }
+                });
+            } else {
+                vscode.window.showErrorMessage(`✗ Connection failed: ${msg}`);
+            }
+            updateStatusBar('error');
+        }
+    });
+}
+
+/**
+ * Perform a GET request using Node's built-in https/http module.
+ * This properly supports rejectUnauthorized for internal CA certs,
+ * unlike the global fetch() in VS Code's Node.js context.
+ */
+function httpGet(url: URL, headers: Record<string, string>, verifySsl: boolean): Promise<number> {
+    return new Promise((resolve, reject) => {
+        const transport = url.protocol === 'https:' ? https : http;
+        const req = transport.request(
+            {
+                hostname: url.hostname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname + url.search,
+                method: 'GET',
+                headers,
+                rejectUnauthorized: verifySsl,
+                timeout: 15000,
+            },
+            (res: any) => {
+                res.resume(); // Consume the response data to avoid memory leaks
+                resolve(res.statusCode);
+            }
+        );
+        req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+/**
+ * Perform a GET request and return the parsed JSON body.
+ * Rejects if the response status is non-2xx or the body is not valid JSON.
+ */
+function httpGetJson(url: URL, headers: Record<string, string>, verifySsl: boolean): Promise<any> {
+    return new Promise((resolve, reject) => {
+        const transport = url.protocol === 'https:' ? https : http;
+        const req = transport.request(
+            {
+                hostname: url.hostname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname + url.search,
+                method: 'GET',
+                headers,
+                rejectUnauthorized: verifySsl,
+                timeout: 15000,
+            },
+            (res: any) => {
+                if (res.statusCode < 200 || res.statusCode >= 300) {
+                    res.resume();
+                    reject(new Error(`HTTP ${res.statusCode}`));
+                    return;
+                }
+                const chunks: Buffer[] = [];
+                res.on('data', (chunk: Buffer) => chunks.push(chunk));
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+                    } catch (e) {
+                        reject(new Error('Failed to parse JSON response'));
+                    }
+                });
+            }
+        );
+        req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+/**
+ * Download a URL to a local file path, following up to 5 redirects.
+ */
+function downloadToFile(url: URL, destPath: string, verifySsl: boolean, redirectsLeft = 5, headers: Record<string, string> = {}): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (redirectsLeft === 0) {
+            reject(new Error('Too many redirects'));
+            return;
+        }
+        const transport = url.protocol === 'https:' ? https : http;
+        const req = transport.request(
+            {
+                hostname: url.hostname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname + url.search,
+                method: 'GET',
+                headers,
+                rejectUnauthorized: verifySsl,
+                timeout: 60000,
+            },
+            (res: any) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    res.resume();
+                    const redirectUrl = new URL(res.headers.location);
+                    // Block redirects to untrusted hosts or protocol downgrades
+                    if (redirectUrl.hostname !== url.hostname || redirectUrl.protocol !== url.protocol) {
+                        reject(new Error(`Redirect to untrusted destination blocked: ${redirectUrl.protocol}//${redirectUrl.hostname}`));
+                        return;
+                    }
+                    downloadToFile(redirectUrl, destPath, verifySsl, redirectsLeft - 1, headers)
+                        .then(resolve).catch(reject);
+                    return;
+                }
+                if (res.statusCode < 200 || res.statusCode >= 300) {
+                    res.resume();
+                    reject(new Error(`HTTP ${res.statusCode}`));
+                    return;
+                }
+                const out = fs.createWriteStream(destPath);
+                res.pipe(out);
+                out.on('finish', () => out.close(() => resolve()));
+                out.on('error', reject);
+            }
+        );
+        req.on('timeout', () => { req.destroy(); reject(new Error('Download timed out')); });
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+/**
+ * Compare two semver strings (major.minor.patch).
+ * Returns -1 if a < b, 0 if equal, 1 if a > b.
+ */
+function semverCompare(a: string, b: string): number {
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+        const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+        if (diff !== 0) { return diff < 0 ? -1 : 1; }
+    }
+    return 0;
+}
+
+
+class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
+    private _onDidChange = new vscode.EventEmitter<void>();
+    readonly onDidChangeMcpServerDefinitions = this._onDidChange.event;
+
+    fireChanged(): void {
+        this._onDidChange.fire();
+    }
+
+    async provideMcpServerDefinitions(token: vscode.CancellationToken): Promise<vscode.McpServerDefinition[]> {
+        // Clean up stale credential files (>60 seconds old) from previous calls
+        // Server should delete files immediately after reading, so stale files indicate crashed servers
+        cleanupStaleCredentialFiles();
+
+        const config = vscode.workspace.getConfiguration('opengrok-mcp');
+        const username = config.get<string>('username');
+        if (!username) return [];
+
+        const password = await secretStorage.get(`opengrok-password-${username}`);
+        const baseUrl = config.get<string>('baseUrl') || '';
+        const verifySsl = config.get<boolean>('verifySsl') ?? false;
+        const proxy = config.get<string>('proxy');
+
+        const env: Record<string, string> = {
+            OPENGROK_BASE_URL: baseUrl,
+            OPENGROK_USERNAME: username,
+            OPENGROK_VERIFY_SSL: verifySsl ? 'true' : 'false',
+        };
+
+        if (password) {
+            // Write credentials to secure temporary file with AES-256 encryption
+            // This prevents exposure via process inspection AND file reading
+            try {
+                const tempDir = os.tmpdir();
+                const filename = `opengrok-cred-${crypto.randomBytes(16).toString('hex')}.tmp`;
+                const filepath = path.join(tempDir, filename);
+                
+                // Generate one-time encryption key and IV
+                const encryptionKey = crypto.randomBytes(32); // AES-256
+                const iv = crypto.randomBytes(16);
+                
+                // Encrypt the password
+                const cipher = crypto.createCipheriv('aes-256-cbc', encryptionKey, iv);
+                let encrypted = cipher.update(password, 'utf8', 'base64');
+                encrypted += cipher.final('base64');
+                
+                // Write encrypted data: IV:EncryptedPassword
+                const fileContent = `${iv.toString('base64')}:${encrypted}`;
+                fs.writeFileSync(filepath, fileContent, { 
+                    encoding: 'utf8',
+                    mode: 0o600  // rw------- on Unix; on Windows, file is in user's temp dir
+                });
+                
+                // Windows: Apply explicit ACLs for defense-in-depth
+                if (process.platform === 'win32') {
+                    try {
+                        // Remove inherited permissions and grant full control only to current user
+                        execSync(`icacls "${filepath}" /inheritance:r /grant:r "%username%:(F)" /Q`, 
+                                 { windowsHide: true });
+                        log('Windows ACL hardening applied to credential file');
+                    } catch (aclErr) {
+                        log(`Warning: Failed to apply Windows ACLs (file still protected by temp dir): ${aclErr}`);
+                    }
+                }
+                
+                env.OPENGROK_PASSWORD_FILE = filepath;
+                env.OPENGROK_PASSWORD_KEY = encryptionKey.toString('base64');
+                log(`Credential file created (encrypted): ${filepath}`);
+                
+                // Note: File will be securely deleted by the server after it reads and decrypts the password.
+                // Stale files (from crashed servers) are cleaned up on next provideMcpServerDefinitions() call.
+            } catch (err) {
+                log(`Warning: Failed to create credential file, falling back to env variable: ${err}`);
+                env.OPENGROK_PASSWORD = password;
+            }
+        }
+
+        if (proxy) {
+            env.HTTP_PROXY = proxy;
+            env.HTTPS_PROXY = proxy;
+        }
+
+        // Local layer — auto-discover compile_commands.json files in all workspace folders
+        const compileDbUris = await vscode.workspace.findFiles('**/compile_commands.json');
+        if (compileDbUris.length > 0) {
+            env.OPENGROK_LOCAL_COMPILE_DB_PATHS = compileDbUris.map(u => u.fsPath).join(',');
+        }
+
+        // Return the definition object
+        // Use process.execPath to get VS Code's bundled Node.js runtime path
+        // This ensures it works even when Node.js is not installed system-wide
+        return [
+            {
+                type: 'stdio',
+                label: 'OpenGrok',
+                command: process.execPath,
+                args: [getServerScriptPath()],
+                env: env,
+                version: getExtensionVersion()
+            } as any
+        ];
+    }
+}
+
+function getServerScriptPath(): string {
+    // The bundled server is at out/server/main.js relative to the extension root
+    const ext = vscode.extensions.getExtension('IcyHot09.opengrok-mcp-server');
+    if (ext) {
+        return ext.extensionUri.fsPath.replace(/\\/g, '/') + '/out/server/main.js';
+    }
+    return 'out/server/main.js';
+}
+
+// ============================================================================
+// Configuration Manager Webview
+// ============================================================================
+
+let configPanel: vscode.WebviewPanel | undefined;
+
+function openConfigurationPanel(context: vscode.ExtensionContext): void {
+    log('Opening Configuration Manager webview...');
+    
+    if (configPanel) {
+        configPanel.reveal(vscode.ViewColumn.One);
+        return;
+    }
+    
+    configPanel = vscode.window.createWebviewPanel(
+        'opengrokConfig',
+        'OpenGrok Configuration',
+        vscode.ViewColumn.One,
+        {
+            enableScripts: true,
+            retainContextWhenHidden: true
+        }
+    );
+    
+    configPanel.webview.html = getConfigManagerHtml(context);
+    
+    configPanel.onDidDispose(() => {
+        configPanel = undefined;
+    });
+    
+    // Handle messages from webview
+    configPanel.webview.onDidReceiveMessage(
+        async (message) => {
+            log(`Config webview message: ${message.type}`);
+            try {
+                switch (message.type) {
+                    case 'getConfig':
+                        await sendCurrentConfig(configPanel!);
+                        break;
+                    case 'testConnection':
+                        await handleWebviewTestConnection(configPanel!, message.data);
+                        break;
+                    case 'saveConfiguration':
+                        await handleSaveConfiguration(configPanel!, message.data);
+                        break;
+                }
+            } catch (error: any) {
+                log(`Error handling webview message: ${error.message}`);
+                configPanel?.webview.postMessage({ type: 'error', message: error.message });
+            }
+        }
+    );
+    
+    log('Configuration Manager webview created');
+}
+
+async function sendCurrentConfig(panel: vscode.WebviewPanel): Promise<void> {
+    const config = vscode.workspace.getConfiguration('opengrok-mcp');
+    const username = config.get<string>('username') || '';
+    const baseUrl = config.get<string>('baseUrl') || '';
+    const verifySsl = config.get<boolean>('verifySsl') ?? true;
+    const proxy = config.get<string>('proxy') || '';
+    
+    let hasPassword = false;
+    if (username) {
+        const password = await secretStorage.get(`opengrok-password-${username}`);
+        hasPassword = !!password;
+    }
+    
+    panel.webview.postMessage({
+        type: 'loadConfig',
+        config: { baseUrl, username, verifySsl, proxy, hasPassword }
+    });
+}
+
+async function handleWebviewTestConnection(panel: vscode.WebviewPanel, data: any): Promise<void> {
+    const { baseUrl, username, password, verifySsl } = data;
+    
+    panel.webview.postMessage({ type: 'testing', message: 'Testing connection...' });
+    
+    try {
+        const parsed = new URL(baseUrl);
+        // Normalize base: strip trailing slash, then append the OpenGrok API probe path
+        const base = parsed.href.replace(/\/+$/, '');
+        const apiUrl = new URL(`${base}/api/v1/projects`);
+        const b64 = Buffer.from(`${username}:${password}`).toString('base64');
+        
+        const options = {
+            hostname: apiUrl.hostname,
+            port: apiUrl.port || (apiUrl.protocol === 'https:' ? 443 : 80),
+            path: apiUrl.pathname + apiUrl.search,
+            method: 'GET',
+            headers: { 'Authorization': `Basic ${b64}`, 'Accept': 'application/json' },
+            rejectUnauthorized: verifySsl
+        };
+        
+        const protocol = apiUrl.protocol === 'https:' ? https : http;
+        
+        await new Promise<void>((resolve, reject) => {
+            const req = protocol.request(options, (res) => {
+                let body = '';
+                res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+                res.on('end', () => {
+                    if (res.statusCode === 401) {
+                        reject(new Error('Authentication failed (401). Check username/password.'));
+                    } else if (res.statusCode === 403) {
+                        reject(new Error('Access denied (403). Check credentials or server permissions.'));
+                    } else if (!res.statusCode || res.statusCode >= 400) {
+                        reject(new Error(`Server returned status ${res.statusCode} — is this an OpenGrok server?`));
+                    } else {
+                        // Verify the response looks like OpenGrok's /api/v1/projects (a JSON array)
+                        try {
+                            const json = JSON.parse(body);
+                            if (!Array.isArray(json)) {
+                                reject(new Error('Unexpected response — is this an OpenGrok server?'));
+                            } else {
+                                resolve();
+                            }
+                        } catch {
+                            reject(new Error('Response is not JSON — is this an OpenGrok server?'));
+                        }
+                    }
+                });
+            });
+            req.on('error', (err: Error) => reject(err));
+            req.setTimeout(10000, () => {
+                req.destroy();
+                reject(new Error('Connection timed out'));
+            });
+            req.end();
+        });
+        
+        log('✓ Webview test connection successful');
+        panel.webview.postMessage({ type: 'testSuccess', message: '✓ Connection successful!' });
+    } catch (error: any) {
+        log(`✗ Webview test connection failed: ${error.message}`);
+        panel.webview.postMessage({ type: 'error', message: `✗ Connection failed: ${error.message}` });
+    }
+}
+
+async function handleSaveConfiguration(panel: vscode.WebviewPanel, data: any): Promise<void> {
+    const { baseUrl, username, password, proxy, verifySsl } = data;
+    
+    const config = vscode.workspace.getConfiguration('opengrok-mcp');
+    const oldUsername = config.get<string>('username');
+    
+    // Get existing password if new one not provided
+    let finalPassword = password;
+    if (!finalPassword && oldUsername) {
+        finalPassword = await secretStorage.get(`opengrok-password-${oldUsername}`);
+    }
+    
+    if (!finalPassword) {
+        panel.webview.postMessage({ type: 'error', message: 'Password is required' });
+        return;
+    }
+    
+    // Save configuration
+    await config.update('baseUrl', baseUrl, vscode.ConfigurationTarget.Global);
+    await config.update('username', username, vscode.ConfigurationTarget.Global);
+    await config.update('verifySsl', verifySsl, vscode.ConfigurationTarget.Global);
+    await config.update('proxy', proxy || undefined, vscode.ConfigurationTarget.Global);
+    
+    // Store password securely
+    await secretStorage.store(`opengrok-password-${username}`, finalPassword);
+    
+    // Clean up old password if username changed
+    if (oldUsername && oldUsername !== username) {
+        await secretStorage.delete(`opengrok-password-${oldUsername}`);
+    }
+    
+    log(`Configuration saved for user: ${username}`);
+    updateStatusBar('ready');
+    
+    // Force VS Code to re-fetch tools with the new credentials
+    notifyMcpServerChanged();
+    
+    panel.webview.postMessage({ type: 'success', message: 'Configuration saved successfully! Tools are actively refreshing.' });
+
+    // Now actively test the connection with the new saved configuration
+    testConnection();
+}
+
+function getConfigManagerHtml(context: vscode.ExtensionContext): string {
+    // Try to load external HTML file
+    try {
+        const htmlPath = path.join(context.extensionPath, 'out', 'webview', 'configManager.html');
+        if (fs.existsSync(htmlPath)) {
+            return fs.readFileSync(htmlPath, 'utf8');
+        }
+    } catch (err) {
+        log(`Warning: Could not load external HTML: ${err}`);
+    }
+    
+    // Fallback: external HTML file missing
+    return '<html><body><p>Configuration panel unavailable. Please reinstall the extension.</p></body></html>';
+}
+
+export function deactivate(): void {
+    // Clean up any pending credential files on extension deactivation
+    cleanupAllCredentialFiles();
+    log('OpenGrok MCP extension deactivated');
+}

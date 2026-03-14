@@ -1,0 +1,451 @@
+# Changelog
+
+All notable changes to the OpenGrok MCP extension will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## Highlights
+
+### 🧠 v3.0 — Code Intelligence Engine
+
+6 new compound tools, ~92% fewer tokens, full OpenGrok 1.7.x support, and a zero-config local source layer that knows your compiler flags. The largest update since the original rewrite.
+
+- 🚀 **v3.1** — Auto-update notifications. One click in VS Code, no manual downloads.
+- 🌐 **v3.2** — Standalone MCP server. One-command installer, cross-platform credential wrappers, no VS Code required.
+- 🛡️ **v3.3** — Security hardening, 100% code coverage, Node 24, enterprise-grade quality. 476 tests, zero audit findings.
+
+### 🔐 v2.0 — Full TypeScript Rewrite
+
+Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
+
+- 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [3.3.2] - 2026-03-09
+
+### Fixed
+
+- **`get_file_content` shows wrong line numbers when `start_line` is used**: The formatter always displayed lines as `1, 2, 3...` regardless of the `start_line` parameter, making it hard to correlate output with the actual file. Root cause: `FileContent` had no `startLine` field, so `formatFileContent` had no offset to start from. Fixed by adding `startLine?: number` to the `FileContent` interface and populating it in all three code paths (`client.ts` API read, `server.ts` local abs-path read, `server.ts` local root read). The formatter now numbers lines from `startLine` (e.g., a `start_line=60` request shows `60 | ...`, `61 | ...`, etc.).
+
+---
+
+## [3.3.1] - 2026-03-09
+
+### Fixed
+
+- **`get_file_annotate` shows blame markers instead of source code on OpenGrok 1.7.x**: In the real 1.7.x annotate HTML format, source code lines appear as sibling nodes *after* `<span class="blame">`, not inside it. The performance refactor in v3.3.0 introduced a regression: `el.text` on the blame span returned the blame anchor text (`851c8156SRudra Roy`) instead of the actual source line. Fixed with index-based parent `childNodes` iteration (since `TextNode.nextSibling` is unreliable in `node-html-parser`). Also added `content` assertions to the OpenGrok 1.7.x annotate parser test.
+
+---
+
+## [3.3.0] - 2026-03-09
+
+### 🛡️ Security Hardening
+
+- **Content Security Policy**: Added CSP `<meta>` tags to the Configuration Manager webview and inline fallback HTML, restricting script/style sources to nonces.
+- **XSS prevention**: Replaced `innerHTML` with `textContent` for toast notification messages in the Configuration Manager.
+- **Cross-origin redirect blocking**: `downloadToFile()` (used by auto-updater) now rejects cross-origin redirects and protocol downgrades (HTTPS → HTTP).
+- **Removed global TLS bypass**: Removed `NODE_TLS_REJECT_UNAUTHORIZED=0` env var mutation; SSL verification is now controlled solely by the `verifySsl` setting.
+- **ReDoS guard**: `listProjects` filter input is capped at 100 characters and rejects patterns with 3+ consecutive wildcards.
+- **Error message sanitization**: Filesystem paths are stripped from error messages returned to the LLM to prevent path disclosure.
+- **Wrapper script key derivation**: Added random salt to AES key derivation in bash and PowerShell credential wrappers, with automatic migration from unsalted keys. Added `.env` file TTL warnings.
+
+### ⚡ Performance
+
+- **Singleton HTTP agent**: Reuse a single `undici.Agent` instead of creating one per request (eliminates socket leaks under sustained load).
+- **Async local layer I/O**: Converted all `fs.realpathSync` / `fs.readFileSync` calls in the local layer to async (`fsp.realpath`, `fsp.readFile`).
+- **O(1) compile index lookups**: `resolveFileFromIndex()` now uses a pre-built suffix index instead of linear scan.
+- **Single-pass parsers**: `parseFileSymbols()` and `parseAnnotate()` rewritten as single-pass (eliminated double HTML parses).
+- **Fast string operations**: `extractLineRange()` replaced `split/slice/join` with `indexOf`-based extraction; `capResponse()` uses `Buffer.byteLength` fast path.
+- **Probabilistic cache eviction**: TTL cache evicts expired entries every 10th write instead of every write.
+- **Cached annotate style**: The annotation endpoint style (REST vs. xref fallback) is cached after the first successful call per session.
+
+### 🏗️ Architecture & Code Quality
+
+- **Tool definitions extracted** (`tool-schemas.ts`): Tool definitions are now generated from Zod schemas via `zod-to-json-schema` in a dedicated module, replacing the hand-maintained JSON schemas that were inline in `server.ts`.
+- **Server refactored**: Three long `dispatchTool` handler cases (`search_and_read`, `get_symbol_context`, `get_compile_info`) extracted into standalone functions — the switch case shrank by ~260 lines.
+- **ESLint flat config** (`eslint.config.mjs`): Added `typescript-eslint` + Prettier integration. `npm run lint` now runs both `tsc --noEmit` and ESLint.
+- **Centralized logger** (`logger.ts`): All modules use a structured logger with `[INFO]`/`[WARN]`/`[ERROR]` prefixes; raw `console.error` calls eliminated.
+- **Config hardening**: NaN-safe integer parsing via `zIntString` helper for all 9 numeric env vars. `Config` object frozen after construction.
+- **Zod 4 upgrade**: Migrated from Zod 3 to Zod 4 with `zod-to-json-schema` for tool input schemas.
+- **Node 24**: Runtime upgraded from Node 22 to Node 24. All dependencies updated to latest (undici 7.22, esbuild 0.25, vitest 4, typescript-eslint 8).
+
+### 🎨 UI Improvements
+
+- **Configuration Manager accessibility**: Improved HTML structure with proper semantic elements, ARIA attributes, and keyboard navigation in the webview panel.
+
+### 🧪 Tests — 100% Code Coverage
+
+- **476 tests passing** (up from 123 in v3.2.1) — **100% statement, branch, function, and line coverage** across all metrics.
+- 10 new test files: `branch-coverage.test.ts`, `branch-targets.test.ts`, `client-extended.test.ts`, `client-internals.test.ts`, `coverage-gaps.test.ts`, `formatters-extended.test.ts`, `logger.test.ts`, `main.test.ts`, `parsers-extended.test.ts`, `server-coverage.test.ts`, `server-dispatch.test.ts`, `server-extended.test.ts`.
+- Test fixtures updated to match real OpenGrok 1.7.x HTML output.
+- CI pipeline now reports coverage metrics via Vitest's `v8` coverage provider.
+
+---
+
+## [3.2.1] - 2026-03-09
+
+### Fixed
+- **VSIX download fails with "not a zip file" error**: artifact URLs (`/-/jobs/artifacts/.../raw/...`) redirected unauthenticated requests to a sign-in page. The download URL was rewritten to the provider API equivalent (`/api/v4/projects/.../jobs/artifacts/.../raw/...`) that accepts auth headers correctly. Auth headers are also stripped on any cross-host redirects to avoid leaking them to CDN/S3 servers.
+
+---
+
+## [3.2.0] - 2026-03-09
+
+### ✨ New Features
+
+- **Standalone MCP server distribution**: The server binary is now packaged into platform archives (`-linux.tar.gz`, `-darwin.tar.gz`, `-win.zip`) and attached to every release, so developers can use it without VS Code from any MCP-compatible client (Claude Code, Cursor, Windsurf, Claude Desktop, OpenCode, etc.).
+
+- **One-command installer** (`scripts/install.sh`): Detects OS, pulls the correct archive from the latest release, and installs to `~/.local/bin`. Respects `HTTPS_PROXY` and `OPENGROK_MCP_VERSION` for pinned versions.
+
+- **Credential wrapper scripts**: Cross-platform wrapper scripts (`opengrok-mcp-wrapper.sh` / `.ps1` / `.cmd`) handle secure credential storage and injection. Credentials are never written as plaintext — stored in the OS keychain (macOS), Secret Service (Linux), or Windows Credential Manager, with an AES-256-CBC encrypted file fallback for headless environments. An interactive `--setup` mode guides first-time configuration.
+
+- **`--version` flag**: `opengrok-mcp --version` (or `-v`) now prints the version and exits, enabling health checks and wrapper pre-flight validation.
+
+- **Updated `MCP_CLIENTS.md`**: Comprehensive setup guide covering all supported clients with both wrapper-based quick start and manual (env var) fallback instructions.
+
+---
+
+## [3.1.0] - 2026-03-08
+
+### ✨ New Features
+
+- **Auto-update notifications**: The extension checks the releases API on activation (throttled to once per 24 hours) for newer stable versions. When an update is found, a notification offers to download the `.vsix` and install it automatically — no manual download required. Pre-release tags (`beta`, `alpha`, `rc`) are skipped. Authentication is handled through VS Code's authentication API.
+
+- **"OpenGrok: Check for Updates" command**: New Command Palette entry and status bar menu item to manually trigger an update check at any time. Triggers a sign-in prompt if not already authenticated.
+
+---
+
+## [3.0.1] - 2026-03-08
+
+### Fixed
+- `get_file_annotate` now shows per-line blame instead of collapsing consecutive same-author lines
+- `list_projects` filter works as substring match (e.g. `release` matches all `release-*` projects)
+- Renamed `get_compile_info` parameter `file_path` → `path` for consistency with other tools
+- Added AI hints to MCP instructions to prevent common parameter mistakes
+
+---
+
+## [3.0.0] - 2026-03-08
+
+### 🚀 The Big One — OpenGrok Gets a Brain
+
+v3.0 is the largest update since the original TypeScript rewrite. It transforms OpenGrok from a basic "fetch this file" tool into a full code intelligence engine for Copilot Chat.
+
+**6 new tools** — The headline additions are `get_symbol_context`, `search_and_read`, `batch_search`, `get_file_symbols`, `get_compile_info`, and `index_health`. The star of the show is `get_symbol_context`: give it a symbol name and it returns the definition, the header declaration, and every call site — all in a single round-trip. That's a ~92% token reduction compared to the old manual workflow.
+
+**Your compiler joins the conversation** — If your workspace has a `compile_commands.json`, the extension auto-discovers it and enables `get_compile_info`. Ask Copilot "what flags does this file compile with?" and get back exact include paths, defines, and the language standard. Zero configuration required.
+
+**Every symbol in a file, at a glance** — `get_file_symbols` lists all functions, classes, macros, enums, structs, and typedefs in a file. Works even on OpenGrok instances that block the REST API — it falls back to parsing the web UI directly.
+
+**Massively smarter formatting** — Responses are capped at 16 KB (no more blowing up Copilot's context window), search output is compact one-line-per-result, and all search tools now support a `file_type` filter and `hist` search type for commit messages.
+
+**OpenGrok 1.7.x fully supported** — Fixed a slew of compatibility issues: annotate 404s, broken blame parsing, empty directory listings, and defs/refs searches returning errors. If it works in the browser, it works through this extension now.
+
+> For the full technical details, see the beta changelogs below (beta.1 through beta.4).
+
+---
+
+## [3.0.0-beta.4] - 2026-03-08
+
+### ✨ New Features
+
+- **`get_file_symbols` tool** (`server.ts`, `client.ts`, `parsers.ts`, `formatters.ts`, `models.ts`): new tool that lists all top-level symbols (functions, classes, macros, enums, structs, typedefs) defined in a file. Tries the `/api/v1/file/defs` REST endpoint first; falls back to parsing the xref HTML page for `data-definition-place="def"` `intelliWindow-symbol` links when the REST endpoint returns 401 (as on some OpenGrok instances). CSS class mapping: `xf`→function, `xm`→macro, `xc`→class, `xe`→enum, `xs`→struct, `xt`→typedef. Extracts line numbers and scope signatures. Integrates with `get_symbol_context` as an optional Step 2.5.
+
+### 🐛 Bug Fixes
+
+- **Config Manager UI overflows small windows** (`configManager.html`): the webview panel was overflowing vertically on small screens and short windows, cutting off the Save button. Fixed with `min-height: 100vh` on body, `justify-content: safe center` on the flex container, `flex-shrink: 0` on the glass panel, and three responsive breakpoints (`@media (max-height: 700px)`, `(max-height: 520px)`, `(max-width: 500px)`) to scale down padding and font sizes.
+
+- **Tool selection reset on every window open** (`extension.ts`): `workbench.action.chat.mcp.resetCachedTools` was being invoked inside `activate()` on every extension activation (i.e., every time a new VS Code window opened). This caused Copilot Chat to reset its enabled-tools list, forcing the user to re-tick every OpenGrok tool after opening a new folder. Fixed by removing the `resetCachedTools` call from `activate()` and `testConnection()`.
+
+- **`command 'workbench.action.chat.mcp.resetCachedTools' not found`** (`extension.ts`): the internal VS Code command used to notify Copilot of MCP server changes does not exist in all VS Code versions, producing a logged error on every configuration save and version update. Replaced all uses with the official `onDidChangeMcpServerDefinitions` event API: added a `_onDidChange` `EventEmitter` to `OpenGrokMcpProvider`, a `fireChanged()` method, a module-level `mcpProvider` variable, and a `notifyMcpServerChanged()` helper. The event fires only on version update and configuration save.
+
+### 🧪 Tests
+
+- **123 tests passing** (up from 106)
+- 9 new `parseFileSymbols` tests: type mapping, line numbers, scope signatures, HTML entity decoding, local/argument exclusion, empty input, no-def anchors
+- 8 new `formatFileSymbols` tests: grouped output, unknown types, empty input
+
+---
+
+## [3.0.0-beta.3] - 2026-03-07
+
+### ✨ New Features
+
+- **Zero-config local layer**: The extension now auto-discovers `compile_commands.json` files from all VS Code workspace folders using `vscode.workspace.findFiles`. No manual configuration is needed — open a workspace that contains a build tree and the local layer enables itself automatically.
+
+- **`inferBuildRoot()` function**: New helper in `compile-info.ts` that derives the build root as the longest common path prefix of all `directory` entries across the discovered `compile_commands.json` files. This correctly handles build trees where sources are compiled across multiple subdirectories.
+
+- **`OPENGROK_LOCAL_COMPILE_DB_PATHS` env var**: Replaced `OPENGROK_LOCAL_BUILD_ROOT`. Accepts a comma-separated list of absolute paths to `compile_commands.json` files. Used by standalone (non-VS Code) deployments to explicitly provide compile databases.
+
+- **`get_file_content` local bypass — compile index path resolution** (`server.ts`): fixed the transparent local read to actually work when the local source tree path differs from the OpenGrok-relative path. Previously `tryLocalRead` only did a path-join of the OpenGrok path against configured roots, which fails when the workspace is an rsync of a deep subtree (e.g. `/home/user/code/myproject`) rather than a mirror of the full build tree. Now the bypass uses a two-tier lookup:
+  1. **Compile index hit** (`resolveFileFromIndex`): suffix-matches the OpenGrok path (e.g. `project/source/module/Foo.cpp`) against the absolute paths already stored in the compile index from `compile_commands.json` `file` fields (e.g. `/build/project/source/module/Foo.cpp`). Reads directly from the authoritative build-tree path. No root inference needed.
+  2. **Path-join fallback** (`tryLocalRead`): unchanged, catches header files (`.h`/`.hpp`) that are not compiled units and therefore not present in the compile index.
+
+### 🗑️ Removed
+
+- **`opengrok-mcp.local.buildRoot` VS Code setting**: No longer needed. The build root is now inferred automatically from the `directory` fields in discovered compile databases.
+
+- **"Local Source Layer" panel** in Configuration Manager: Removed the Build Root input and Save Local Settings button. The local layer is fully zero-config.
+
+### 🐛 Bug Fixes
+
+- **"What's new" notification loop** (`extension.ts`): the update notification was reappearing on every VS Code reload after a version upgrade. Root cause: `context.globalState.update('extensionVersion', currentVersion)` was called *after* `vscode.window.showInformationMessage`, which is an awaited call that can complete after the extension reloads. This meant the version was never persisted before the next activation, so the notification fired again. Fixed by moving the `globalState.update` call to before the version comparison.
+
+- **`get_file_annotate` always 404 on OpenGrok 1.7.x** (`client.ts`): `getAnnotate()` was hardcoded to hit the `/annotate/<project>/<path>` endpoint which only exists in OpenGrok 1.12+. On 1.7.x this always returns HTTP 404. Fixed with a try/catch that attempts `/annotate/` first and falls back to `/xref/<project>/<path>?a=true` (the 1.7.x annotation URL).
+
+- **`get_file_annotate` blame parser wrong on OpenGrok 1.7.x** (`parsers.ts`): three bugs in `parseAnnotate()` caused every blame line to produce empty revision/author/date even when the HTML contained full blame data. Root causes: (1) OpenGrok 1.7.x puts the `title` attribute on the child `<a class="r">` element, not on `<span class="blame">` itself — the parser was only checking the span. (2) The `title` format uses `changeset:` not `revision:` and `user:` not `author:`. (3) Field values are separated by `&nbsp;` (decoded to `\u00a0`) not plain spaces. All three are now handled; the parser accepts both old and new title formats.
+
+- **`search_suggest` empty-index diagnostic** (`server.ts`): when the OpenGrok suggester index has not been built, the API returns `time: 0` in the response. The tool now surfaces a descriptive message in this case instead of the generic "No suggestions found."
+
+### 🧪 Tests
+
+- **106 tests passing** (up from 105)
+- 1 new `parseAnnotate` test: real OpenGrok 1.7.x annotate HTML with `changeset:`/`user:`/`&nbsp;` title format (child `<a class="r">` element)
+
+---
+
+## [3.0.0-beta.2] - 2026-03-07
+
+### 🐛 Bug Fixes
+
+- **History parser** (`parseFileHistory`): fixed incorrect revision extraction. OpenGrok 1.7.x emits two `<a>` tags per revision cell — a `#` anchor link followed by the actual hash link. The parser was grabbing the first one, stripping `#`, and producing an empty string, which caused all history entries to be silently skipped. Now selects the last non-`#` link text, falling back to raw cell text.
+
+- **Directory listing parser** (`parseDirectoryListing`): fixed empty results on real OpenGrok HTML. The actual table structure has an icon cell (`<p class="r"/>`) in `cells[0]` with no link; the entry name is in `cells[1]`. The parser was only looking in `cells[0]` and found nothing. Also fixed relative href handling — real OpenGrok emits relative hrefs (e.g. `DistributedIDA/`) instead of absolute `/xref/project/…` paths; these are now joined with the current browse path.
+
+### ✨ New Features
+
+- **`defs`/`refs` web search fallback**: OpenGrok 1.7.x REST API (`/api/v1/search?defs=…`) returns HTTP 400 for `defs` and `refs` search types. The client now automatically falls back to the web search endpoint (`/search?defs=…`) and parses the HTML response. This makes `search_code(search_type=defs)`, `get_symbol_context`, and all tools that use defs/refs fully functional against OpenGrok 1.7.x instances.
+
+- **`file_type` filter** (`search_code`, `batch_search`, `search_and_read`, `get_symbol_context`): new optional parameter restricts results to a specific language. Common values: `cxx` (C++), `c`, `java`, `python`, `javascript`, `typescript`, `csharp`, `golang`, `ruby`, `perl`, `sql`, `xml`, `yaml`, `shell`, `makefile`. Passed as `?type=<value>` to the REST API or `?type=<value>` to the web search fallback.
+
+- **`hist` search type** (`search_code`, `batch_search`, `search_and_read`): new enum value for `search_type`. Searches commit messages and change history via `/api/v1/search?hist=…`. Use this to find when a feature was introduced or who last touched a subsystem.
+
+- **Default project** (`OPENGROK_DEFAULT_PROJECT`): new config variable. When a search tool is called without an explicit `projects` argument, this project is applied automatically. Overrideable per-call by passing `projects`. The MCP server instructions block also tells the LLM to use the configured default project.
+
+### 🧪 Tests
+
+- **99 tests passing** (up from 95)
+- 4 new tests: real-world OpenGrok history HTML with two `<a>` per cell, real-world directory listing with icon cell and relative hrefs, web search HTML results parser for defs, web search HTML results parser for refs
+
+---
+
+## [3.0.0-beta.1] - 2026-03-07
+
+This release is the result of a full token-optimization sprint. The headline number: **~92% fewer tokens** on typical codebase investigations compared to v2.x. That means Copilot Chat gets more done per context window, costs less, and produces better answers because it's no longer drowning in bloated tool responses.
+
+> **Beta note:** All features are implemented and fully tested (95/95 tests passing). The beta label reflects that production telemetry is still being gathered. Breaking output format changes from v2.x are intentional.
+
+### 🚀 New Tools — Compound Operations
+
+Four new high-efficiency tools that collapse multi-step workflows into a single MCP call:
+
+- **`batch_search`** — Execute up to 5 OpenGrok searches in parallel in a single call. Before this, Copilot would fire `search_code` 3–5 times sequentially for any multi-angle investigation (search by defs, then refs, then full text). Now it's one round trip. Each query has its own `search_type` and `max_results`. This alone turns `~4,500 tokens → ~1,200 tokens` for a 3-query investigation.
+
+- **`search_and_read`** — Combined search + contextual file read in one call. Previously: `search_code` returns a hit, Copilot then calls `get_file_content` on the full file (often 1,500+ lines). Now: search + surrounding context lines come back together, capped at 8 KB total. Result: `search(500) + full_file(24,000) → search_and_read(~1,500)` — **~92% reduction**.
+
+- **`get_symbol_context`** — The big one. Complete symbol investigation in a single call: (1) find the definition, (2) fetch context lines around it, (3) if it's a `.cpp` file, automatically locate and fetch the corresponding `.h`/`.hpp` header, (4) return reference samples. What used to take 4–5 sequential tool calls (~36,500 tokens) now costs one call (~2,800 tokens) — **~92% reduction**. This is the right first call for any unknown C++ symbol, class, or function.
+
+- **`index_health`** — Lightweight diagnostic: tests the OpenGrok connection, measures latency, and reports back in one line. Use this if search results seem stale or incomplete before wasting tokens on failed queries.
+
+### 🗜️ Formatter Rewrites — Compact Output Formats
+
+Every response formatter was rewritten to strip decorative markdown and maximize information density:
+
+- **Search results** (`search_code`, `find_file`): replaced multi-line markdown blocks (headings, `**Project:**` labels, `` ``` `` fences, `[View in OpenGrok]()` links) with one-liner-per-match: `path (project) Lline: content`. **~75% token reduction** per result set.
+
+- **File content** (`get_file_content`): added smart truncation — full-file reads without `start_line`/`end_line` are capped at 200 lines (configurable via `OPENGROK_MAX_INLINE_LINES`). The truncation message tells Copilot exactly what to do: `*Showing first N of M lines. Use start_line/end_line to read specific sections.*` **~70% reduction** on blind file reads.
+
+- **File history** (`get_file_history`): replaced markdown tables with dense one-liners: `[abc1234] user (2026-03-05): "Fix connection leak"`. Revision truncated to 8 chars, author email stripped. **~90% reduction**.
+
+- **Directory listing** (`browse_directory`): removed 📁/📄 emojis and `### Directories`/`### Files` subheadings. Now: `DIR  src/` and `FILE config.ts (1,234 bytes)`, directories sorted first. **~50% reduction**.
+
+- **Annotate/blame** (`get_file_annotate`): consecutive lines with the same revision + author are grouped into ranges (`abc1234 user L10-L25: <content>`). Default cap reduced from 100 lines to 50 for full-file views. **~70% reduction**.
+
+### 🔧 Behavioral Improvements
+
+- **`get_file_annotate` line ranges**: Added `start_line`/`end_line` parameters. Copilot can now request blame for a 20-line window instead of fetching the entire file's blame history.
+
+- **Lowered `max_results` defaults**: `search_code` and `find_file` default from 25 → 10 results. Still 100 max if you need it. Reduces noise on typical queries.
+
+- **Global 16 KB response cap**: Every tool response is gated through a byte-budget interceptor. Responses exceeding 16 KB (configurable via `OPENGROK_MAX_RESPONSE_BYTES`) are truncated at the last newline and a guidance message is appended. Prevents catastrophic 20 K+ token blowouts from unexpectedly large files.
+
+- **Server-level LLM instructions**: The MCP server now advertises a `instructions` block that nudges Copilot toward correct behavior at the session level — use compound tools first, always pass line ranges, prefer `defs`/`refs` for known symbols. Zero backend cost.
+
+- **Tightened tool descriptions**: All 8 original tool descriptions reduced to one concise sentence. The `get_file_content` description now says `ALWAYS pass start_line/end_line — never fetch full files` in caps. LLM behavior follows tool descriptions.
+
+### 🗂️ Local Source Layer — Optional
+
+An optional zero-dependency local layer that lets the server read source files directly from disk and resolve compiler flags from `compile_commands.json`:
+
+- **`get_compile_info`** tool: given a source file path, returns compiler, include paths, preprocessor defines, language standard (`-std=`), and extra flags. Uses an in-memory index built from one or more `compile_commands.json` files at startup. Lookup supports absolute paths, OpenGrok-relative paths, and basename fallback.
+
+- **Transparent `get_file_content` bypass**: when the local layer is enabled and a file resolves within a configured source root, `get_file_content` reads directly from disk instead of making an HTTP request to OpenGrok. Same response format — Copilot doesn't know the difference. Falls back to the API silently on any local read failure.
+
+- **Security**: all paths validated with `fs.realpathSync()` and boundary-checked against configured allowed roots. Files and include paths that escape the roots are silently dropped. Path traversal sequences rejected. The `compile_commands.json` tokenizer handles both POSIX escape sequences and Windows backslash paths correctly.
+
+- **Configuration**: enabled via `opengrok-mcp.local.enabled` (VS Code setting) or `OPENGROK_LOCAL_ENABLED=true` (env var). Source roots configured via `opengrok-mcp.local.compileDbRoots` (array of directory paths in VS Code settings) or `OPENGROK_LOCAL_COMPILE_DB_ROOTS` (comma-separated env var).
+
+### 🧪 Tests
+
+- **95 tests passing** (up from 45 in v2.x)
+- 23 new tests for `compile-info.ts`: parser (arguments-array and command-string formats), security (out-of-root path rejection for both source files and include paths), resilience (missing files, malformed JSON, missing fields, empty-roots failsafe), and multi-DB merge
+- Existing formatter tests updated for new compact output formats
+- All tests run in-process with no network — fast and CI-safe
+
+### Configuration Reference
+
+New environment variables / VS Code settings in v3.0:
+
+| Variable | Setting | Default | Description |
+|---|---|---|---|
+| `OPENGROK_MAX_INLINE_LINES` | — | `200` | Max lines returned for a full-file read |
+| `OPENGROK_MAX_RESPONSE_BYTES` | — | `16384` | Hard cap (bytes) on any tool response |
+| `OPENGROK_LOCAL_ENABLED` | `opengrok-mcp.local.enabled` | `false` | Enable local file read bypass + compile info |
+| `OPENGROK_LOCAL_COMPILE_DB_ROOTS` | `opengrok-mcp.local.compileDbRoots` | `""` | Comma-separated directories containing `compile_commands.json` |
+| `OPENGROK_DEFAULT_PROJECT` | — | `""` | Default project applied when `projects` argument is omitted |
+
+## [2.1.2] - 2026-03-01
+
+### Added
+
+- **Modern Connection Manager**: Replaced traditional setup prompts with a sleek, centered webview interface featuring dark/light mode theming.
+- **First-Time Setup Auto-Reload**: Introduced graceful `needsReloadForTools` tracking to correctly prompt a VS Code Window Reload only on completely fresh installations.
+
+### Changed
+
+- Auto-Test connection runs smoothly and silently immediately after clicking the new 'Save Settings' webview button.
+- Updated README.md instructions with accurate automated setup flow logic and new visual screenshots.
+
+## [2.0.7] - 2026-02-26
+
+### Security
+
+- **AES-256-CBC encrypted credential files**: Passwords are now encrypted before being written to temporary files, adding defense-in-depth protection
+- **Secure file deletion**: Credential files are overwritten with random data before deletion, preventing forensic recovery
+- Encryption key is passed via environment variable (not visible in process arguments)
+
+### Changed
+
+- Stale credential file cleanup now uses 60-second threshold (handles VS Code's lazy MCP server spawning)
+- Removed timer-based cleanup in favor of on-demand cleanup during server definition requests
+
+### Fixed
+
+- Credential files no longer deleted before MCP server can read them (VS Code spawns servers lazily on first tool invocation)
+
+## [2.0.6] - 2026-02-26
+
+### Security
+
+- **Credential file cleanup**: Extension now guarantees credential file deletion after 2 seconds, even if the MCP server is already running and doesn't read the file
+- Old credential files are cleaned up when new server definitions are requested
+- All credential files are cleaned up on extension deactivation
+
+## [2.0.5] - 2026-02-26
+
+### Security
+
+- **Secure credential file handling**: Passwords are now passed to the MCP server via temporary files instead of environment variables, preventing exposure via process inspection (`ps`, `/proc`, Task Manager)
+- Credential files are created with restricted permissions (`0o600` on Unix, ACL-hardened on Windows)
+- Files are deleted immediately after reading, minimizing the exposure window
+
+### Added
+
+- Comprehensive test suite for credential file security (8 new tests)
+
+### Fixed
+
+- Credentials no longer visible in process environment listings
+
+## [2.0.4] - 2026-02-21
+
+### Added
+
+- Created a quick-access `OpenGrok: Status Menu` available by clicking the bottom-right status bar icon, making connection testing and settings trivially accessible.
+
+### Changed
+
+- Revised README setup instructions to perfectly match the interactive wizard flow (Configure -> Test -> Reload).
+
+## [2.0.3] - 2026-02-21
+
+### Changed
+
+- Improved Setup & Configuration documentation in README.md
+
+### Fixed
+
+- Fixed MCP tool caching issue by providing extension version in server definition (Copilot now correctly refreshes tools on update)
+
+## [2.0.2] - 2026-02-21
+
+### Added
+
+- Automatic version tracking and update notifications
+- Version management scripts (patch, minor, major releases)
+- Automated CI/CD release pipeline
+- Complete release workflow documentation (RELEASE_WORKFLOW.md, VERSIONING.md)
+
+### Changed
+
+- Extension now uses VS Code's bundled Node.js runtime (fixes Windows compatibility)
+- README updated to use natural language for Copilot Chat interactions
+- Releases now fully automated - no manual VSIX uploads needed
+
+### Fixed
+
+- Windows "spawn node ENOENT" error when Node.js not in PATH
+
+## [2.0.0] - 2026-02-21
+
+### Added
+
+- Complete TypeScript rewrite
+- Native MCP (Model Context Protocol) server integration
+- Support for 8 OpenGrok operations:
+  - Full-text code search
+  - Symbol definitions and references
+  - File path search
+  - File content retrieval with line ranges
+  - File history and git annotations
+  - Directory browsing
+  - Project listing
+  - Search suggestions
+- Secure credential storage using VS Code SecretStorage (OS keychain)
+- Intelligent caching with TTL and size limits
+- Rate limiting and retry logic
+- SSRF and path traversal protections
+- 45 comprehensive unit tests
+
+### Changed
+
+- Migrated from Python to TypeScript
+- Bundled as single VSIX with no external dependencies
+- Uses VS Code's built-in Node.js runtime
+
+### Fixed
+
+- SSL certificate handling for internal/self-signed CAs
+- Windows compatibility issues
+
+### Security
+
+- Passwords stored in OS keychain (never in plain text)
+- Error messages sanitized to prevent credential leakage
+- Secure temporary file-based credential passing to server process (improved in 2.0.5)
+
+## [1.0.0] - Previous
+
+- Original Python implementation
+
+---
+
+## Version Numbering
+
+We use [Semantic Versioning](https://semver.org/):
+
+- **MAJOR** (X.0.0): Breaking changes or major feature overhauls
+- **MINOR** (x.Y.0): New features, backwards compatible
+- **PATCH** (x.y.Z): Bug fixes, minor improvements

@@ -1,0 +1,191 @@
+/**
+ * Configuration management for OpenGrok MCP Server.
+ * Reads from environment variables, no passwords logged or exposed.
+ */
+
+import { z } from "zod";
+import * as fs from "fs";
+import * as crypto from "crypto";
+import { logger } from "./logger.js";
+
+// ---------------------------------------------------------------------------
+// Schema
+// ---------------------------------------------------------------------------
+
+/** Parse a string env var as an integer, rejecting NaN values. */
+const zIntString = (defaultVal: string) =>
+  z
+    .string()
+    .default(defaultVal)
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      if (Number.isNaN(n)) throw new Error(`expected integer, got "${v}"`);
+      return n;
+    });
+
+const ConfigSchema = z.object({
+  OPENGROK_BASE_URL: z
+    .string()
+    .url()
+    .default("https://opengrok.example.com/source/"),
+  OPENGROK_USERNAME: z.string().default(""),
+  OPENGROK_PASSWORD: z.string().default(""),
+  OPENGROK_PASSWORD_FILE: z.string().default(""),
+  OPENGROK_PASSWORD_KEY: z.string().default(""),
+  OPENGROK_VERIFY_SSL: z
+    .string()
+    .default("true")
+    .transform((v) => v.toLowerCase() !== "false"),
+  OPENGROK_TIMEOUT: zIntString("30"),
+  OPENGROK_DEFAULT_MAX_RESULTS: zIntString("25"),
+  // Cache settings
+  OPENGROK_CACHE_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v.toLowerCase() !== "false"),
+  OPENGROK_CACHE_SEARCH_TTL: zIntString("300"),
+  OPENGROK_CACHE_FILE_TTL: zIntString("600"),
+  OPENGROK_CACHE_HISTORY_TTL: zIntString("1800"),
+  OPENGROK_CACHE_PROJECTS_TTL: zIntString("3600"),
+  OPENGROK_CACHE_MAX_SIZE: zIntString("500"),
+  OPENGROK_CACHE_MAX_BYTES: zIntString("52428800"), // 50 MB default total cache budget
+  // Rate limit
+  OPENGROK_RATELIMIT_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v.toLowerCase() !== "false"),
+  OPENGROK_RATELIMIT_RPM: zIntString("60"),
+  // Proxy
+  HTTP_PROXY: z.string().default(""),
+  HTTPS_PROXY: z.string().default(""),
+  // Local layer — comma-separated absolute paths to compile_commands.json files
+  OPENGROK_LOCAL_COMPILE_DB_PATHS: z.string().default(""),
+  // Default project to scope searches to when none specified
+  OPENGROK_DEFAULT_PROJECT: z.string().default(""),
+});
+
+export type Config = z.infer<typeof ConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Loader
+// ---------------------------------------------------------------------------
+
+let _config: Config | undefined;
+
+/**
+ * Securely delete a file by overwriting with random data before unlinking.
+ * This prevents forensic recovery of sensitive data.
+ */
+function secureDeleteFile(filePath: string): void {
+  try {
+    const stat = fs.statSync(filePath);
+    // Overwrite with random data
+    const randomData = crypto.randomBytes(stat.size);
+    fs.writeFileSync(filePath, randomData);
+    // Now delete
+    fs.unlinkSync(filePath);
+    logger.info("Credential file securely overwritten and deleted");
+  } catch {
+    // If secure delete fails, try regular delete
+    /* v8 ignore start -- requires real filesystem with specific failure mode */
+    try {
+      fs.unlinkSync(filePath);
+      logger.info("Credential file deleted (regular delete)");
+    } catch (deleteErr) {
+      logger.warn("Failed to delete credential file:", deleteErr);
+    }
+    /* v8 ignore stop */
+  }
+}
+
+/**
+ * Decrypt password from encrypted credential file.
+ * File format: base64(IV):base64(encryptedPassword)
+ * Encryption: AES-256-CBC
+ */
+function decryptPassword(encryptedContent: string, keyBase64: string): string {
+  try {
+    const key = Buffer.from(keyBase64, "base64");
+    const [ivBase64, encryptedBase64] = encryptedContent.split(":");
+    
+    if (!ivBase64 || !encryptedBase64) {
+      logger.warn("Invalid encrypted file format");
+      return "";
+    }
+    
+    const iv = Buffer.from(ivBase64, "base64");
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    let decrypted = decipher.update(encryptedBase64, "base64", "utf8");
+    decrypted += decipher.final("utf8");
+    
+    return decrypted;
+  } catch (err) {
+    logger.warn("Failed to decrypt password:", err);
+    return "";
+  }
+}
+
+/**
+ * Load password from secure credential file, decrypt, and securely delete.
+ * Returns password from file or env variable.
+ */
+function loadPassword(envPassword: string, passwordFile: string, passwordKey: string): string {
+  if (passwordFile && passwordKey) {
+    try {
+      const encryptedContent = fs.readFileSync(passwordFile, "utf8").trim();
+      const password = decryptPassword(encryptedContent, passwordKey);
+      
+      if (password) {
+        // Securely delete the file (overwrite then unlink)
+        secureDeleteFile(passwordFile);
+        return password;
+      }
+    } catch (err) {
+      logger.warn("Failed to read credential file:", err);
+    }
+  } else if (passwordFile) {
+    // Legacy: unencrypted file (for backwards compatibility)
+    try {
+      const password = fs.readFileSync(passwordFile, "utf8").trim();
+      secureDeleteFile(passwordFile);
+      return password;
+    } catch (err) {
+      logger.warn("Failed to read credential file:", err);
+    }
+  }
+
+  return envPassword;
+}
+
+export function loadConfig(): Config {
+  if (_config) return _config;
+
+  const result = ConfigSchema.safeParse(process.env);
+  if (!result.success) {
+    logger.error("Configuration error:", result.error.format());
+    process.exit(1);
+  }
+
+  const data = result.data;
+
+  // Load password from secure encrypted file if provided
+  const password = loadPassword(
+    data.OPENGROK_PASSWORD,
+    data.OPENGROK_PASSWORD_FILE,
+    data.OPENGROK_PASSWORD_KEY
+  );
+
+  // Freeze to prevent accidental mutation by consumers
+  _config = Object.freeze({ ...data, OPENGROK_PASSWORD: password });
+
+  // Warn (never log password value)
+  if (!_config.OPENGROK_USERNAME) {
+    logger.warn("OPENGROK_USERNAME is not set. Authentication may fail.");
+  }
+
+  return _config;
+}
+
+export function resetConfig(): void {
+  _config = undefined;
+}
