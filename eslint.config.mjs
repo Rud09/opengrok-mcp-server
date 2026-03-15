@@ -3,7 +3,7 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   {
-    ignores: ['out/**', 'node_modules/**', '*.js', '*.mjs'],
+    ignores: ['out/**', 'node_modules/**', '*.js', '*.mjs', 'src/tests/**'],
   },
   ...tseslint.configs.strict,
   eslintConfigPrettier,
