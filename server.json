@@ -1,20 +1,20 @@
-{
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.IcyHot09/opengrok",
-  "description": "MCP server bridging OpenGrok search engines with AI for deep, instant context across massive codebases.",
-  "repository": {
-    "url": "https://github.com/IcyHot09/opengrok-mcp-server",
-    "source": "github"
-  },
-  "version": "3.3.4",
-  "packages": [
-    {
-      "registryType": "npm",
-      "identifier": "opengrok-mcp-server",
-      "version": "3.3.4",
-      "transport": {
-        "type": "stdio"
-      }
-    }
-  ]
+﻿{
+    "$schema":  "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name":  "io.github.IcyHot09/opengrok",
+    "description":  "MCP server bridging OpenGrok search engines with AI for deep, instant context across massive codebases.",
+    "repository":  {
+                       "url":  "https://github.com/IcyHot09/opengrok-mcp-server",
+                       "source":  "github"
+                   },
+    "version":  "3.3.5",
+    "packages":  [
+                     {
+                         "registryType":  "npm",
+                         "identifier":  "opengrok-mcp-server",
+                         "version":  "3.3.5",
+                         "transport":  {
+                                           "type":  "stdio"
+                                       }
+                     }
+                 ]
 }
