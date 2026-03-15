@@ -23,6 +23,19 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [3.3.5] - 2026-03-15
+
+### Changed
+
+- **Rebrand**: Extension `displayName` renamed to **OpenGrok MCP Server**.
+- **Description**: Updated to "MCP server bridging OpenGrok search engines with AI for deep, instant context across massive codebases" across `package.json`, `server.json`, and `README.md`.
+- **License**: Added `LICENSE-COMMERCIAL.md` clearly describing commercial/enterprise licensing terms. Updated `LICENSE` Required Notice with author attribution. README license section now explicitly states commercial use restrictions with contact info.
+- **Installation docs**: README now lists npm (`npx opengrok-mcp-server`) and MCP Registry (`io.github.IcyHot09/opengrok`) as first-class installation options alongside VS Code Marketplace.
+- **MCP Registry badge**: Added to README header badges.
+- **Release tooling**: Fixed wrong GitHub repo URL in `generate-release-notes.js`. Release script now syncs `server.json` version on each release.
+
+---
+
 ## [3.3.4] - 2026-03-14
 
 ### Changed

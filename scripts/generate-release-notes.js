@@ -19,7 +19,7 @@ if (!ver) {
 
 const ROOT = path.resolve(__dirname, '..');
 const log = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-const base = 'https://github.com/Rud09/opengrok-mcp-server';
+const base = 'https://github.com/IcyHot09/opengrok-mcp-server';
 
 const start = log.indexOf('## [' + ver + ']');
 if (start === -1) {

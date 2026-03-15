@@ -92,6 +92,18 @@ if ($Dry) {
     Write-Success "VSIX packaged: opengrok-mcp-$newVersion.vsix"
 }
 
+# Sync server.json version
+Write-Step "Syncing server.json version..."
+if ($Dry) {
+    Write-Host "[DRY RUN] Would update server.json version to $newVersion" -ForegroundColor Yellow
+} else {
+    $serverJson = Get-Content "server.json" -Raw | ConvertFrom-Json
+    $serverJson.version = $newVersion
+    $serverJson.packages[0].version = $newVersion
+    $serverJson | ConvertTo-Json -Depth 10 | Set-Content "server.json" -Encoding UTF8
+    Write-Success "server.json updated to $newVersion"
+}
+
 # Git commit and tag
 Write-Step "Creating Git commit and tag..."
 if ($Dry) {
@@ -100,7 +112,7 @@ if ($Dry) {
     Write-Host "  git commit -m 'chore: release v$newVersion'" -ForegroundColor Yellow
     Write-Host "  git tag v$newVersion" -ForegroundColor Yellow
 } else {
-    git add package.json CHANGELOG.md
+    git add package.json CHANGELOG.md server.json
     git commit -m "chore: release v$newVersion"
     git tag "v$newVersion"
     Write-Success "Created commit and tag v$newVersion"
