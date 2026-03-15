@@ -100,7 +100,8 @@ if ($Dry) {
     $serverJson = Get-Content "server.json" -Raw | ConvertFrom-Json
     $serverJson.version = $newVersion
     $serverJson.packages[0].version = $newVersion
-    $serverJson | ConvertTo-Json -Depth 10 | Set-Content "server.json" -Encoding UTF8
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText("$PWD\server.json", ($serverJson | ConvertTo-Json -Depth 10), $utf8NoBom)
     Write-Success "server.json updated to $newVersion"
 }
 
