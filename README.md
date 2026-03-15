@@ -4,9 +4,9 @@
 
 # OpenGrok MCP Server
 
-**Search your OpenGrok code index directly from GitHub Copilot Chat**
+**MCP server bridging OpenGrok indices with AI for deep, instant context across massive codebases**
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/IcyHot09.opengrok-mcp-server?label=VS%20Code%20Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![Installs](https://img.shields.io/visual-studio-marketplace/i/IcyHot09.opengrok-mcp-server)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![npm](https://img.shields.io/npm/v/opengrok-mcp-server?logo=npm)](https://www.npmjs.com/package/opengrok-mcp-server) [![CI](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml) [![GitHub Release](https://img.shields.io/github/v/release/IcyHot09/opengrok-mcp-server)](https://github.com/IcyHot09/opengrok-mcp-server/releases)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/IcyHot09.opengrok-mcp-server?label=VS%20Code%20Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![Installs](https://img.shields.io/visual-studio-marketplace/i/IcyHot09.opengrok-mcp-server)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![npm](https://img.shields.io/npm/v/opengrok-mcp-server?logo=npm)](https://www.npmjs.com/package/opengrok-mcp-server) [![MCP Registry](https://img.shields.io/badge/MCP_Registry-listed-blue)](https://registry.modelcontextprotocol.io) [![CI](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml) [![GitHub Release](https://img.shields.io/github/v/release/IcyHot09/opengrok-mcp-server)](https://github.com/IcyHot09/opengrok-mcp-server/releases)
 
 🔌 **Zero Install** &nbsp;·&nbsp; 🧠 **Compound Tools** &nbsp;·&nbsp; 🔄 **Auto-Updates** &nbsp;·&nbsp; 🔒 **Secure Credentials**
 
@@ -42,9 +42,25 @@
 
 ### Option 1 — VS Code Marketplace _(Recommended)_
 
-Search for **"OpenGrok Code Search for Copilot"** in the VS Code Extensions panel (`Ctrl+Shift+X`) and click Install.
+Search for **"OpenGrok MCP Server"** in the VS Code Extensions panel (`Ctrl+Shift+X`) and click Install.
 
-### Option 2 — Install pre-built VSIX
+### Option 2 — npm
+
+```bash
+npx opengrok-mcp-server
+```
+
+Or install globally:
+
+```bash
+npm install -g opengrok-mcp-server
+```
+
+### Option 3 — MCP Registry
+
+This server is listed on the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.IcyHot09/opengrok`. Any MCP-compatible client that supports the registry can discover and install it automatically.
+
+### Option 4 — Install pre-built VSIX
 
 1. Download the latest VSIX file from [GitHub Releases](https://github.com/IcyHot09/opengrok-mcp-server/releases).
 2. Install it in VS Code:
@@ -53,7 +69,7 @@ Search for **"OpenGrok Code Search for Copilot"** in the VS Code Extensions pane
 3. **Updates are automatic** — the extension checks GitHub Releases once per day and offers one-click install.
 
 <details>
-<summary>🛠️ Option 3 — Build from source <em>(For developers)</em></summary>
+<summary>🛠️ Option 5 — Build from source <em>(For developers)</em></summary>
 
 ```bash
 git clone https://github.com/IcyHot09/opengrok-mcp-server.git
@@ -231,4 +247,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 
 This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
 
-**This project is free for personal and non-commercial use.** For enterprise or commercial licensing, please contact me at [rudroy09@gmail.com](mailto:rudroy09@gmail.com).
+✅ **Free for personal, hobby, research, educational, and non-commercial use**
+❌ **Not allowed for any commercial, business, enterprise, or paid use**
+
+**Enterprises / Companies:**
+If you want to use this MCP server in a commercial context (internal tools, production, SaaS, CI pipelines, etc.), you must purchase a commercial license.
+Contact [rudroy09@gmail.com](mailto:rudroy09@gmail.com) for pricing and terms.
+
+See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for details.
