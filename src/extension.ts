@@ -7,8 +7,6 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { execSync } from 'child_process';
 
-const MCP_SERVER_NAME = 'opengrok';
-
 // Credential files older than this are considered stale and will be cleaned up
 const CREDENTIAL_FILE_MAX_AGE_MS = 60000; // 60 seconds
 
@@ -49,7 +47,7 @@ function cleanupStaleCredentialFiles(): void {
                         fs.unlinkSync(filepath);
                         log(`Cleaned up stale credential file (${Math.round(ageMs / 1000)}s old): ${filepath}`);
                     }
-                } catch (err) {
+                } catch {
                     // File might have been deleted by server, ignore
                 }
             }
@@ -73,7 +71,7 @@ function cleanupAllCredentialFiles(): void {
                 try {
                     fs.unlinkSync(filepath);
                     log(`Credential file cleaned up: ${filepath}`);
-                } catch (err) {
+                } catch {
                     // Ignore errors during cleanup
                 }
             }
@@ -170,11 +168,17 @@ async function checkForRemoteUpdate(
             'Accept': 'application/vnd.github+json',
         };
 
-        const releases: any[] = await httpGetJson(releasesUrl, headers, verifySsl);
+        interface GitHubRelease {
+            prerelease?: boolean;
+            draft?: boolean;
+            tag_name?: string;
+            assets?: Array<{ name?: string; browser_download_url?: string }>;
+        }
+        const releases = await httpGetJson(releasesUrl, headers, verifySsl) as GitHubRelease[];
         await context.globalState.update('lastUpdateCheck', Date.now());
 
         // Find the latest stable release (skip beta/alpha/rc/prerelease)
-        let latestRelease: any = null;
+        let latestRelease: GitHubRelease | null = null;
         let latestVersion = '';
         for (const rel of releases) {
             if (rel.prerelease || rel.draft) { continue; }
@@ -207,9 +211,17 @@ async function checkForRemoteUpdate(
             return;
         }
 
+        if (!latestRelease) {
+            log('No stable version found in releases.');
+            if (manual) {
+                vscode.window.showInformationMessage('OpenGrok MCP: No stable release found.');
+            }
+            return;
+        }
+
         // Find .vsix asset in release assets
         const vsixAsset = latestRelease.assets?.find(
-            (a: any) => /\.vsix$/i.test(a.name ?? '')
+            (a) => /\.vsix$/i.test(a.name ?? '')
         );
         const vsixUrl: string | undefined = vsixAsset?.browser_download_url;
         const releaseUrl = `${RELEASES_PAGE_URL}/tag/v${latestVersion}`;
@@ -249,11 +261,12 @@ async function checkForRemoteUpdate(
         } else if (action === 'View Release Notes') {
             vscode.env.openExternal(vscode.Uri.parse(releaseUrl));
         }
-    } catch (err: any) {
-        log(`Update check failed (non-fatal): ${err?.message ?? err}`);
+    } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        log(`Update check failed (non-fatal): ${errMsg}`);
         if (manual) {
             vscode.window.showWarningMessage(
-                `OpenGrok MCP: Could not check for updates. ${err?.message ?? ''}`
+                `OpenGrok MCP: Could not check for updates. ${errMsg}`
             );
         }
     }
@@ -285,7 +298,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 
     // Fire-and-forget: check for remote updates (throttled to once per 24 h)
-    checkForRemoteUpdate(context);
+    void checkForRemoteUpdate(context);
 
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const username = config.get<string>('username');
@@ -403,11 +416,11 @@ async function configureCredentials(): Promise<void> {
     await secretStorage.store(`opengrok-password-${username}`, password);
     log(`Credentials saved for user: ${username}`);
 
-    vscode.window.showInformationMessage(
+    void vscode.window.showInformationMessage(
         'OpenGrok credentials saved securely! Copilot Chat can now search your codebase.',
         'Test Connection'
     ).then(action => {
-        if (action === 'Test Connection') testConnection();
+        if (action === 'Test Connection') void testConnection();
     });
 
     updateStatusBar('ready');
@@ -481,8 +494,8 @@ async function testConnection(): Promise<void> {
                 log(`Unexpected status: ${statusCode}`);
                 vscode.window.showWarningMessage(`OpenGrok returned HTTP ${statusCode}`);
             }
-        } catch (err: any) {
-            const msg: string = err.message ?? String(err);
+        } catch (err: unknown) {
+            const msg: string = err instanceof Error ? err.message : String(err);
             log(`Connection test failed: ${msg}`);
             if (msg.includes('certificate') || msg.includes('self-signed') || msg.includes('CERT') || msg.includes('SSL')) {
                 vscode.window.showErrorMessage(
@@ -519,9 +532,9 @@ function httpGet(url: URL, headers: Record<string, string>, verifySsl: boolean):
                 rejectUnauthorized: verifySsl,
                 timeout: 15000,
             },
-            (res: any) => {
+            (res: http.IncomingMessage) => {
                 res.resume(); // Consume the response data to avoid memory leaks
-                resolve(res.statusCode);
+                resolve(res.statusCode ?? 0);
             }
         );
         req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
@@ -534,7 +547,7 @@ function httpGet(url: URL, headers: Record<string, string>, verifySsl: boolean):
  * Perform a GET request and return the parsed JSON body.
  * Rejects if the response status is non-2xx or the body is not valid JSON.
  */
-function httpGetJson(url: URL, headers: Record<string, string>, verifySsl: boolean): Promise<any> {
+function httpGetJson(url: URL, headers: Record<string, string>, verifySsl: boolean): Promise<unknown> {
     return new Promise((resolve, reject) => {
         const transport = url.protocol === 'https:' ? https : http;
         const req = transport.request(
@@ -547,10 +560,11 @@ function httpGetJson(url: URL, headers: Record<string, string>, verifySsl: boole
                 rejectUnauthorized: verifySsl,
                 timeout: 15000,
             },
-            (res: any) => {
-                if (res.statusCode < 200 || res.statusCode >= 300) {
+            (res: http.IncomingMessage) => {
+                const statusCode = res.statusCode ?? 0;
+                if (statusCode < 200 || statusCode >= 300) {
                     res.resume();
-                    reject(new Error(`HTTP ${res.statusCode}`));
+                    reject(new Error(`HTTP ${statusCode}`));
                     return;
                 }
                 const chunks: Buffer[] = [];
@@ -558,7 +572,7 @@ function httpGetJson(url: URL, headers: Record<string, string>, verifySsl: boole
                 res.on('end', () => {
                     try {
                         resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-                    } catch (e) {
+                    } catch {
                         reject(new Error('Failed to parse JSON response'));
                     }
                 });
@@ -590,10 +604,12 @@ function downloadToFile(url: URL, destPath: string, verifySsl: boolean, redirect
                 rejectUnauthorized: verifySsl,
                 timeout: 60000,
             },
-            (res: any) => {
-                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            (res: http.IncomingMessage) => {
+                const statusCode = res.statusCode ?? 0;
+                const location = res.headers.location;
+                if (statusCode >= 300 && statusCode < 400 && location) {
                     res.resume();
-                    const redirectUrl = new URL(res.headers.location);
+                    const redirectUrl = new URL(location);
                     // Block redirects to untrusted hosts or protocol downgrades
                     if (redirectUrl.hostname !== url.hostname || redirectUrl.protocol !== url.protocol) {
                         reject(new Error(`Redirect to untrusted destination blocked: ${redirectUrl.protocol}//${redirectUrl.hostname}`));
@@ -603,9 +619,9 @@ function downloadToFile(url: URL, destPath: string, verifySsl: boolean, redirect
                         .then(resolve).catch(reject);
                     return;
                 }
-                if (res.statusCode < 200 || res.statusCode >= 300) {
+                if (statusCode < 200 || statusCode >= 300) {
                     res.resume();
-                    reject(new Error(`HTTP ${res.statusCode}`));
+                    reject(new Error(`HTTP ${statusCode}`));
                     return;
                 }
                 const out = fs.createWriteStream(destPath);
@@ -643,7 +659,7 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         this._onDidChange.fire();
     }
 
-    async provideMcpServerDefinitions(token: vscode.CancellationToken): Promise<vscode.McpServerDefinition[]> {
+    async provideMcpServerDefinitions(_token: vscode.CancellationToken): Promise<vscode.McpServerDefinition[]> {
         // Clean up stale credential files (>60 seconds old) from previous calls
         // Server should delete files immediately after reading, so stale files indicate crashed servers
         cleanupStaleCredentialFiles();
@@ -725,16 +741,14 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         // Return the definition object
         // Use process.execPath to get VS Code's bundled Node.js runtime path
         // This ensures it works even when Node.js is not installed system-wide
-        return [
-            {
-                type: 'stdio',
-                label: 'OpenGrok',
-                command: process.execPath,
-                args: [getServerScriptPath()],
-                env: env,
-                version: getExtensionVersion()
-            } as any
-        ];
+        const def = new vscode.McpStdioServerDefinition(
+            'OpenGrok',
+            process.execPath,
+            [getServerScriptPath()],
+            env,
+            getExtensionVersion()
+        );
+        return [def];
     }
 }
 
@@ -781,21 +795,23 @@ function openConfigurationPanel(context: vscode.ExtensionContext): void {
     configPanel.webview.onDidReceiveMessage(
         async (message) => {
             log(`Config webview message: ${message.type}`);
+            if (!configPanel) return;
             try {
                 switch (message.type) {
                     case 'getConfig':
-                        await sendCurrentConfig(configPanel!);
+                        await sendCurrentConfig(configPanel);
                         break;
                     case 'testConnection':
-                        await handleWebviewTestConnection(configPanel!, message.data);
+                        await handleWebviewTestConnection(configPanel, message.data);
                         break;
                     case 'saveConfiguration':
-                        await handleSaveConfiguration(configPanel!, message.data);
+                        await handleSaveConfiguration(configPanel, message.data);
                         break;
                 }
-            } catch (error: any) {
-                log(`Error handling webview message: ${error.message}`);
-                configPanel?.webview.postMessage({ type: 'error', message: error.message });
+            } catch (error: unknown) {
+                const errMsg = error instanceof Error ? error.message : String(error);
+                log(`Error handling webview message: ${errMsg}`);
+                configPanel.webview.postMessage({ type: 'error', message: errMsg });
             }
         }
     );
@@ -822,7 +838,7 @@ async function sendCurrentConfig(panel: vscode.WebviewPanel): Promise<void> {
     });
 }
 
-async function handleWebviewTestConnection(panel: vscode.WebviewPanel, data: any): Promise<void> {
+async function handleWebviewTestConnection(panel: vscode.WebviewPanel, data: { baseUrl: string; username: string; password: string; verifySsl: boolean }): Promise<void> {
     const { baseUrl, username, password, verifySsl } = data;
     
     panel.webview.postMessage({ type: 'testing', message: 'Testing connection...' });
@@ -881,13 +897,14 @@ async function handleWebviewTestConnection(panel: vscode.WebviewPanel, data: any
         
         log('✓ Webview test connection successful');
         panel.webview.postMessage({ type: 'testSuccess', message: '✓ Connection successful!' });
-    } catch (error: any) {
-        log(`✗ Webview test connection failed: ${error.message}`);
-        panel.webview.postMessage({ type: 'error', message: `✗ Connection failed: ${error.message}` });
+    } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        log(`✗ Webview test connection failed: ${errMsg}`);
+        panel.webview.postMessage({ type: 'error', message: `✗ Connection failed: ${errMsg}` });
     }
 }
 
-async function handleSaveConfiguration(panel: vscode.WebviewPanel, data: any): Promise<void> {
+async function handleSaveConfiguration(panel: vscode.WebviewPanel, data: { baseUrl: string; username: string; password?: string; proxy?: string; verifySsl: boolean }): Promise<void> {
     const { baseUrl, username, password, proxy, verifySsl } = data;
     
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
@@ -927,7 +944,7 @@ async function handleSaveConfiguration(panel: vscode.WebviewPanel, data: any): P
     panel.webview.postMessage({ type: 'success', message: 'Configuration saved successfully! Tools are actively refreshing.' });
 
     // Now actively test the connection with the new saved configuration
-    testConnection();
+    void testConnection();
 }
 
 function getConfigManagerHtml(context: vscode.ExtensionContext): string {
