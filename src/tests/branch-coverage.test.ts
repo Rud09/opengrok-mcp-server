@@ -402,7 +402,7 @@ describe('server.ts branch coverage', () => {
         results: [{ project: 'p', path: '/f.cpp', matches: [] }],
         startIndex: 0, endIndex: 1,
       });
-      const result = await dispatchTool('search_and_read', { query: 'test' }, client as any, config, emptyLocal());
+      const result = await dispatchTool('opengrok_search_and_read', { query: 'test' }, client as any, config, emptyLocal());
       expect(result).toBeDefined();
     });
 
@@ -421,7 +421,7 @@ describe('server.ts branch coverage', () => {
       client.getFileContent.mockImplementation(() =>
         Promise.resolve({ project: 'p', path: 'f.cpp', content: bigContent, lineCount: 500, sizeBytes: bigContent.length })
       );
-      const result = await dispatchTool('search_and_read', { query: 'test' }, client as any, config, emptyLocal());
+      const result = await dispatchTool('opengrok_search_and_read', { query: 'test' }, client as any, config, emptyLocal());
       expect(result).toBeDefined();
     });
 
@@ -433,7 +433,7 @@ describe('server.ts branch coverage', () => {
         startIndex: 0, endIndex: 1,
       });
       client.getFileContent.mockRejectedValueOnce(new Error('cannot read'));
-      const result = await dispatchTool('search_and_read', { query: 'test' }, client as any, config, emptyLocal());
+      const result = await dispatchTool('opengrok_search_and_read', { query: 'test' }, client as any, config, emptyLocal());
       expect(result).toBeDefined();
     });
 
@@ -447,7 +447,7 @@ describe('server.ts branch coverage', () => {
       client.getFileContent.mockResolvedValueOnce({
         project: 'p', path: 'Makefile', content: 'all: build', lineCount: 1, sizeBytes: 10,
       });
-      const result = await dispatchTool('search_and_read', { query: 'test' }, client as any, config, emptyLocal());
+      const result = await dispatchTool('opengrok_search_and_read', { query: 'test' }, client as any, config, emptyLocal());
       expect(result).toContain('Makefile');
     });
   });
@@ -466,7 +466,7 @@ describe('server.ts branch coverage', () => {
       // No header search needed — already a .h file
       // Refs search
       client.search.mockResolvedValueOnce({ query: 'MyClass', searchType: 'refs', totalCount: 0, results: [] });
-      const result = await dispatchTool('get_symbol_context', { symbol: 'MyClass' }, client as any, config, emptyLocal());
+      const result = await dispatchTool('opengrok_get_symbol_context', { symbol: 'MyClass' }, client as any, config, emptyLocal());
       expect(result).toContain('class/struct');
     });
 
@@ -482,7 +482,7 @@ describe('server.ts branch coverage', () => {
       client.getFileSymbols.mockResolvedValueOnce({ project: 'p', path: 'Makefile', symbols: [] });
       // Refs search
       client.search.mockResolvedValueOnce({ query: 'func', searchType: 'refs', totalCount: 0, results: [] });
-      const result = await dispatchTool('get_symbol_context', { symbol: 'func' }, client as any, config, emptyLocal());
+      const result = await dispatchTool('opengrok_get_symbol_context', { symbol: 'func' }, client as any, config, emptyLocal());
       expect(result).toContain('function/method');
     });
 
@@ -500,7 +500,7 @@ describe('server.ts branch coverage', () => {
         symbols: [{ symbol: 'X', type: 'class', line: 1 }], // no lineStart
       });
       client.search.mockResolvedValueOnce({ query: 'X', searchType: 'refs', totalCount: 0, results: [] });
-      const result = await dispatchTool('get_symbol_context', { symbol: 'X' }, client as any, config, emptyLocal());
+      const result = await dispatchTool('opengrok_get_symbol_context', { symbol: 'X' }, client as any, config, emptyLocal());
       expect(result).toContain('X');
     });
   });
@@ -524,7 +524,7 @@ describe('server.ts branch coverage', () => {
       });
 
       try {
-        const result = await dispatchTool('get_compile_info', { path: resolved }, makeMockClient() as any, config, {
+        const result = await dispatchTool('opengrok_get_compile_info', { path: resolved }, makeMockClient() as any, config, {
           enabled: true, roots: [tmpDir], index, suffixIndex: new Map(),
         });
         expect(result).toContain('g++');
@@ -547,7 +547,7 @@ describe('server.ts branch coverage', () => {
       });
 
       try {
-        const result = await dispatchTool('get_compile_info', { path: 'src/test.cpp' }, makeMockClient() as any, config, {
+        const result = await dispatchTool('opengrok_get_compile_info', { path: 'src/test.cpp' }, makeMockClient() as any, config, {
           enabled: true, roots: [tmpDir], index, suffixIndex: new Map(),
         });
         expect(result).toContain('clang++');
@@ -565,7 +565,7 @@ describe('server.ts branch coverage', () => {
         includes: [], defines: [], standard: '', extraFlags: [],
       });
 
-      const result = await dispatchTool('get_compile_info', { path: 'test.cpp' }, makeMockClient() as any, config, {
+      const result = await dispatchTool('opengrok_get_compile_info', { path: 'test.cpp' }, makeMockClient() as any, config, {
         enabled: true, roots: ['/nonexistent'], index, suffixIndex: new Map(),
       });
       expect(result).toContain('gcc');
@@ -589,7 +589,7 @@ describe('server.ts branch coverage', () => {
 
       const client = makeMockClient();
       try {
-        const result = await dispatchTool('get_file_content', {
+        const result = await dispatchTool('opengrok_get_file_content', {
           project: 'proj', path: 'test.cpp',
         }, client as any, config, {
           enabled: true, roots: [tmpDir], index, suffixIndex,
@@ -608,7 +608,7 @@ describe('server.ts branch coverage', () => {
         project: 'p', path: 'test.cpp', content: 'api content', lineCount: 1, sizeBytes: 11,
       });
 
-      const result = await dispatchTool('get_file_content', {
+      const result = await dispatchTool('opengrok_get_file_content', {
         project: 'p', path: 'test.cpp',
       }, client as any, config, {
         enabled: true, roots: ['/nonexistent'], index: new Map(), suffixIndex: new Map(),

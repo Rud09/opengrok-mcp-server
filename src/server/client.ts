@@ -61,7 +61,7 @@ class RateLimiter {
       this.queue.push(resolve);
       /* v8 ignore start */
       if (!this.processing) {
-        this.processQueue();
+        void this.processQueue();
       }
       /* v8 ignore stop */
     });
@@ -77,8 +77,8 @@ class RateLimiter {
 
       if (this.tokens >= 1) {
         this.tokens -= 1;
-        const resolve = this.queue.shift()!;
-        resolve();
+        const resolve = this.queue.shift();
+        if (resolve) resolve();
       } else {
         // Release lock, sleep, re-check — avoids convoy effect
         const waitMs = ((1 - this.tokens) / this.rate) * 1000;
@@ -131,8 +131,8 @@ class TTLCache<K, V> {
     ) {
       const firstKey = this.map.keys().next().value;
       if (firstKey === undefined) break;
-      const entry = this.map.get(firstKey)!;
-      this.totalBytes -= entry.sizeBytes;
+      const entry = this.map.get(firstKey);
+      if (entry) this.totalBytes -= entry.sizeBytes;
       this.map.delete(firstKey);
     }
 
@@ -177,6 +177,9 @@ const TIMEOUTS = {
   file: 30_000,
   default: 30_000,
 };
+
+const MAX_REDIRECTS = 10;
+const MAX_FILTER_LENGTH = 100;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -256,17 +259,47 @@ export function extractLineRange(
 
 /**
  * Throw if `path` contains traversal sequences that could escape the project
- * root on the remote server.
+ * root on the remote server. Rejects literal, URL-encoded, double-encoded,
+ * and null-byte variants.
  */
 export function assertSafePath(path: string): void {
-  const normalized = path.replace(/\\/g, "/");
+  // Decode once to catch single-encoding variants (%2e%2e, %2f)
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path.replace(/\+/g, "%20"));
+  } catch {
+    // Malformed percent-encoding: treat conservatively as unsafe
+    throw new Error(`Unsafe path rejected (malformed encoding): "${path}"`);
+  }
+
+  // Null bytes — never valid in a path component
+  if (decoded.includes("\0") || path.includes("%00") || path.includes("%2500")) {
+    throw new Error(`Unsafe path rejected (null byte): "${path}"`);
+  }
+
+  // Check on the decoded string for traversal components
+  const normalized = decoded.replace(/\\/g, "/");
   if (
     normalized.includes("/../") ||
     normalized.startsWith("../") ||
-    normalized.endsWith("/..") ||
-    normalized === ".."
+    normalized.endsWith("/..")||
+    normalized === ".." ||
+    normalized.includes("/./") ||
+    normalized.startsWith("./")
   ) {
     throw new Error(`Unsafe path rejected: "${path}"`);
+  }
+
+  // Also check the raw path for encoded traversal patterns that survived decoding
+  const rawLower = path.toLowerCase();
+  if (
+    rawLower.includes("%2e%2e") ||
+    rawLower.includes("%2f..") ||
+    rawLower.includes("..%2f") ||
+    rawLower.includes("%252e") ||
+    rawLower.includes("%252f")
+  ) {
+    throw new Error(`Unsafe path rejected (encoded traversal): "${path}"`);
   }
 }
 
@@ -370,7 +403,7 @@ export class OpenGrokClient {
       headers["Authorization"] = this.authHeader;
     }
 
-    const fetchOptions: RequestInit & { dispatcher?: any } = {
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
       headers,
       redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
@@ -391,7 +424,7 @@ export class OpenGrokClient {
 
         if ([301, 302, 303, 307, 308].includes(response.status)) {
           /* v8 ignore start -- defensive redirect guards */
-          if (redirectCount >= 10) throw new Error("Too many redirects");
+          if (redirectCount >= MAX_REDIRECTS) throw new Error("Too many redirects");
           const location = response.headers.get("location");
           if (!location) throw new Error("Redirect with no location header");
           /* v8 ignore stop */
@@ -451,8 +484,8 @@ export class OpenGrokClient {
     fileType?: string
   ): Promise<SearchResults> {
     const sortedProjects = projects ? [...projects].sort() : undefined;
-    const cacheKey = `${searchType}:${query}:${JSON.stringify(sortedProjects)}:${maxResults}:${start}:${fileType ?? ""}`;
-    const cached = this.searchCache?.get(cacheKey);
+    // Use deterministic join instead of JSON.stringify to avoid object-key ordering differences
+    const cacheKey = `${searchType}:${query}:${sortedProjects ? sortedProjects.join(",") : ""}:${maxResults}:${start}:${fileType ?? ""}`;    const cached = this.searchCache?.get(cacheKey);
     if (cached) return cached;
 
     // For defs/refs, OpenGrok 1.7.x REST API returns 400. Fall back to web
@@ -467,7 +500,7 @@ export class OpenGrokClient {
     url.searchParams.set(searchType, query);
     url.searchParams.set("maxresults", String(maxResults));
     if (projects?.length) {
-      url.searchParams.set("projects", sortedProjects!.join(","));
+      url.searchParams.set("projects", sortedProjects?.join(",") ?? "");
     }
     if (start > 0) {
       url.searchParams.set("start", String(start));
@@ -715,8 +748,8 @@ export class OpenGrokClient {
     }
 
     if (filterPattern) {
-      if (filterPattern.length > 100) {
-        throw new Error("Filter pattern too long (max 100 characters)");
+      if (filterPattern.length > MAX_FILTER_LENGTH) {
+        throw new Error(`Filter pattern too long (max ${MAX_FILTER_LENGTH} characters)`);
       }
       // Guard against catastrophic backtracking from excessive consecutive wildcards
       if (/\*{3,}|\?{3,}/.test(filterPattern)) {

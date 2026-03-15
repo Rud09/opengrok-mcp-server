@@ -4,7 +4,7 @@
 
 # OpenGrok MCP Server
 
-**MCP server bridging OpenGrok search engines with AI for instant context across massive codebases**
+**MCP server bridging OpenGrok search engine with AI for instant context across massive codebases**
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/IcyHot09.opengrok-mcp-server?label=VS%20Code%20Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![Installs](https://img.shields.io/visual-studio-marketplace/i/IcyHot09.opengrok-mcp-server)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![npm](https://img.shields.io/npm/v/opengrok-mcp-server?logo=npm)](https://www.npmjs.com/package/opengrok-mcp-server) [![MCP Registry](https://img.shields.io/badge/MCP_Registry-listed-blue)](https://registry.modelcontextprotocol.io) [![CI](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml) [![GitHub Release](https://img.shields.io/github/v/release/IcyHot09/opengrok-mcp-server)](https://github.com/IcyHot09/opengrok-mcp-server/releases)
 
@@ -58,7 +58,7 @@ npm install -g opengrok-mcp-server
 
 ### Option 3 — MCP Registry
 
-This server is listed on the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.IcyHot09/opengrok`. Any MCP-compatible client that supports the registry can discover and install it automatically.
+This server is listed on the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.IcyHot09/opengrok-mcp-server`. Any MCP-compatible client that supports the registry can discover and install it automatically.
 
 ### Option 4 — Install pre-built VSIX
 
@@ -133,15 +133,15 @@ Search for all references to TaskScheduler across the codebase
 
 | Tool | Description |
 | ---- | ----------- |
-| `search_code` | Full-text, symbol definition, reference, path, or commit message search. Optional `file_type` filter. |
-| `find_file` | Find files by path or name pattern. |
-| `get_file_content` | Retrieve file contents — pass `start_line`/`end_line` to limit output. |
-| `get_file_history` | Commit history for a file. |
-| `browse_directory` | List directory contents. |
-| `list_projects` | List all accessible projects. |
-| `get_file_annotate` | Git blame with optional line range. |
-| `get_file_symbols` | List all top-level symbols in a file. |
-| `search_suggest` | Autocomplete/suggestions for partial queries. |
+| `opengrok_search_code` | Full-text, symbol definition, reference, path, or commit message search. Optional `file_type` filter. |
+| `opengrok_find_file` | Find files by path or name pattern. |
+| `opengrok_get_file_content` | Retrieve file contents — pass `start_line`/`end_line` to limit output. |
+| `opengrok_get_file_history` | Commit history for a file. |
+| `opengrok_browse_directory` | List directory contents. |
+| `opengrok_list_projects` | List all accessible projects. |
+| `opengrok_get_file_annotate` | Git blame with optional line range. |
+| `opengrok_get_file_symbols` | List all top-level symbols in a file. |
+| `opengrok_search_suggest` | Autocomplete/suggestions for partial queries. |
 
 ### 🚀 Compound Tools — Use These First
 
@@ -149,19 +149,19 @@ Search for all references to TaskScheduler across the codebase
 
 | Tool | What it replaces | Token savings |
 | ---- | ---------------- | ------------- |
-| `get_symbol_context` | `search_code(defs)` → `get_file_content` → `search_code(refs)` | **~92%** |
-| `search_and_read` | `search_code` → `get_file_content` | **~92%** |
-| `batch_search` | Multiple sequential `search_code` calls | **~73%** |
-| `index_health` | Manual connection diagnostics | — |
+| `opengrok_get_symbol_context` | `opengrok_search_code(defs)` → `opengrok_get_file_content` → `opengrok_search_code(refs)` | **~92%** |
+| `opengrok_search_and_read` | `opengrok_search_code` → `opengrok_get_file_content` | **~92%** |
+| `opengrok_batch_search` | Multiple sequential `opengrok_search_code` calls | **~73%** |
+| `opengrok_index_health` | Manual connection diagnostics | — |
 
-**`file_type` filter** — `search_code`, `batch_search`, `search_and_read`, and `get_symbol_context` accept an optional `file_type` to restrict results by language: `cxx`, `c`, `java`, `python`, `javascript`, `typescript`, `csharp`, `golang`, `ruby`, `perl`, `sql`, `xml`, `yaml`, `shell`, `makefile`.
+**`file_type` filter** — `opengrok_search_code`, `opengrok_batch_search`, `opengrok_search_and_read`, and `opengrok_get_symbol_context` accept an optional `file_type` to restrict results by language: `cxx`, `c`, `java`, `python`, `javascript`, `typescript`, `csharp`, `golang`, `ruby`, `perl`, `sql`, `xml`, `yaml`, `shell`, `makefile`.
 
 <details>
 <summary>⚙️ Local Source Layer (Optional)</summary>
 
 | Tool | Description |
 | ---- | ----------- |
-| `get_compile_info` | Compiler flags, include paths, defines, and language standard for a source file. Requires `compile_commands.json` in your workspace. |
+| `opengrok_get_compile_info` | Compiler flags, include paths, defines, and language standard for a source file. Requires `compile_commands.json` in your workspace. |
 
 </details>
 
@@ -240,6 +240,28 @@ npm run vsix      # Package as .vsix
 Releases are automated via GitHub Actions — push a version tag (`vX.Y.Z`) and the workflow builds, tests, and publishes to [GitHub Releases](https://github.com/IcyHot09/opengrok-mcp-server/releases).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+| ------- | -------- |
+| Tools not appearing in Copilot | Click **🔧 Tools** → **Update Tools** in the chat input. Reload the window (`Ctrl+Shift+P` → "Reload Window"). |
+| "Connection failed" on test | Verify `OPENGROK_BASE_URL` is reachable. Check proxy settings if behind a corporate firewall. |
+| 401 Unauthorized | Set `OPENGROK_USERNAME` and `OPENGROK_PASSWORD` via `OpenGrok: Configure Credentials`. |
+| Results seem stale | Call `opengrok_index_health` to check connectivity. OpenGrok index may need a rebuild by an admin. |
+| SSL certificate errors | Set `opengrok-mcp.verifySsl` to `false` for self-signed or internal CA certificates. |
+| Timeouts on large repos | Narrow queries with `file_type`, specific projects, or smaller `max_results`. |
+| Debug mode | Set `OPENGROK_LOG_LEVEL=debug` environment variable to enable verbose logging to stderr. |
+
+### OpenGrok Version Compatibility
+
+| OpenGrok Version | Support Level | Notes |
+| ---------------- | ------------- | ----- |
+| 1.13+ | Full | REST API + HTML fallback |
+| 1.7.x – 1.12.x | Full | HTML parsing fallback for `defs`/`refs` search, annotate |
+| < 1.7 | Untested | May work with limited functionality |
 
 ---
 

@@ -270,29 +270,32 @@ export function parseAnnotate(
         // 1.7.x style: code content follows the blame span as siblings.
         // Note: TextNode.nextSibling is unreliable in node-html-parser —
         // use the parent's childNodes array with index-based iteration instead.
-        const parent = el.parentNode!;
-        const parts: string[] = [];
-        const siblings = parent.childNodes;
-        const idx = siblings.indexOf(el);
-        for (let i = idx + 1; i < siblings.length; i++) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const sib = siblings[i] as any;
-          const cls: string =
-            typeof sib.getAttribute === "function"
-              ? (sib.getAttribute("class") ?? "")
-              : "";
-          if (cls === "blame" || cls.split(" ").includes("blame")) break;
-          if (!cls.includes("fold-space")) {
-            const t: string = sib.text;
-            const nl = t.indexOf("\n");
-            if (nl !== -1) {
-              if (nl > 0) parts.push(t.slice(0, nl));
-              break;
+        const parent = el.parentNode;
+        if (!parent) {
+          content = el.text;
+        } else {
+          const parts: string[] = [];
+          const siblings = parent.childNodes;
+          const idx = siblings.indexOf(el);
+          for (let i = idx + 1; i < siblings.length; i++) {
+            const sib = siblings[i];
+            const cls: string =
+              typeof sib.getAttribute === "function"
+                ? (sib.getAttribute("class") ?? "")
+                : "";
+            if (cls === "blame" || cls.split(" ").includes("blame")) break;
+            if (!cls.includes("fold-space")) {
+              const t: string = sib.text;
+              const nl = t.indexOf("\n");
+              if (nl !== -1) {
+                if (nl > 0) parts.push(t.slice(0, nl));
+                break;
+              }
+              if (t) parts.push(t);
             }
-            if (t) parts.push(t);
           }
+          content = parts.join("").trim();
         }
-        content = parts.join("").trim();
       } else {
         content = el.text;
       }

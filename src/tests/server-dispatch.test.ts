@@ -69,7 +69,7 @@ const config = makeConfig();
 // search_code
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — search_code', () => {
+describe('dispatchTool — opengrok_search_code', () => {
   it('dispatches search and returns formatted output', async () => {
     const client = makeMockClient();
     client.search.mockResolvedValue({
@@ -78,7 +78,7 @@ describe('dispatchTool — search_code', () => {
       totalCount: 1,
       results: [{ project: 'proj', path: '/file.cpp', matches: [{ lineNumber: 10, lineContent: 'test' }] }],
     });
-    const result = await dispatchTool('search_code', { query: 'test', search_type: 'full' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_search_code', { query: 'test', search_type: 'full' }, client as any, config, emptyLocal());
     expect(result).toContain('test');
     expect(client.search).toHaveBeenCalledOnce();
   });
@@ -86,14 +86,14 @@ describe('dispatchTool — search_code', () => {
   it('includes file_type param', async () => {
     const client = makeMockClient();
     client.search.mockResolvedValue({ query: 'x', searchType: 'full', totalCount: 0, results: [] });
-    await dispatchTool('search_code', { query: 'x', search_type: 'full', file_type: 'cxx' }, client as any, config, emptyLocal());
+    await dispatchTool('opengrok_search_code', { query: 'x', search_type: 'full', file_type: 'cxx' }, client as any, config, emptyLocal());
     expect(client.search).toHaveBeenCalledWith('x', 'full', ['release-2.x'], 10, 0, 'cxx');
   });
 
   it('applies default project when projects not specified', async () => {
     const client = makeMockClient();
     client.search.mockResolvedValue({ query: 'x', searchType: 'full', totalCount: 0, results: [] });
-    await dispatchTool('search_code', { query: 'x', search_type: 'full' }, client as any, config, emptyLocal());
+    await dispatchTool('opengrok_search_code', { query: 'x', search_type: 'full' }, client as any, config, emptyLocal());
     expect(client.search.mock.calls[0][2]).toEqual(['release-2.x']);
   });
 });
@@ -102,11 +102,11 @@ describe('dispatchTool — search_code', () => {
 // find_file
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — find_file', () => {
+describe('dispatchTool — opengrok_find_file', () => {
   it('delegates to search with path type', async () => {
     const client = makeMockClient();
     client.search.mockResolvedValue({ query: 'main.cpp', searchType: 'path', totalCount: 1, results: [{ project: 'proj', path: '/main.cpp', matches: [] }] });
-    const result = await dispatchTool('find_file', { path_pattern: 'main.cpp' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_find_file', { path_pattern: 'main.cpp' }, client as any, config, emptyLocal());
     expect(client.search).toHaveBeenCalledWith('main.cpp', 'path', ['release-2.x'], 10, 0);
     expect(result).toBeDefined();
   });
@@ -116,7 +116,7 @@ describe('dispatchTool — find_file', () => {
 // get_file_content
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — get_file_content', () => {
+describe('dispatchTool — opengrok_get_file_content', () => {
   it('fetches from remote API', async () => {
     const client = makeMockClient();
     client.getFileContent.mockResolvedValue({
@@ -126,7 +126,7 @@ describe('dispatchTool — get_file_content', () => {
       lineCount: 1,
       sizeBytes: 14,
     });
-    const result = await dispatchTool('get_file_content', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_file_content', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
     expect(result).toContain('int main()');
   });
 
@@ -146,7 +146,7 @@ describe('dispatchTool — get_file_content', () => {
       suffixIndex: new Map([['/src/file.cpp', '/build/src/file.cpp']]),
     };
     // readFileAtAbsPath will fail since the file doesn't exist on disk, fall through to API
-    const result = await dispatchTool('get_file_content', { project: 'proj', path: 'src/file.cpp' }, client as any, config, local);
+    const result = await dispatchTool('opengrok_get_file_content', { project: 'proj', path: 'src/file.cpp' }, client as any, config, local);
     expect(result).toContain('remote content');
   });
 });
@@ -155,14 +155,14 @@ describe('dispatchTool — get_file_content', () => {
 // get_file_history
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — get_file_history', () => {
+describe('dispatchTool — opengrok_get_file_history', () => {
   it('fetches file history', async () => {
     const client = makeMockClient();
     client.getFileHistory.mockResolvedValue({
       project: 'proj', path: 'file.cpp',
       entries: [{ revision: 'abc123', author: 'dev', date: '2024-01-01', message: 'fix' }],
     });
-    const result = await dispatchTool('get_file_history', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_file_history', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
     expect(result).toContain('abc123');
   });
 });
@@ -171,14 +171,14 @@ describe('dispatchTool — get_file_history', () => {
 // browse_directory
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — browse_directory', () => {
+describe('dispatchTool — opengrok_browse_directory', () => {
   it('fetches directory listing', async () => {
     const client = makeMockClient();
     client.browseDirectory.mockResolvedValue([
       { name: 'src', isDirectory: true, size: null },
       { name: 'file.cpp', isDirectory: false, size: '1234' },
     ]);
-    const result = await dispatchTool('browse_directory', { project: 'proj', path: 'root' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_browse_directory', { project: 'proj', path: 'root' }, client as any, config, emptyLocal());
     expect(result).toContain('src');
     expect(result).toContain('file.cpp');
   });
@@ -188,14 +188,14 @@ describe('dispatchTool — browse_directory', () => {
 // list_projects
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — list_projects', () => {
+describe('dispatchTool — opengrok_list_projects', () => {
   it('lists all projects', async () => {
     const client = makeMockClient();
     client.listProjects.mockResolvedValue([
       { name: 'release-2.x', indexedDate: '2024-01-01' },
       { name: 'release-2.x-win', indexedDate: '2024-01-01' },
     ]);
-    const result = await dispatchTool('list_projects', {}, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_list_projects', {}, client as any, config, emptyLocal());
     expect(result).toContain('release-2.x');
     expect(result).toContain('release-2.x-win');
   });
@@ -203,7 +203,7 @@ describe('dispatchTool — list_projects', () => {
   it('lists projects with filter', async () => {
     const client = makeMockClient();
     client.listProjects.mockResolvedValue([{ name: 'release-2.x', indexedDate: '2024-01-01' }]);
-    await dispatchTool('list_projects', { filter: 'release' }, client as any, config, emptyLocal());
+    await dispatchTool('opengrok_list_projects', { filter: 'release' }, client as any, config, emptyLocal());
     expect(client.listProjects).toHaveBeenCalledWith('release');
   });
 });
@@ -212,14 +212,14 @@ describe('dispatchTool — list_projects', () => {
 // get_file_annotate
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — get_file_annotate', () => {
+describe('dispatchTool — opengrok_get_file_annotate', () => {
   it('fetches annotate data', async () => {
     const client = makeMockClient();
     client.getAnnotate.mockResolvedValue({
       project: 'proj', path: 'file.cpp',
       lines: [{ lineNumber: 1, revision: 'abc', author: 'dev', date: '2024', content: 'code' }],
     });
-    const result = await dispatchTool('get_file_annotate', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_file_annotate', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
     expect(result).toContain('abc');
   });
 
@@ -233,7 +233,7 @@ describe('dispatchTool — get_file_annotate', () => {
         { lineNumber: 3, revision: 'r3', author: 'a', date: '2024', content: 'line3' },
       ],
     });
-    const result = await dispatchTool('get_file_annotate', { project: 'proj', path: 'file.cpp', start_line: 2, end_line: 3 }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_file_annotate', { project: 'proj', path: 'file.cpp', start_line: 2, end_line: 3 }, client as any, config, emptyLocal());
     expect(result).toContain('line2');
   });
 });
@@ -242,11 +242,11 @@ describe('dispatchTool — get_file_annotate', () => {
 // search_suggest
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — search_suggest', () => {
+describe('dispatchTool — opengrok_search_suggest', () => {
   it('returns suggestions', async () => {
     const client = makeMockClient();
     client.suggest.mockResolvedValue({ suggestions: ['main', 'malloc'], time: 5, partialResult: false });
-    const result = await dispatchTool('search_suggest', { query: 'ma' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_search_suggest', { query: 'ma' }, client as any, config, emptyLocal());
     expect(result).toContain('main');
     expect(result).toContain('malloc');
   });
@@ -254,14 +254,14 @@ describe('dispatchTool — search_suggest', () => {
   it('returns no suggestions message', async () => {
     const client = makeMockClient();
     client.suggest.mockResolvedValue({ suggestions: [], time: 10, partialResult: false });
-    const result = await dispatchTool('search_suggest', { query: 'zzz' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_search_suggest', { query: 'zzz' }, client as any, config, emptyLocal());
     expect(result).toContain('No suggestions found');
   });
 
   it('returns empty index message when time is 0', async () => {
     const client = makeMockClient();
     client.suggest.mockResolvedValue({ suggestions: [], time: 0, partialResult: false });
-    const result = await dispatchTool('search_suggest', { query: 'zzz' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_search_suggest', { query: 'zzz' }, client as any, config, emptyLocal());
     expect(result).toContain('suggester index');
   });
 });
@@ -270,11 +270,11 @@ describe('dispatchTool — search_suggest', () => {
 // batch_search
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — batch_search', () => {
+describe('dispatchTool — opengrok_batch_search', () => {
   it('handles multiple queries', async () => {
     const client = makeMockClient();
     client.search.mockResolvedValue({ query: 'q', searchType: 'full', totalCount: 0, results: [] });
-    const result = await dispatchTool('batch_search', {
+    const result = await dispatchTool('opengrok_batch_search', {
       queries: [
         { query: 'foo', search_type: 'full' },
         { query: 'bar', search_type: 'defs' },
@@ -289,7 +289,7 @@ describe('dispatchTool — batch_search', () => {
 // search_and_read
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — search_and_read', () => {
+describe('dispatchTool — opengrok_search_and_read', () => {
   it('searches and reads file content', async () => {
     const client = makeMockClient();
     client.search.mockResolvedValue({
@@ -299,7 +299,7 @@ describe('dispatchTool — search_and_read', () => {
     client.getFileContent.mockResolvedValue({
       project: 'proj', path: 'src/main.cpp', content: 'int main() { return 0; }', lineCount: 1, sizeBytes: 24,
     });
-    const result = await dispatchTool('search_and_read', {
+    const result = await dispatchTool('opengrok_search_and_read', {
       query: 'main', search_type: 'full',
     }, client as any, config, emptyLocal());
     expect(result).toContain('main');
@@ -312,7 +312,7 @@ describe('dispatchTool — search_and_read', () => {
       results: [{ project: 'proj', path: '/file.cpp', matches: [{ lineNumber: 5, lineContent: 'test' }] }],
     });
     client.getFileContent.mockRejectedValue(new Error('not found'));
-    const result = await dispatchTool('search_and_read', { query: 'test', search_type: 'full' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_search_and_read', { query: 'test', search_type: 'full' }, client as any, config, emptyLocal());
     // should not throw, just skip that file
     expect(result).toBeDefined();
   });
@@ -324,7 +324,7 @@ describe('dispatchTool — search_and_read', () => {
       results: [{ project: 'p', path: '/f.cpp', matches: [{ lineNumber: 50, lineContent: 'x' }] }],
     });
     client.getFileContent.mockResolvedValue({ project: 'p', path: 'f.cpp', content: 'ctx', lineCount: 1, sizeBytes: 3 });
-    await dispatchTool('search_and_read', { query: 'x', search_type: 'full', context_lines: 20 }, client as any, config, emptyLocal());
+    await dispatchTool('opengrok_search_and_read', { query: 'x', search_type: 'full', context_lines: 20 }, client as any, config, emptyLocal());
     // The startLine/endLine should be 30,70 with context_lines=20
     const call = client.getFileContent.mock.calls[0];
     expect(call[2]).toBe(30); // startLine
@@ -336,11 +336,11 @@ describe('dispatchTool — search_and_read', () => {
 // get_symbol_context
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — get_symbol_context', () => {
+describe('dispatchTool — opengrok_get_symbol_context', () => {
   it('returns not-found when no definitions', async () => {
     const client = makeMockClient();
     client.search.mockResolvedValue({ query: 'Unknown', searchType: 'defs', totalCount: 0, results: [] });
-    const result = await dispatchTool('get_symbol_context', { symbol: 'Unknown' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_symbol_context', { symbol: 'Unknown' }, client as any, config, emptyLocal());
     expect(result).toContain('not found');
   });
 
@@ -367,7 +367,7 @@ describe('dispatchTool — get_symbol_context', () => {
       query: 'MyClass', searchType: 'refs', totalCount: 2,
       results: [{ project: 'proj', path: '/other.cpp', matches: [{ lineNumber: 5, lineContent: 'MyClass obj;' }] }],
     });
-    const result = await dispatchTool('get_symbol_context', { symbol: 'MyClass' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_symbol_context', { symbol: 'MyClass' }, client as any, config, emptyLocal());
     expect(result).toContain('MyClass');
     expect(result).toContain('References');
   });
@@ -398,7 +398,7 @@ describe('dispatchTool — get_symbol_context', () => {
     client.search.mockResolvedValueOnce({
       query: 'Func', searchType: 'refs', totalCount: 0, results: [],
     });
-    const result = await dispatchTool('get_symbol_context', {
+    const result = await dispatchTool('opengrok_get_symbol_context', {
       symbol: 'Func', include_header: true,
     }, client as any, config, emptyLocal());
     expect(result).toContain('Func');
@@ -421,7 +421,7 @@ describe('dispatchTool — get_symbol_context', () => {
     });
     // Refs search
     client.search.mockResolvedValueOnce({ query: 'Sym', searchType: 'refs', totalCount: 0, results: [] });
-    const result = await dispatchTool('get_symbol_context', { symbol: 'Sym' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_symbol_context', { symbol: 'Sym' }, client as any, config, emptyLocal());
     expect(result).toContain('Sym');
   });
 });
@@ -430,18 +430,18 @@ describe('dispatchTool — get_symbol_context', () => {
 // index_health
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — index_health', () => {
+describe('dispatchTool — opengrok_index_health', () => {
   it('reports connected', async () => {
     const client = makeMockClient();
     client.testConnection.mockResolvedValue(true);
-    const result = await dispatchTool('index_health', {}, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
     expect(result).toContain('connected');
   });
 
   it('reports connection failed', async () => {
     const client = makeMockClient();
     client.testConnection.mockResolvedValue(false);
-    const result = await dispatchTool('index_health', {}, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
     expect(result).toContain('failed');
   });
 });
@@ -450,17 +450,17 @@ describe('dispatchTool — index_health', () => {
 // get_compile_info
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — get_compile_info', () => {
+describe('dispatchTool — opengrok_get_compile_info', () => {
   it('reports local layer not enabled', async () => {
     const client = makeMockClient();
-    const result = await dispatchTool('get_compile_info', { path: 'file.cpp' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_compile_info', { path: 'file.cpp' }, client as any, config, emptyLocal());
     expect(result).toContain('not enabled');
   });
 
   it('reports no compile entries loaded', async () => {
     const client = makeMockClient();
     const local: LocalLayer = { enabled: true, roots: [], index: new Map(), suffixIndex: new Map() };
-    const result = await dispatchTool('get_compile_info', { path: 'file.cpp' }, client as any, config, local);
+    const result = await dispatchTool('opengrok_get_compile_info', { path: 'file.cpp' }, client as any, config, local);
     expect(result).toContain('no compile entries');
   });
 
@@ -475,7 +475,7 @@ describe('dispatchTool — get_compile_info', () => {
       index: new Map([['/build/src/other.cpp', info]]),
       suffixIndex: new Map(),
     };
-    const result = await dispatchTool('get_compile_info', { path: 'unknown.cpp' }, client as any, config, local);
+    const result = await dispatchTool('opengrok_get_compile_info', { path: 'unknown.cpp' }, client as any, config, local);
     expect(result).toContain('No compile information');
   });
 });
@@ -484,7 +484,7 @@ describe('dispatchTool — get_compile_info', () => {
 // get_file_symbols
 // -----------------------------------------------------------------------
 
-describe('dispatchTool — get_file_symbols', () => {
+describe('dispatchTool — opengrok_get_file_symbols', () => {
   it('returns symbols', async () => {
     const client = makeMockClient();
     client.getFileSymbols.mockResolvedValue({
@@ -494,7 +494,7 @@ describe('dispatchTool — get_file_symbols', () => {
         { symbol: 'MyClass', type: 'Class', line: 3, lineStart: 3, signature: '' },
       ],
     });
-    const result = await dispatchTool('get_file_symbols', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_file_symbols', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
     expect(result).toContain('main');
     expect(result).toContain('MyClass');
   });
@@ -502,7 +502,7 @@ describe('dispatchTool — get_file_symbols', () => {
   it('returns no-symbols message', async () => {
     const client = makeMockClient();
     client.getFileSymbols.mockResolvedValue({ project: 'proj', path: 'file.cpp', symbols: [] });
-    const result = await dispatchTool('get_file_symbols', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_file_symbols', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
     expect(result).toContain('No symbols found');
   });
 });

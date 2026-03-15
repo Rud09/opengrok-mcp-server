@@ -237,7 +237,7 @@ describe('createServer error handling', () => {
     const config = makeConfig();
     // dispatchTool with invalid args should throw ZodError
     // search_code requires 'query' field, passing empty object should fail
-    const result = await dispatchTool('search_code', {}, client as any, config, {
+    const result = await dispatchTool('opengrok_search_code', {}, client as any, config, {
       enabled: false, roots: [], index: new Map(), suffixIndex: new Map(),
     }).catch(e => e);
     // The error should be a ZodError (or contain relevant message)

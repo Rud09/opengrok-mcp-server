@@ -9,6 +9,8 @@ out/
 
 # VS Code Extension packaging
 *.vsix
+*.tar.gz
+*.zip
 .vscode-test/
 
 # IDE

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Evaluation file for the OpenGrok MCP Server.
+  10 complex read-only questions exercising multi-tool compositions.
+  Use with MCP Inspector or automated evaluation harness.
+-->
+<evaluation>
+  <meta>
+    <name>OpenGrok MCP Server v4.0 Evaluation</name>
+    <version>4.0.0</version>
+    <description>
+      Tests for multi-tool composition, structured output, response_format,
+      error handling, and compound tool usage across all 14 opengrok_ tools.
+    </description>
+  </meta>
+
+  <questions>
+    <!-- Q1: Basic search + file content composition -->
+    <question id="1" difficulty="medium">
+      <prompt>Find the definition of the EventLoop class and show me the first 30 lines of the file where it's defined.</prompt>
+      <expected_tools>opengrok_search_code, opengrok_get_file_content</expected_tools>
+      <verify>Response includes file path, line numbers, and code block with class definition</verify>
+    </question>
+
+    <!-- Q2: Compound tool — get_symbol_context replaces multi-step -->
+    <question id="2" difficulty="easy">
+      <prompt>What is the GridNode::processMessage function? Show me its definition, any header declaration, and where it's called from.</prompt>
+      <expected_tools>opengrok_get_symbol_context</expected_tools>
+      <verify>Response includes definition context, header (if .cpp), and reference samples</verify>
+    </question>
+
+    <!-- Q3: Compound tool — batch_search for parallel investigation -->
+    <question id="3" difficulty="medium">
+      <prompt>Search for all definitions of "ConnectionPool", all references to "ConnectionPool", and all path matches for files named "*connection*" — do it in one call.</prompt>
+      <expected_tools>opengrok_batch_search</expected_tools>
+      <verify>Response contains three query results with match counts for each</verify>
+    </question>
+
+    <!-- Q4: Compound tool — search_and_read for contextual results -->
+    <question id="4" difficulty="easy">
+      <prompt>Find where "SIGTERM" is handled in the codebase and show me the surrounding code.</prompt>
+      <expected_tools>opengrok_search_and_read</expected_tools>
+      <verify>Response includes code context around SIGTERM matches without full-file fetch</verify>
+    </question>
+
+    <!-- Q5: File exploration pipeline -->
+    <question id="5" difficulty="hard">
+      <prompt>List all projects, then browse the root directory of the first project, then show me the symbols in its main entry file.</prompt>
+      <expected_tools>opengrok_list_projects, opengrok_browse_directory, opengrok_get_file_symbols</expected_tools>
+      <verify>Pipeline: projects → directory listing → symbol list with function/class names</verify>
+    </question>
+
+    <!-- Q6: History + blame composition -->
+    <question id="6" difficulty="medium">
+      <prompt>Show me the last 5 commits for EventLoop.cpp and then show blame annotations for lines 50-80.</prompt>
+      <expected_tools>opengrok_get_file_history, opengrok_get_file_annotate</expected_tools>
+      <verify>History entries with revisions + blame annotations with author/revision per line</verify>
+    </question>
+
+    <!-- Q7: response_format=json structured output -->
+    <question id="7" difficulty="medium">
+      <prompt>Search for "mutex" with response_format set to "json" and verify the output is valid JSON with totalCount and results array.</prompt>
+      <expected_tools>opengrok_search_code</expected_tools>
+      <verify>Text content is valid JSON; structuredContent contains totalCount, results array, hasMore</verify>
+    </question>
+
+    <!-- Q8: Error handling — invalid arguments -->
+    <question id="8" difficulty="easy">
+      <prompt>Call opengrok_search_code with an empty query string and verify the error response has isError=true.</prompt>
+      <expected_tools>opengrok_search_code</expected_tools>
+      <verify>Response has isError: true and contains "Invalid arguments" message</verify>
+    </question>
+
+    <!-- Q9: Local layer — compile_commands.json -->
+    <question id="9" difficulty="hard">
+      <prompt>Get the compiler flags and include paths for GridNode/EventLoop.cpp using the local compile info tool.</prompt>
+      <expected_tools>opengrok_get_compile_info</expected_tools>
+      <verify>Response includes compiler, flags, includes, and defines (or "not enabled" message)</verify>
+    </question>
+
+    <!-- Q10: Multi-step investigation with narrowing -->
+    <question id="10" difficulty="hard">
+      <prompt>Find all files matching "*Config*.java", then get the symbols from the first result, then read the constructor definition using the line number from the symbols list.</prompt>
+      <expected_tools>opengrok_find_file, opengrok_get_file_symbols, opengrok_get_file_content</expected_tools>
+      <verify>Three-step pipeline: find_file → get_file_symbols → targeted get_file_content with start_line/end_line</verify>
+    </question>
+  </questions>
+</evaluation>

@@ -5,6 +5,31 @@ const path = require('path');
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
 
+// Sync server.json version with package.json (Phase 8.5)
+function syncServerJsonVersion() {
+  const pkgVersion = require('./package.json').version;
+  const serverJsonPath = path.join(__dirname, 'server.json');
+  if (!fs.existsSync(serverJsonPath)) return;
+  const serverJson = JSON.parse(fs.readFileSync(serverJsonPath, 'utf8'));
+  let changed = false;
+  if (serverJson.version !== pkgVersion) {
+    serverJson.version = pkgVersion;
+    changed = true;
+  }
+  if (serverJson.packages) {
+    for (const pkg of serverJson.packages) {
+      if (pkg.version !== pkgVersion) {
+        pkg.version = pkgVersion;
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    fs.writeFileSync(serverJsonPath, JSON.stringify(serverJson, null, 2) + '\n', 'utf8');
+    console.log(`Synced server.json version to ${pkgVersion}`);
+  }
+}
+
 // Copy webview files to out directory
 function copyWebviewFiles() {
   const srcDir = path.join(__dirname, 'src', 'webview');
@@ -71,6 +96,9 @@ async function main() {
   
   // Copy webview files after build
   copyWebviewFiles();
+  
+  // Sync server.json version on every build
+  syncServerJsonVersion();
 }
 
 main().catch(e => {

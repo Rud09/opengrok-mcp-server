@@ -8,8 +8,7 @@ opengrokmcp-standalone/
 │   ├── extension.ts             # VS Code extension entry point
 │   ├── server/                  # MCP Server (TypeScript)
 │   │   ├── main.ts              # Server entry point
-│   │   ├── server.ts            # MCP protocol handler + tool dispatch
-│   │   ├── tool-schemas.ts      # Zod → JSON Schema tool definitions
+│   │   ├── server.ts            # McpServer with per-tool registerTool() handlers
 │   │   ├── client.ts            # OpenGrok HTTP client
 │   │   ├── config.ts            # Env-var config (Zod-validated)
 │   │   ├── models.ts            # Zod schemas + TypeScript interfaces
@@ -98,7 +97,7 @@ User (Copilot Chat)
 | Zod 4 for config + validation | Type-safe parsing of env vars and tool args |
 | `p-retry` for retries | Configurable exponential backoff |
 | TTL cache with byte budget | Prevents OOM from large file caching |
-| Compound tools (`get_symbol_context`, `search_and_read`, `batch_search`) | Collapse multi-step patterns into a single call — ~75–92% token savings |
+| Compound tools (`opengrok_get_symbol_context`, `opengrok_search_and_read`, `opengrok_batch_search`) | Collapse multi-step patterns into a single call — ~75–92% token savings |
 | HTML fallback parsing | Gracefully handle OpenGrok instances where REST API is disabled |
 | 16 KB response cap | Prevents blowing up Copilot's context window |
 
@@ -112,22 +111,33 @@ User (Copilot Chat)
 export const MyNewToolArgs = z.object({
   param1: z.string().min(1),
   param2: z.number().int().default(10),
+  response_format: RESPONSE_FORMAT,
 });
 ```
 
-2. **Add tool definition** to `TOOL_DEFINITIONS` in `src/server/tool-schemas.ts`
-
-3. **Add dispatch case** in `dispatchTool()` in `src/server/server.ts`:
+2. **Register the tool** via `server.registerTool()` in `src/server/server.ts`:
 
 ```typescript
-case "my_new_tool": {
-  const args = MyNewToolArgs.parse(rawArgs);
-  const result = await client.myMethod(args.param1, args.param2);
-  return formatMyResult(result);
-}
+server.registerTool(
+  "opengrok_my_new_tool",
+  {
+    title: "My New Tool",
+    description: "Description of what this tool does.",
+    inputSchema: MyNewToolArgs.shape,
+    annotations: READ_ONLY_OPEN,
+  },
+  async (args) => {
+    try {
+      const result = await client.myMethod(args.param1, args.param2);
+      return { content: [{ type: "text", text: capResponse(formatMyResult(result)) }] };
+    } catch (err) {
+      return makeToolError("opengrok_my_new_tool", err);
+    }
+  }
+);
 ```
 
-4. **Add client method** in `src/server/client.ts`:
+3. **Add client method** in `src/server/client.ts`:
 
 ```typescript
 async myMethod(param1: string, param2: number): Promise<MyType> {
@@ -138,9 +148,9 @@ async myMethod(param1: string, param2: number): Promise<MyType> {
 }
 ```
 
-5. **Add formatter** in `src/server/formatters.ts` for the Markdown output
+4. **Add formatter** in `src/server/formatters.ts` for the Markdown output
 
-6. **Add unit tests** in `src/tests/`
+5. **Add unit tests** in `src/tests/`
 
 ---
 

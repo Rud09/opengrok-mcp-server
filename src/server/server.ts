@@ -1,17 +1,15 @@
 /**
  * OpenGrok MCP Server — tool definitions and handlers.
- * v3.0: compact output, response size cap, compound tools, MCP instructions.
+ * v4.0: McpServer high-level API, opengrok_ prefixed tools, tool annotations,
+ *       structured output, isError responses, security hardening.
  */
 
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
@@ -55,11 +53,23 @@ import {
   SearchCodeArgs,
   SearchSuggestArgs,
   FindFileArgs,
+  SearchResultsOutput,
+  FileContentOutput,
+  ProjectsListOutput,
+  BatchSearchOutput,
+  SymbolContextOutput,
 } from "./models.js";
-import type { FileContent } from "./models.js";
-import { TOOL_DEFINITIONS } from "./tool-schemas.js";
+import type {
+  FileContent,
+  SearchResults,
+  Project,
+} from "./models.js";
 
 import { logger } from "./logger.js";
+
+// ---------------------------------------------------------------------------
+// Response size caps
+// ---------------------------------------------------------------------------
 
 // Hard cap on response payload sent to the LLM (in bytes).
 // Override with OPENGROK_MAX_RESPONSE_BYTES env var.
@@ -78,7 +88,6 @@ const SEARCH_AND_READ_CAP = parseInt(
 function capResponse(text: string): string {
   const bytes = Buffer.byteLength(text, "utf8");
   if (bytes <= MAX_RESPONSE_BYTES) return text;
-  // Truncate at the last newline within the budget
   const buf = Buffer.from(text, "utf8").subarray(0, MAX_RESPONSE_BYTES);
   const truncated = buf.toString("utf8");
   const lastNl = truncated.lastIndexOf("\n");
@@ -90,7 +99,7 @@ function capResponse(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Server factory
+// Server version
 // ---------------------------------------------------------------------------
 
 declare const __VERSION__: string;
@@ -98,25 +107,47 @@ declare const __VERSION__: string;
 /* v8 ignore start -- compile-time constant injected by esbuild */
 const VERSION = (typeof __VERSION__ !== "undefined"
   ? __VERSION__
-  : (process.env.npm_package_version ?? "3.0.0"));
+  : (process.env.npm_package_version ?? "4.0.0"));
 /* v8 ignore stop */
 
-// Instructions injected as system-level guidance for the LLM.
+// ---------------------------------------------------------------------------
+// Server instructions (opengrok_ prefixed tool names)
+// ---------------------------------------------------------------------------
+
 const SERVER_INSTRUCTIONS = `
 OpenGrok MCP server. Rules to maximise efficiency:
 - Use the configured default project unless the user specifies a different one.
-- Use get_symbol_context instead of separate search_code + get_file_content for symbol investigations.
-- Use search_and_read instead of search_code followed by get_file_content.
-- Use batch_search instead of multiple sequential search_code calls.
-- Always pass start_line and end_line to get_file_content. Never fetch full files.
+- Use opengrok_get_symbol_context instead of separate opengrok_search_code + opengrok_get_file_content for symbol investigations.
+- Use opengrok_search_and_read instead of opengrok_search_code followed by opengrok_get_file_content.
+- Use opengrok_batch_search instead of multiple sequential opengrok_search_code calls.
+- Always pass start_line and end_line to opengrok_get_file_content. Never fetch full files.
 - For known symbol names (CamelCase, PascalCase), prefer search_type=defs or refs over full.
 - Use search_type=hist to search commit messages and changelogs.
 - Use file_type to narrow results by language: cxx (C++), c, java, python, javascript, typescript, csharp, golang, ruby, etc.
-- Use get_compile_info to get compiler flags and include paths for a source file (local layer must be enabled).
-- Use get_file_symbols to understand a file's structure (functions, classes, macros) before reading it with get_file_content.
-- batch_search: pass queries as top-level "queries" array, file_type is top-level not per-query.
-- list_projects: filter is a substring match (e.g. "release" matches all release-* projects).
+- Use opengrok_get_compile_info to get compiler flags and include paths for a source file (local layer must be enabled).
+- Use opengrok_get_file_symbols to understand a file's structure (functions, classes, macros) before reading it with opengrok_get_file_content.
+- opengrok_batch_search: pass queries as top-level "queries" array, file_type is top-level not per-query.
+- opengrok_list_projects: filter is a substring match (e.g. "release" matches all release-* projects).
+- All tools support response_format ("markdown" default for LLM, "json" for programmatic use).
 `.trim();
+
+// ---------------------------------------------------------------------------
+// Tool annotations
+// ---------------------------------------------------------------------------
+
+const READ_ONLY_OPEN: ToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+};
+
+const READ_ONLY_LOCAL: ToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
 
 // ---------------------------------------------------------------------------
 // Local layer — compile_commands.json index + file bypass
@@ -140,10 +171,7 @@ function buildLocalLayer(config: Config): LocalLayer {
     return { enabled: false, roots: [], index: new Map(), suffixIndex: new Map() };
   }
 
-  // Load all compile_commands.json files once (shared by inferBuildRoot + parseCompileCommands)
   const loaded = loadCompileCommandsJson(dbPaths);
-
-  // Infer the build/source root from the `directory` fields in the compile databases.
   const inferredRoot = inferBuildRoot(dbPaths, loaded);
 
   let resolvedInferredRoot: string | undefined;
@@ -155,9 +183,6 @@ function buildLocalLayer(config: Config): LocalLayer {
     }
   }
 
-  // Allowed roots for path boundary checks during parsing:
-  // - the inferred build root (where compiled source files actually live on disk)
-  // - parent directories of the compile_commands.json files themselves
   const allowedRoots: string[] = resolvedInferredRoot ? [resolvedInferredRoot] : [];
   for (const r of resolveAllowedRoots(dbPaths)) {
     if (!allowedRoots.includes(r)) allowedRoots.push(r);
@@ -170,12 +195,10 @@ function buildLocalLayer(config: Config): LocalLayer {
 
   const index = parseCompileCommands(dbPaths, allowedRoots, loaded);
 
-  // Build suffix index for O(1) resolveFileFromIndex lookups
   const suffixIndex = new Map<string, string>();
   for (const key of index.keys()) {
     const normalized = key.replace(/\\/g, "/");
     const parts = normalized.split("/");
-    // Store suffixes of depth 1..4 for quick matching
     for (let i = Math.max(0, parts.length - 4); i < parts.length; i++) {
       const suffix = "/" + parts.slice(i).join("/");
       /* v8 ignore start */
@@ -192,20 +215,12 @@ function buildLocalLayer(config: Config): LocalLayer {
   return { enabled: true, roots: allowedRoots, index, suffixIndex };
 }
 
-/**
- * Attempt to read a file from the local filesystem.
- * The OpenGrok-relative `filePath` (e.g. "GridNode/EventLoop.cpp") is joined
- * against each configured source root. The resolved path is validated with
- * fs.realpathSync to prevent path traversal and symlink escapes.
- * Returns null on any failure so the caller can fall back to the API.
- */
 async function tryLocalRead(
   filePath: string,
   roots: string[],
   startLine?: number,
   endLine?: number
 ): Promise<FileContent | null> {
-  // Strip leading slashes and reject traversal sequences
   const normalized = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
   if (
     normalized.includes("../") ||
@@ -222,10 +237,9 @@ async function tryLocalRead(
     try {
       resolved = await fsp.realpath(candidate);
     } catch {
-      continue; // Does not exist in this root
+      continue;
     }
 
-    // Boundary check — must remain within this root
     if (!resolved.startsWith(root + path.sep) && resolved !== root) {
       continue;
     }
@@ -244,7 +258,7 @@ async function tryLocalRead(
       };
     } catch {
       /* v8 ignore start -- requires unreadable file on real filesystem */
-      continue; // Unreadable — try next root
+      continue;
       /* v8 ignore stop */
     }
   }
@@ -252,36 +266,23 @@ async function tryLocalRead(
   return null;
 }
 
-/**
- * Look up the authoritative on-disk path for a file using the compile index.
- * The OpenGrok-relative path (e.g. "/pandora/source/.../foo.cpp") is matched
- * by suffix against compile index keys (e.g. "/build/.../pandora/source/.../foo.cpp").
- * Returns the absolute path or null.
- */
 function resolveFileFromIndex(
   opengrokPath: string,
   index: Map<string, CompileInfo>,
   suffixIndex: Map<string, string>
 ): string | null {
   if (!index.size) return null;
-  // Direct key hit (caller already has an absolute path)
   if (index.has(opengrokPath)) return opengrokPath;
   const normalizedRequest = opengrokPath.replace(/\\/g, "/").replace(/^\/+/, "");
   const suffix = "/" + normalizedRequest;
-  // O(1) suffix index lookup
   const hit = suffixIndex.get(suffix);
   if (hit) return hit;
-  // Fallback to linear scan for paths not in suffix index
   for (const key of index.keys()) {
     if (key.replace(/\\/g, "/").endsWith(suffix)) return key;
   }
   return null;
 }
 
-/**
- * Read a file from an absolute on-disk path with optional line range.
- * Returns null on any I/O failure so the caller can fall back to the API.
- */
 async function readFileAtAbsPath(
   absPath: string,
   startLine?: number,
@@ -304,64 +305,56 @@ async function readFileAtAbsPath(
   }
 }
 
-export function createServer(
-  client: OpenGrokClient,
-  config: Config
-): Server {
-  const server = new Server(
-    { name: "opengrok-mcp", version: VERSION },
-    {
-      capabilities: { tools: {} },
-      instructions: SERVER_INSTRUCTIONS,
-    }
-  );
+// ---------------------------------------------------------------------------
+// Tool result types and utilities
+// ---------------------------------------------------------------------------
 
-  // Build the local layer once at startup (compile_commands.json index)
-  const local = buildLocalLayer(config);
+type ToolResult = {
+  isError?: boolean;
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
+};
 
-  /* v8 ignore start -- MCP SDK framework callbacks; logic tested via _dispatchTool */
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_DEFINITIONS,
-  }));
+function makeToolError(name: string, err: unknown): ToolResult {
+  logger.error(`Tool "${name}" failed:`, err);
+  let text: string;
+  if (err instanceof ZodError) {
+    const issues = err.issues
+      .map((i) => `${i.path.join(".")}: ${i.message}`)
+      .join("; ");
+    text = `**Invalid arguments:** ${issues}`;
+  } else if (err instanceof Error) {
+    text = `**Error:** ${sanitizeErrorMessage(err.message)}`;
+  } else {
+    text = "**Error:** An unexpected error occurred. Check server logs.";
+  }
+  return { isError: true, content: [{ type: "text", text }] };
+}
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args = {} } = request.params;
-
-    try {
-      const raw = await dispatchTool(name, args, client, config, local);
-      const text = capResponse(raw);
-      return { content: [{ type: "text", text }] };
-    } catch (err) {
-      logger.error(`Tool "${name}" failed:`, err);
-
-      let userMessage: string;
-      if (err instanceof ZodError) {
-        const issues = err.issues
-          .map((i) => `${i.path.join(".")}: ${i.message}`)
-          .join("; ");
-        userMessage = `**Invalid arguments:** ${issues}`;
-      } else if (err instanceof Error) {
-        userMessage = `**Error:** ${sanitizeErrorMessage(err.message)}`;
-      } else {
-        userMessage = "**Error:** An unexpected error occurred. Check server logs.";
-      }
-
-      return { content: [{ type: "text", text: userMessage }] };
-    }
-  });
-  /* v8 ignore stop */
-
-  return server;
+/**
+ * Shared helper: format a tool response for both markdown and JSON modes.
+ * Applies capResponse to protect LLM context windows. structuredContent is
+ * always returned for programmatic consumers regardless of response_format.
+ */
+function formatResponse(
+  textMarkdown: string,
+  structured: Record<string, unknown>,
+  format: "markdown" | "json" = "markdown"
+): ToolResult {
+  const text =
+    format === "json"
+      ? capResponse(JSON.stringify(structured, null, 2))
+      : capResponse(textMarkdown);
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: structured,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Tool dispatcher
+// Apply default project helper
 // ---------------------------------------------------------------------------
 
-/**
- * Apply the default project from config when no projects are specified.
- * Returns the original array if non-empty, or [defaultProject] if configured.
- */
 function applyDefaultProject(
   projects: string[] | undefined,
   config: Config
@@ -372,13 +365,137 @@ function applyDefaultProject(
 }
 
 // ---------------------------------------------------------------------------
-// Extracted handlers (long compound-tool logic)
+// Priority tool core executors (return raw data for structured output)
+// ---------------------------------------------------------------------------
+
+async function executeSearchCode(
+  args: {
+    query: string;
+    search_type: "full" | "defs" | "refs" | "path" | "hist";
+    projects?: string[];
+    max_results: number;
+    start_index: number;
+    file_type?: string;
+    response_format?: "markdown" | "json";
+  },
+  client: OpenGrokClient,
+  config: Config
+): Promise<{ text: string; structured: SearchResults }> {
+  const results = await client.search(
+    args.query,
+    args.search_type,
+    applyDefaultProject(args.projects, config),
+    args.max_results,
+    args.start_index,
+    args.file_type
+  );
+  return { text: formatSearchResults(results), structured: results };
+}
+
+async function executeGetFileContent(
+  args: {
+    project: string;
+    path: string;
+    start_line?: number;
+    end_line?: number;
+    response_format?: "markdown" | "json";
+  },
+  client: OpenGrokClient,
+  local: LocalLayer
+): Promise<{ text: string; structured: FileContent }> {
+  let content: FileContent | null = null;
+
+  if (local.enabled && local.index.size > 0) {
+    const absPath = resolveFileFromIndex(args.path, local.index, local.suffixIndex);
+    /* v8 ignore start */
+    if (absPath) {
+    /* v8 ignore stop */
+      content = await readFileAtAbsPath(absPath, args.start_line, args.end_line);
+    }
+  }
+
+  if (!content && local.enabled && local.roots.length > 0) {
+    content = await tryLocalRead(args.path, local.roots, args.start_line, args.end_line);
+  }
+
+  if (!content) {
+    content = await client.getFileContent(
+      args.project,
+      args.path,
+      args.start_line,
+      args.end_line
+    );
+  }
+
+  return { text: formatFileContent(content), structured: content };
+}
+
+async function executeListProjects(
+  args: { filter?: string; response_format?: "markdown" | "json" },
+  client: OpenGrokClient
+): Promise<{ text: string; structured: { projects: Project[]; total: number } }> {
+  const projects = await client.listProjects(args.filter);
+  return {
+    text: formatProjectsList(projects),
+    structured: { projects, total: projects.length },
+  };
+}
+
+async function executeBatchSearch(
+  args: {
+    queries: Array<{
+      query: string;
+      search_type: "full" | "defs" | "refs" | "path" | "hist";
+      max_results: number;
+    }>;
+    projects?: string[];
+    file_type?: string;
+    response_format?: "markdown" | "json";
+  },
+  client: OpenGrokClient,
+  config: Config
+): Promise<{
+  text: string;
+  structured: {
+    queryResults: Array<{
+      query: string;
+      searchType: string;
+      results: SearchResults;
+    }>;
+  };
+}> {
+  const effectiveProjects = applyDefaultProject(args.projects, config);
+  const searchResults = await Promise.all(
+    args.queries.map((q) =>
+      client.search(
+        q.query,
+        q.search_type,
+        effectiveProjects,
+        q.max_results,
+        0,
+        args.file_type
+      )
+    )
+  );
+  const queryResults = args.queries.map((q, i) => ({
+    query: q.query,
+    searchType: q.search_type,
+    results: searchResults[i],
+  }));
+  return {
+    text: formatBatchSearchResults(queryResults),
+    structured: { queryResults },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Compound tool handlers
 // ---------------------------------------------------------------------------
 
 async function handleSearchAndRead(
   rawArgs: Record<string, unknown>,
   client: OpenGrokClient,
-  config: Config,
+  config: Config
 ): Promise<string> {
   const args = SearchAndReadArgs.parse(rawArgs);
   const searchResults = await client.search(
@@ -425,26 +542,21 @@ async function handleSearchAndRead(
 
       if (totalOutputBytes >= SEARCH_AND_READ_CAP) break;
     } catch {
-      // Skip files that can't be read; don't abort the whole operation
+      // Skip files that can't be read
     }
   }
 
-  return formatSearchAndRead(
-    args.query,
-    searchResults.totalCount,
-    entries
-  );
+  return formatSearchAndRead(args.query, searchResults.totalCount, entries);
 }
 
-async function handleGetSymbolContext(
+async function handleGetSymbolContextStructured(
   rawArgs: Record<string, unknown>,
   client: OpenGrokClient,
-  config: Config,
-): Promise<string> {
+  config: Config
+): Promise<{ text: string; structured: SymbolContextResult }> {
   const args = GetSymbolContextArgs.parse(rawArgs);
   const effectiveProjects = applyDefaultProject(args.projects, config);
 
-  // Step 1: find definition
   const defResults = await client.search(
     args.symbol,
     "defs",
@@ -461,7 +573,7 @@ async function handleGetSymbolContext(
       kind: "unknown",
       references: { totalFound: 0, samples: [] },
     };
-    return formatSymbolContext(result);
+    return { text: formatSymbolContext(result), structured: result };
   }
 
   const defResult = defResults.results[0];
@@ -472,7 +584,6 @@ async function handleGetSymbolContext(
     ? (/* v8 ignore next */ defResult.path.split(".").pop()?.toLowerCase() ?? "")
     : "";
 
-  // Step 2: fetch definition context
   const defContent = await client.getFileContent(
     defResult.project,
     defResult.path,
@@ -480,7 +591,6 @@ async function handleGetSymbolContext(
     defEndLine
   );
 
-  // Step 2.5: fetch file symbol map for the definition file
   let fileSymbols: SymbolContextResult["fileSymbols"];
   try {
     const symsResult = await client.getFileSymbols(defResult.project, defResult.path);
@@ -495,7 +605,6 @@ async function handleGetSymbolContext(
     // Symbol map is non-fatal
   }
 
-  // Step 3: try to find corresponding header (if definition is in .cpp)
   let header: SymbolContextResult["header"] | undefined;
   if (args.include_header && defResult.path.match(/\.(cpp|cc|cxx)$/i)) {
     try {
@@ -518,7 +627,7 @@ async function handleGetSymbolContext(
           Math.max(1, hLine - 10),
           hLine + 10
         );
-        /* v8 ignore start -- header extension detection; test data uses extensionless paths */
+        /* v8 ignore start -- header extension detection */
         const hLang = headerMatch.path.includes(".")
           ? (headerMatch.path.split(".").pop()?.toLowerCase() ?? "")
           : "";
@@ -535,7 +644,6 @@ async function handleGetSymbolContext(
     }
   }
 
-  // Step 4: find references
   const refResults = await client.search(
     args.symbol,
     "refs",
@@ -553,7 +661,6 @@ async function handleGetSymbolContext(
     }))
   );
 
-  // Infer kind from extension / context
   const kind = defResult.path.match(/\.(h|hpp|hxx)$/i)
     ? "class/struct"
     : "function/method";
@@ -577,13 +684,13 @@ async function handleGetSymbolContext(
     fileSymbols,
   };
 
-  return formatSymbolContext(symbolResult);
+  return { text: formatSymbolContext(symbolResult), structured: symbolResult };
 }
 
 async function handleGetCompileInfo(
   rawArgs: Record<string, unknown>,
   config: Config,
-  local: LocalLayer,
+  local: LocalLayer
 ): Promise<string> {
   const args = GetCompileInfoArgs.parse(rawArgs);
 
@@ -595,24 +702,24 @@ async function handleGetCompileInfo(
   }
 
   if (!local.index.size) {
-    return "Local layer is enabled but no compile entries were loaded. " +
-      "No compile_commands.json files found under the build root — build the project first.";
+    return (
+      "Local layer is enabled but no compile entries were loaded. " +
+      "No compile_commands.json files found under the build root — build the project first."
+    );
   }
 
   const requestedPath = args.path;
   let info: CompileInfo | undefined;
 
-  // 1. Absolute path — direct index lookup
   if (path.isAbsolute(requestedPath)) {
     try {
       const resolved = await fsp.realpath(requestedPath);
       info = local.index.get(resolved);
     } catch {
-      // Path doesn't exist — fall through to other strategies
+      // Path doesn't exist — fall through
     }
   }
 
-  // 2. Relative path — try joining against each root
   if (!info) {
     const normalized = requestedPath.replace(/\\/g, "/").replace(/^\/+/, "");
     for (const root of local.roots) {
@@ -628,7 +735,6 @@ async function handleGetCompileInfo(
     }
   }
 
-  // 3. Basename match — last resort for short names like "EventLoop.cpp"
   if (!info) {
     const basename = path.basename(requestedPath);
     for (const [k, v] of local.index) {
@@ -642,6 +748,10 @@ async function handleGetCompileInfo(
   return formatCompileInfo(info ?? null, requestedPath);
 }
 
+// ---------------------------------------------------------------------------
+// Central dispatcher — kept for backward-compatible test exports
+// ---------------------------------------------------------------------------
+
 async function dispatchTool(
   name: string,
   rawArgs: Record<string, unknown>,
@@ -650,23 +760,13 @@ async function dispatchTool(
   local: LocalLayer
 ): Promise<string> {
   switch (name) {
-    // ----------------------------------------------------------------
-    // Core tools
-    // ----------------------------------------------------------------
-    case "search_code": {
+    case "opengrok_search_code": {
       const args = SearchCodeArgs.parse(rawArgs);
-      const results = await client.search(
-        args.query,
-        args.search_type,
-        applyDefaultProject(args.projects, config),
-        args.max_results,
-        args.start_index,
-        args.file_type
-      );
-      return formatSearchResults(results);
+      const { text } = await executeSearchCode(args, client, config);
+      return text;
     }
 
-    case "find_file": {
+    case "opengrok_find_file": {
       const args = FindFileArgs.parse(rawArgs);
       const results = await client.search(
         args.path_pattern,
@@ -678,46 +778,13 @@ async function dispatchTool(
       return formatSearchResults(results);
     }
 
-    case "get_file_content": {
+    case "opengrok_get_file_content": {
       const args = GetFileContentArgs.parse(rawArgs);
-
-      // Step 2-D: Try local filesystem first when local layer is enabled.
-      // Priority 1: suffix-match the OpenGrok path against compile index keys.
-      // This directly uses the authoritative absolute path from compile_commands.json
-        // without needing to infer roots.
-      if (local.enabled && local.index.size > 0) {
-        const absPath = resolveFileFromIndex(args.path, local.index, local.suffixIndex);
-        /* v8 ignore start */
-        if (absPath) {
-        /* v8 ignore stop */
-          const localContent = await readFileAtAbsPath(absPath, args.start_line, args.end_line);
-          if (localContent) return formatFileContent(localContent);
-        }
-      }
-
-      // Priority 2: path-join against roots (catches header files not in compile index).
-      if (local.enabled && local.roots.length > 0) {
-        const localContent = await tryLocalRead(
-          args.path,
-          local.roots,
-          args.start_line,
-          args.end_line
-        );
-        if (localContent) {
-          return formatFileContent(localContent);
-        }
-      }
-
-      const content = await client.getFileContent(
-        args.project,
-        args.path,
-        args.start_line,
-        args.end_line
-      );
-      return formatFileContent(content);
+      const { text } = await executeGetFileContent(args, client, local);
+      return text;
     }
 
-    case "get_file_history": {
+    case "opengrok_get_file_history": {
       const args = GetFileHistoryArgs.parse(rawArgs);
       const history = await client.getFileHistory(
         args.project,
@@ -727,39 +794,27 @@ async function dispatchTool(
       return formatFileHistory(history);
     }
 
-    case "browse_directory": {
+    case "opengrok_browse_directory": {
       const args = BrowseDirectoryArgs.parse(rawArgs);
       const entries = await client.browseDirectory(args.project, args.path);
-      return formatDirectoryListing(
-        entries,
-        args.project,
-        args.path,
-      );
+      return formatDirectoryListing(entries, args.project, args.path);
     }
 
-    case "list_projects": {
+    case "opengrok_list_projects": {
       const args = ListProjectsArgs.parse(rawArgs);
-      const projects = await client.listProjects(args.filter);
-      return formatProjectsList(projects);
+      const { text } = await executeListProjects(args, client);
+      return text;
     }
 
-    case "get_file_annotate": {
+    case "opengrok_get_file_annotate": {
       const args = GetFileAnnotateArgs.parse(rawArgs);
       const annotated = await client.getAnnotate(args.project, args.path);
-      return formatAnnotate(
-        annotated,
-        args.start_line,
-        args.end_line
-      );
+      return formatAnnotate(annotated, args.start_line, args.end_line);
     }
 
-    case "search_suggest": {
+    case "opengrok_search_suggest": {
       const args = SearchSuggestArgs.parse(rawArgs);
-      const result = await client.suggest(
-        args.query,
-        args.project,
-        args.field
-      );
+      const result = await client.suggest(args.query, args.project, args.field);
       if (result.suggestions.length) {
         return "Suggestions:\n" + result.suggestions.map((s) => `  ${s}`).join("\n");
       }
@@ -769,39 +824,21 @@ async function dispatchTool(
       return "No suggestions found.";
     }
 
-    // ----------------------------------------------------------------
-    // Compound tools
-    // ----------------------------------------------------------------
-    case "batch_search": {
+    case "opengrok_batch_search": {
       const args = BatchSearchArgs.parse(rawArgs);
-      const effectiveProjects = applyDefaultProject(args.projects, config);
-      const searchResults = await Promise.all(
-        args.queries.map((q) =>
-          client.search(
-            q.query,
-            q.search_type,
-            effectiveProjects,
-            q.max_results,
-            0,
-            args.file_type
-          )
-        )
-      );
-      const queryResults = args.queries.map((q, i) => ({
-        query: q.query,
-        searchType: q.search_type,
-        results: searchResults[i],
-      }));
-      return formatBatchSearchResults(queryResults);
+      const { text } = await executeBatchSearch(args, client, config);
+      return text;
     }
 
-    case "search_and_read":
+    case "opengrok_search_and_read":
       return handleSearchAndRead(rawArgs, client, config);
 
-    case "get_symbol_context":
-      return handleGetSymbolContext(rawArgs, client, config);
+    case "opengrok_get_symbol_context": {
+      const { text } = await handleGetSymbolContextStructured(rawArgs, client, config);
+      return text;
+    }
 
-    case "index_health": {
+    case "opengrok_index_health": {
       IndexHealthArgs.parse(rawArgs);
       const start = Date.now();
       const ok = await client.testConnection();
@@ -811,10 +848,10 @@ async function dispatchTool(
         : "OpenGrok: connection failed";
     }
 
-    case "get_compile_info":
+    case "opengrok_get_compile_info":
       return handleGetCompileInfo(rawArgs, config, local);
 
-    case "get_file_symbols": {
+    case "opengrok_get_file_symbols": {
       const args = GetFileSymbolsArgs.parse(rawArgs);
       const result = await client.getFileSymbols(args.project, args.path);
       if (!result.symbols.length) {
@@ -826,6 +863,390 @@ async function dispatchTool(
     default:
       return `**Error:** Unknown tool: "${name}"`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Server factory — McpServer with per-tool registrations
+// ---------------------------------------------------------------------------
+
+export function createServer(
+  client: OpenGrokClient,
+  config: Config
+): McpServer {
+  const server = new McpServer(
+    { name: "opengrok-mcp", version: VERSION },
+    { instructions: SERVER_INSTRUCTIONS }
+  );
+
+  const local = buildLocalLayer(config);
+
+  // -----------------------------------------------------------------------
+  // Core tools
+  // -----------------------------------------------------------------------
+
+  server.registerTool(
+    "opengrok_search_code",
+    {
+      title: "Search Code",
+      description:
+        "Search OpenGrok. Types: full (text), defs (definitions), refs (references), path (filenames), hist (commit messages). Prefer defs/refs for known symbol names. Use opengrok_batch_search for multiple queries.",
+      inputSchema: SearchCodeArgs.shape,
+      outputSchema: SearchResultsOutput.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const format = args.response_format ?? "markdown";
+        const { text, structured } = await executeSearchCode(args, client, config);
+        const hasMore = structured.endIndex < structured.totalCount;
+        const nextOffset = hasMore ? structured.endIndex : undefined;
+        return formatResponse(
+          text,
+          { ...structured as unknown as Record<string, unknown>, hasMore, ...(nextOffset !== undefined ? { nextOffset } : {}) },
+          format
+        );
+      } catch (err) {
+        return makeToolError("opengrok_search_code", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_find_file",
+    {
+      title: "Find File",
+      description: "Find files by name/path pattern across the codebase.",
+      inputSchema: FindFileArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const results = await client.search(
+          args.path_pattern,
+          "path",
+          applyDefaultProject(args.projects, config),
+          args.max_results,
+          args.start_index
+        );
+        return { content: [{ type: "text", text: capResponse(formatSearchResults(results)) }] };
+      } catch (err) {
+        return makeToolError("opengrok_find_file", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_get_file_content",
+    {
+      title: "Get File Content",
+      description:
+        "Get file contents. ALWAYS pass start_line/end_line — never fetch full files. Use opengrok_search_code first to find line numbers. For full symbol context use opengrok_get_symbol_context.",
+      inputSchema: GetFileContentArgs.shape,
+      outputSchema: FileContentOutput.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const format = args.response_format ?? "markdown";
+        const { text, structured } = await executeGetFileContent(args, client, local);
+        return formatResponse(text, structured as unknown as Record<string, unknown>, format);
+      } catch (err) {
+        return makeToolError("opengrok_get_file_content", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_get_file_history",
+    {
+      title: "Get File History",
+      description: "Commit history for a file.",
+      inputSchema: GetFileHistoryArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const history = await client.getFileHistory(
+          args.project,
+          args.path,
+          args.max_entries
+        );
+        return { content: [{ type: "text", text: capResponse(formatFileHistory(history)) }] };
+      } catch (err) {
+        return makeToolError("opengrok_get_file_history", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_browse_directory",
+    {
+      title: "Browse Directory",
+      description: "List files/subdirectories at a path.",
+      inputSchema: BrowseDirectoryArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const entries = await client.browseDirectory(args.project, args.path);
+        return {
+          content: [
+            {
+              type: "text",
+              text: capResponse(formatDirectoryListing(entries, args.project, args.path)),
+            },
+          ],
+        };
+      } catch (err) {
+        return makeToolError("opengrok_browse_directory", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_list_projects",
+    {
+      title: "List Projects",
+      description: "List indexed OpenGrok projects.",
+      inputSchema: ListProjectsArgs.shape,
+      outputSchema: ProjectsListOutput.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const format = args.response_format ?? "markdown";
+        const { text, structured } = await executeListProjects(args, client);
+        return formatResponse(text, structured as unknown as Record<string, unknown>, format);
+      } catch (err) {
+        return makeToolError("opengrok_list_projects", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_get_file_annotate",
+    {
+      title: "Get File Annotate",
+      description:
+        "Blame annotations (who changed each line). Use start_line/end_line to limit output.",
+      inputSchema: GetFileAnnotateArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const annotated = await client.getAnnotate(args.project, args.path);
+        return {
+          content: [
+            {
+              type: "text",
+              text: capResponse(formatAnnotate(annotated, args.start_line, args.end_line)),
+            },
+          ],
+        };
+      } catch (err) {
+        return makeToolError("opengrok_get_file_annotate", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_search_suggest",
+    {
+      title: "Search Suggest",
+      description: "Autocomplete suggestions for a partial query.",
+      inputSchema: SearchSuggestArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const result = await client.suggest(args.query, args.project, args.field);
+        let text: string;
+        if (result.suggestions.length) {
+          text = "Suggestions:\n" + result.suggestions.map((s) => `  ${s}`).join("\n");
+        } else if (result.time === 0) {
+          text =
+            "No suggestions found. The suggester index appears to be empty — an OpenGrok admin may need to rebuild it.";
+        } else {
+          text = "No suggestions found.";
+        }
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_search_suggest", err);
+      }
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // Compound tools
+  // -----------------------------------------------------------------------
+
+  server.registerTool(
+    "opengrok_batch_search",
+    {
+      title: "Batch Search",
+      description:
+        "Execute up to 5 searches in parallel in one call.\n\n" +
+        "**When to use**: Always prefer this over multiple opengrok_search_code calls for the same investigation.\n\n" +
+        "**Args**: `queries` array (each with `query`, `search_type`, `max_results`); `projects` and `file_type` apply to all queries.\n\n" +
+        "**Example**: Find definition, references, and usage patterns of a symbol in one call.",
+      inputSchema: BatchSearchArgs.shape,
+      outputSchema: BatchSearchOutput.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const format = args.response_format ?? "markdown";
+        const { text, structured } = await executeBatchSearch(args, client, config);
+        return formatResponse(text, structured as unknown as Record<string, unknown>, format);
+      } catch (err) {
+        return makeToolError("opengrok_batch_search", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_search_and_read",
+    {
+      title: "Search and Read",
+      description:
+        "Search and return matching code with surrounding context in one call.\n\n" +
+        "**When to use**: Instead of opengrok_search_code + opengrok_get_file_content. Never fetches full files.\n\n" +
+        "**When not to use**: When you need the full file or deep symbol analysis — use opengrok_get_symbol_context instead.",
+      inputSchema: SearchAndReadArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const text = await handleSearchAndRead(
+          args as unknown as Record<string, unknown>,
+          client,
+          config
+        );
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_search_and_read", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_get_symbol_context",
+    {
+      title: "Get Symbol Context",
+      description:
+        "Complete symbol investigation in one call: definition with context + corresponding header + references.\n\n" +
+        "**When to use**: First choice for any unknown C++ symbol or function. Replaces search_code + get_file_content combination.\n\n" +
+        "**When not to use**: For simple file reads or when you already have the exact line number.\n\n" +
+        "**Args**: `symbol` (required); `projects`, `context_lines`, `max_refs`, `include_header`, `file_type` (optional).\n\n" +
+        "**Example**: Use for any CamelCase/PascalCase identifier to get definition + header + callers in one call.",
+      inputSchema: GetSymbolContextArgs.shape,
+      outputSchema: SymbolContextOutput.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const format = args.response_format ?? "markdown";
+        const { text, structured } = await handleGetSymbolContextStructured(
+          args as unknown as Record<string, unknown>,
+          client,
+          config
+        );
+        return formatResponse(
+          text,
+          structured as unknown as Record<string, unknown>,
+          format
+        );
+      } catch (err) {
+        return makeToolError("opengrok_get_symbol_context", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_index_health",
+    {
+      title: "Index Health",
+      description:
+        "OpenGrok server connection status and diagnostics. Call if results seem stale or incomplete.",
+      inputSchema: IndexHealthArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async () => {
+      try {
+        const start = Date.now();
+        const ok = await client.testConnection();
+        const latencyMs = Date.now() - start;
+        const text = ok
+          ? `OpenGrok: connected (${latencyMs}ms latency)`
+          : "OpenGrok: connection failed";
+        return { content: [{ type: "text", text }] };
+      } catch (err) {
+        return makeToolError("opengrok_index_health", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_get_compile_info",
+    {
+      title: "Get Compile Info",
+      description:
+        "Get compilation details for a source file: compiler, include paths, preprocessor defines, and language standard.\n\n" +
+        "**When to use**: When you need compiler flags or include paths for precise analysis of C/C++ files.\n\n" +
+        "**When not to use**: For non-C/C++ files or when compile_commands.json is not present.\n\n" +
+        "**Args**: `path` — absolute or OpenGrok-relative path (e.g., GridNode/EventLoop.cpp).\n\n" +
+        "**Example**: Use before asking about preprocessor macros or platform-specific includes.",
+      inputSchema: GetCompileInfoArgs.shape,
+      annotations: READ_ONLY_LOCAL,
+    },
+    async (args) => {
+      try {
+        const text = await handleGetCompileInfo(
+          args as unknown as Record<string, unknown>,
+          config,
+          local
+        );
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_get_compile_info", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_get_file_symbols",
+    {
+      title: "Get File Symbols",
+      description:
+        "List all symbols defined in a file: functions, classes, structs, macros with line numbers and signatures.\n\n" +
+        "**When to use**: To understand a file's structure before reading it with opengrok_get_file_content.\n\n" +
+        "**When not to use**: When you already know exactly which lines to read.\n\n" +
+        "**Args**: `project` and `path` (required).\n\n" +
+        "**Example**: Use before opengrok_get_file_content to identify which function/class starts at which line.",
+      inputSchema: GetFileSymbolsArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const result = await client.getFileSymbols(args.project, args.path);
+        if (!result.symbols.length) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No symbols found for ${args.path} in project ${args.project}. The file may not be indexed or the OpenGrok instance does not support the /api/v1/file/defs endpoint.`,
+              },
+            ],
+          };
+        }
+        return { content: [{ type: "text", text: capResponse(formatFileSymbols(result)) }] };
+      } catch (err) {
+        return makeToolError("opengrok_get_file_symbols", err);
+      }
+    }
+  );
+
+  return server;
 }
 
 // ---------------------------------------------------------------------------
@@ -846,8 +1267,18 @@ export async function runServer(
     process.exit(0);
   };
 
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => { void shutdown("SIGINT"); });
+  process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
+
+  // Security: warn when credentials are transmitted over plaintext HTTP
+  if (
+    config.OPENGROK_BASE_URL.startsWith("http://") &&
+    (config.OPENGROK_USERNAME || config.OPENGROK_PASSWORD)
+  ) {
+    logger.warn(
+      "Credentials configured but base URL uses plaintext HTTP. Use HTTPS to protect credentials in transit."
+    );
+  }
 
   logger.info(`Starting server v${VERSION}, connected to: ${config.OPENGROK_BASE_URL}`);
 
@@ -868,13 +1299,21 @@ export async function runServer(
 function sanitizeErrorMessage(message: string): string {
   let sanitized = message.replace(/Basic\s+[A-Za-z0-9+/=]+/gi, "Basic [REDACTED]");
   sanitized = sanitized.replace(/:[^:@\s]+@/g, ":***@");
-  // Strip absolute filesystem paths that may leak internal infrastructure
-  sanitized = sanitized.replace(/\/(?:home|tmp|var|usr|build|opt|mnt|srv)(?:\/\S+)/g, "[path]");
-  sanitized = sanitized.replace(/[A-Z]:\\(?:Users|Windows|Program Files|build)(?:\\\S+)/gi, "[path]");
+  sanitized = sanitized.replace(
+    /\/(?:home|tmp|var|usr|build|opt|mnt|srv)(?:\/\S+)/g,
+    "[path]"
+  );
+  sanitized = sanitized.replace(
+    /[A-Z]:\\(?:Users|Windows|Program Files|build)(?:\\\S+)/gi,
+    "[path]"
+  );
   return sanitized;
 }
 
-// Exported for testing only
+// ---------------------------------------------------------------------------
+// Exports for testing
+// ---------------------------------------------------------------------------
+
 export {
   capResponse as _capResponse,
   sanitizeErrorMessage as _sanitizeErrorMessage,

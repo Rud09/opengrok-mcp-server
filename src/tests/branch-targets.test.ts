@@ -381,14 +381,14 @@ describe('server.ts createServer error handler', () => {
     const server = createServer(client as any, config);
 
     // Access the internal handler map
-    const handler = (server as any)._requestHandlers.get('tools/call');
+    const handler = (server as any).server._requestHandlers.get('tools/call');
     expect(handler).toBeDefined();
 
     // Call with invalid args that will cause Zod parse to throw
     const result = await handler({
       method: 'tools/call',
       params: {
-        name: 'search_code',
+        name: 'opengrok_search_code',
         arguments: { query: 123, search_type: 'invalid_type' },
       },
     });
@@ -400,11 +400,11 @@ describe('server.ts createServer error handler', () => {
     client.search.mockRejectedValueOnce(new Error('Connection failed'));
     const server = createServer(client as any, config);
 
-    const handler = (server as any)._requestHandlers.get('tools/call');
+    const handler = (server as any).server._requestHandlers.get('tools/call');
     const result = await handler({
       method: 'tools/call',
       params: {
-        name: 'search_code',
+        name: 'opengrok_search_code',
         arguments: { query: 'test' },
       },
     });
@@ -417,11 +417,11 @@ describe('server.ts createServer error handler', () => {
     client.search.mockRejectedValueOnce('string error');
     const server = createServer(client as any, config);
 
-    const handler = (server as any)._requestHandlers.get('tools/call');
+    const handler = (server as any).server._requestHandlers.get('tools/call');
     const result = await handler({
       method: 'tools/call',
       params: {
-        name: 'search_code',
+        name: 'opengrok_search_code',
         arguments: { query: 'test' },
       },
     });
@@ -433,12 +433,12 @@ describe('server.ts createServer error handler', () => {
     const client = makeMockClient();
     const server = createServer(client as any, config);
 
-    const handler = (server as any)._requestHandlers.get('tools/call');
+    const handler = (server as any).server._requestHandlers.get('tools/call');
     // Call with no arguments field — triggers default-arg {} path
     const result = await handler({
       method: 'tools/call',
       params: {
-        name: 'search_code',
+        name: 'opengrok_search_code',
         // note: no arguments field
       },
     });
@@ -467,7 +467,7 @@ describe('server.ts createServer error handler', () => {
     // Refs search
     client.search.mockResolvedValueOnce({ query: 'func', searchType: 'refs', totalCount: 0, results: [] });
 
-    const result = await dispatchTool('get_symbol_context', { symbol: 'func' }, client as any, config, emptyLocal());
+    const result = await dispatchTool('opengrok_get_symbol_context', { symbol: 'func' }, client as any, config, emptyLocal());
     expect(result).toContain('func');
   });
 
@@ -481,7 +481,7 @@ describe('server.ts createServer error handler', () => {
 
     const client = makeMockClient();
     try {
-      const result = await dispatchTool('get_file_content', {
+      const result = await dispatchTool('opengrok_get_file_content', {
         project: 'p', path: 'src/test.cpp',
       }, client as any, config, {
         enabled: true,

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Highlights
 
+### 🏗️ v4.0 — Modern MCP SDK & Breaking Tool Rename
+
+McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, structured output, `response_format` parameter, security hardening. Full protocol compliance.
+
 ### 🧠 v3.0 — Code Intelligence Engine
 
 6 new compound tools, ~92% fewer tokens, full OpenGrok 1.7.x support, and a zero-config local source layer that knows your compiler flags. The largest update since the original rewrite.
@@ -23,14 +27,75 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [4.0.0] - 2026-03-15
+
+### ⚠️ Breaking Changes
+
+- **Tool rename**: All 14 tools now use `opengrok_` prefix for namespace clarity per MCP best practices. Update any client configurations or scripts that reference tool names.
+
+#### Migration Guide
+
+| Old Name (v3.x) | New Name (v4.0) |
+| ---------------- | --------------- |
+| `search_code` | `opengrok_search_code` |
+| `find_file` | `opengrok_find_file` |
+| `get_file_content` | `opengrok_get_file_content` |
+| `get_file_history` | `opengrok_get_file_history` |
+| `browse_directory` | `opengrok_browse_directory` |
+| `list_projects` | `opengrok_list_projects` |
+| `get_file_annotate` | `opengrok_get_file_annotate` |
+| `search_suggest` | `opengrok_search_suggest` |
+| `batch_search` | `opengrok_batch_search` |
+| `search_and_read` | `opengrok_search_and_read` |
+| `get_symbol_context` | `opengrok_get_symbol_context` |
+| `index_health` | `opengrok_index_health` |
+| `get_compile_info` | `opengrok_get_compile_info` |
+| `get_file_symbols` | `opengrok_get_file_symbols` |
+
+- **Removed `zod-to-json-schema` dependency**: `McpServer.registerTool()` handles Zod→JSON Schema natively. No action needed unless you imported from `tool-schemas.ts`.
+- **Deleted `tool-schemas.ts`**: Tool definitions are now registered inline via `registerTool()` in `server.ts`.
+
+### Added
+
+- **McpServer high-level API** (Phase 2): Migrated from deprecated `Server` + `setRequestHandler()` to `McpServer` + `registerTool()`. Each tool is self-contained with its own error handling.
+- **Tool annotations** on all 14 tools: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` per MCP spec. `opengrok_get_compile_info` uses `openWorldHint: false` (local filesystem only).
+- **`title` field** on all tool registrations for human-readable display.
+- **`isError: true`** on all error responses per MCP spec. All three error types (ZodError, Error, unknown) handled via shared `makeToolError()` helper.
+- **Structured output schemas** (`structuredContent`) for priority tools: `opengrok_search_code`, `opengrok_get_file_content`, `opengrok_list_projects`, `opengrok_batch_search`, `opengrok_get_symbol_context`. Programmatic clients receive typed data alongside text.
+- **`response_format` parameter** on all 14 tools: `"markdown"` (default, LLM-optimised) or `"json"` (programmatic). Shared `formatResponse()` helper eliminates per-handler duplication.
+- **Expanded tool descriptions** for compound tools (`opengrok_batch_search`, `opengrok_search_and_read`, `opengrok_get_symbol_context`, `opengrok_get_compile_info`, `opengrok_get_file_symbols`) with "when to use / when not to use", Args, and Example sections.
+- **Output Zod schemas** in `models.ts`: `SearchResultsOutput`, `FileContentOutput`, `ProjectsListOutput`, `BatchSearchOutput`, `SymbolContextOutput` with pagination fields (`hasMore`, `nextOffset`).
+
+### Security
+
+- **Logger credential redaction**: `sanitizeMeta()` in `logger.ts` strips Basic auth, Bearer tokens, URL-embedded credentials, and filesystem paths from all log output.
+- **Complete HTML entity decoding**: `stripHtmlTags()` now handles decimal (`&#60;`) and hex (`&#x3C;`) numeric references, plus missing named entities (`nbsp`, `apos`).
+- **Strengthened path traversal validation**: `assertSafePath()` rejects URL-encoded (`%2e%2e`, `%2f..`), double-encoded (`%252e`), and null-byte (`\0`, `%00`, `%2500`) traversal variants with decode-before-validate.
+- **Deterministic cache keys**: `search()` cache uses `[...projects].sort().join(",")` instead of `JSON.stringify()`.
+- **Plaintext HTTP warning**: `runServer()` logs warning when credentials are configured with `http://` base URL.
+
+### Changed
+
+- **ESLint strict preset**: `tseslint.configs.strict` with `no-explicit-any: "error"`, `no-floating-promises`, `await-thenable`, `no-misused-promises`.
+- **TypeScript declarations**: `tsconfig.json` enables `declaration` and `declarationMap`. `package.json` exports `types` field.
+- **Coverage thresholds**: `vitest.config.ts` enforces 90% lines/functions/statements, 85% branches.
+- **Structured logging**: ISO timestamps, `[INFO]`/`[WARN]`/`[ERROR]`/`[DEBUG]` prefixes, debug level gated by `OPENGROK_LOG_LEVEL`.
+- **Expanded language map**: Added `.tsx`, `.jsx`, `.vue`, `.scala`, `.gradle`, `.dart`, `.zig`, `.lua`, `.r`, `.m`, `.mm`, `.pl`, `.tf`, `.toml`, `.ini`, `.proto`.
+- **npm scripts**: Added `typecheck`, `lint:fix`, `validate`.
+- **Magic numbers extracted**: `MAX_REDIRECTS`, `MAX_FILTER_LENGTH`, `TIMEOUTS` as named constants.
+- **Non-null assertions eliminated**: All `.pop()!` replaced with `?? ""` fallback.
+- **Regex patterns extracted**: `LINE_ANCHOR_RE`, `DEF_SYMBOL_RE`, `SIG_RE` as module-level constants.
+
+---
+
 ## [3.3.5] - 2026-03-15
 
 ### Changed
 
 - **Rebrand**: Extension `displayName` renamed to **OpenGrok MCP Server**.
-- **Description**: Updated to "MCP server bridging OpenGrok search engines with AI for deep, instant context across massive codebases" across `package.json`, `server.json`, and `README.md`.
+- **Description**: Updated to "MCP server bridging OpenGrok search engine with AI for deep, instant context across massive codebases" across `package.json`, `server.json`, and `README.md`.
 - **License**: Added `LICENSE-COMMERCIAL.md` clearly describing commercial/enterprise licensing terms. Updated `LICENSE` Required Notice with author attribution. README license section now explicitly states commercial use restrictions with contact info.
-- **Installation docs**: README now lists npm (`npx opengrok-mcp-server`) and MCP Registry (`io.github.IcyHot09/opengrok`) as first-class installation options alongside VS Code Marketplace.
+- **Installation docs**: README now lists npm (`npx opengrok-mcp-server`) and MCP Registry (`io.github.IcyHot09/opengrok-mcp-server`) as first-class installation options alongside VS Code Marketplace.
 - **MCP Registry badge**: Added to README header badges.
 - **Release tooling**: Fixed wrong GitHub repo URL in `generate-release-notes.js`. Release script now syncs `server.json` version on each release.
 

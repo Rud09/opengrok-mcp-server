@@ -26,28 +26,46 @@ const MAX_INLINE_LINES = parseInt(
 // Utilities
 // ---------------------------------------------------------------------------
 
-const HTML_ENTITIES: Record<string, string> = {
-  lt: "<", gt: ">", amp: "&", quot: '"', "#39": "'",
+const HTML_NAMED_ENTITIES: Record<string, string> = {
+  lt: "<",
+  gt: ">",
+  amp: "&",
+  quot: '"',
+  apos: "'",
+  nbsp: "\u00A0",
+  "#39": "'",
 };
 
 function stripHtmlTags(text: string): string {
   return text
     .replace(/<[^>]+>/g, "")
-    .replace(/&(lt|gt|amp|quot|#39);/g, (_, e) => /* v8 ignore next */ HTML_ENTITIES[e] ?? _);
+    // Named HTML entities
+    .replace(/&(lt|gt|amp|quot|apos|nbsp|#39);/g, (_, e) => /* v8 ignore next */ HTML_NAMED_ENTITIES[e] ?? _)
+    // Decimal numeric references: &#60; → '<'
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    // Hex numeric references: &#x3C; → '<'
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
 }
 
 const LANGUAGE_MAP: Record<string, string> = {
   cpp: "cpp",
+  cxx: "cpp",
+  cc: "cpp",
   c: "c",
   h: "cpp",
   hpp: "cpp",
+  hxx: "cpp",
   java: "java",
   py: "python",
   js: "javascript",
+  jsx: "jsx",
   ts: "typescript",
+  tsx: "tsx",
   go: "go",
   rs: "rust",
   sh: "bash",
+  bash: "bash",
+  zsh: "bash",
   ps1: "powershell",
   sql: "sql",
   xml: "xml",
@@ -60,14 +78,31 @@ const LANGUAGE_MAP: Record<string, string> = {
   rb: "ruby",
   cs: "csharp",
   kt: "kotlin",
+  kts: "kotlin",
   swift: "swift",
   php: "php",
   html: "html",
   css: "css",
+  scss: "scss",
+  vue: "vue",
+  scala: "scala",
+  gradle: "groovy",
+  dart: "dart",
+  zig: "zig",
+  lua: "lua",
+  r: "r",
+  m: "objc",
+  mm: "objcpp",
+  pl: "perl",
+  pm: "perl",
+  tf: "hcl",
+  toml: "toml",
+  ini: "ini",
+  proto: "protobuf",
 };
 
 function langForPath(path: string): string {
-  const ext = path.includes(".") ? path.split(".").pop()!.toLowerCase() : "";
+  const ext = path.includes(".") ? (path.split(".").pop() ?? "").toLowerCase() : "";
   return LANGUAGE_MAP[ext] ?? "";
 }
 
@@ -242,7 +277,8 @@ export function formatProjectsList(projects: Project[]): string {
   for (const p of projects) {
     const cat = p.category ?? "Other";
     if (!categories.has(cat)) categories.set(cat, []);
-    categories.get(cat)!.push(p);
+    const arr = categories.get(cat);
+    if (arr) arr.push(p);
   }
 
   for (const [category, projs] of categories) {
@@ -466,7 +502,8 @@ export function formatSymbolContext(result: SymbolContextResult): string {
     const byType = new Map<string, typeof result.fileSymbols>();
     for (const s of result.fileSymbols) {
       if (!byType.has(s.type)) byType.set(s.type, []);
-      byType.get(s.type)!.push(s);
+      const arr = byType.get(s.type);
+      if (arr) arr.push(s);
     }
     for (const [type, syms] of byType) {
       const sorted = [...syms].sort((a, b) => a.line - b.line);
@@ -537,7 +574,8 @@ export function formatFileSymbols(result: FileSymbols): string {
   for (const sym of result.symbols) {
     const key = sym.type ?? "Unknown";
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(sym);
+    const arr = groups.get(key);
+    if (arr) arr.push(sym);
   }
 
   // Sort groups by first occurrence line (keeps logical order)
