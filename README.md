@@ -8,8 +8,6 @@
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/IcyHot09.opengrok-mcp-server?label=VS%20Code%20Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![Installs](https://img.shields.io/visual-studio-marketplace/i/IcyHot09.opengrok-mcp-server)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![npm](https://img.shields.io/npm/v/opengrok-mcp-server?logo=npm)](https://www.npmjs.com/package/opengrok-mcp-server) [![MCP Registry](https://img.shields.io/badge/MCP_Registry-listed-blue)](https://registry.modelcontextprotocol.io) [![CI](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml) [![GitHub Release](https://img.shields.io/github/v/release/IcyHot09/opengrok-mcp-server)](https://github.com/IcyHot09/opengrok-mcp-server/releases)
 
-⚡ **Instant Setup** • 🚀 **High-Performance Tools** • 🔒 **Local Security** • 🔄 **Self-Updating**
-
 </div>
 
 ---
@@ -277,8 +275,8 @@ For deep-dives into the architecture or PR guidelines, please read [CONTRIBUTING
 
 This system is distributed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
 
-✅ **Permitted:** Personal use, hobby projects, academic research, education
-❌ **Prohibited:** Any commercial, business, enterprise, or paid utilization
+* ✅ **Permitted:** Personal use, hobby projects, academic research, education
+* ❌ **Prohibited:** Any commercial, business, enterprise, or paid utilization
 
 **Commercial Licensing:**
 To use this extension in an enterprise context (internal tooling, CI pipelines, business infrastructure), a commercial license is strictly required. 
