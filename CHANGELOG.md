@@ -131,7 +131,7 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ### Fixed
 
-- **`get_file_annotate` shows blame markers instead of source code on OpenGrok 1.7.x**: In the real 1.7.x annotate HTML format, source code lines appear as sibling nodes *after* `<span class="blame">`, not inside it. The performance refactor in v3.3.0 introduced a regression: `el.text` on the blame span returned the blame anchor text (`851c8156SRudra Roy`) instead of the actual source line. Fixed with index-based parent `childNodes` iteration (since `TextNode.nextSibling` is unreliable in `node-html-parser`). Also added `content` assertions to the OpenGrok 1.7.x annotate parser test.
+- **`get_file_annotate` shows blame markers instead of source code on OpenGrok 1.7.x**: In the real 1.7.x annotate HTML format, source code lines appear as sibling nodes *after* `<span class="blame">`, not inside it. The performance refactor in v3.3.0 introduced a regression: `el.text` on the blame span returned the blame anchor text (`851c8156SJane Doe`) instead of the actual source line. Fixed with index-based parent `childNodes` iteration (since `TextNode.nextSibling` is unreliable in `node-html-parser`). Also added `content` assertions to the OpenGrok 1.7.x annotate parser test.
 
 ---
 

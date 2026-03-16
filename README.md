@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="images/icon.png" width="120" alt="OpenGrok MCP Server icon">
+<img src="images/icon.png" width="120" alt="OpenGrok MCP Server logo">
 
 # OpenGrok MCP Server
 
@@ -8,57 +8,55 @@
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/IcyHot09.opengrok-mcp-server?label=VS%20Code%20Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![Installs](https://img.shields.io/visual-studio-marketplace/i/IcyHot09.opengrok-mcp-server)](https://marketplace.visualstudio.com/items?itemName=IcyHot09.opengrok-mcp-server) [![npm](https://img.shields.io/npm/v/opengrok-mcp-server?logo=npm)](https://www.npmjs.com/package/opengrok-mcp-server) [![MCP Registry](https://img.shields.io/badge/MCP_Registry-listed-blue)](https://registry.modelcontextprotocol.io) [![CI](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/IcyHot09/opengrok-mcp-server/actions/workflows/ci.yml) [![GitHub Release](https://img.shields.io/github/v/release/IcyHot09/opengrok-mcp-server)](https://github.com/IcyHot09/opengrok-mcp-server/releases)
 
-🔌 **Zero Install** &nbsp;·&nbsp; 🧠 **Compound Tools** &nbsp;·&nbsp; 🔄 **Auto-Updates** &nbsp;·&nbsp; 🔒 **Secure Credentials**
+⚡ **Instant Setup** • 🚀 **High-Performance Tools** • 🔒 **Local Security** • 🔄 **Self-Updating**
 
 </div>
 
 ---
 
 <details>
-<summary>📋 Table of Contents</summary>
+<summary>📚 Table of Contents</summary>
 
-- [Do I need anything installed?](#do-i-need-anything-installed)
-- [Installation](#installation)
-- [Setup & Configuration](#setup--configuration)
-- [Usage](#usage)
-- [Available Tools](#available-tools)
-- [Extension Commands](#extension-commands)
-- [Extension Settings](#extension-settings)
-- [Architecture](#architecture)
-- [Development](#development)
-- [License](#license)
+- [Overview](#overview)
+- [How to Install](#how-to-install)
+- [Configuration Guide](#configuration-guide)
+- [Prompting Examples](#prompting-examples)
+- [Tool Reference](#tool-reference)
+- [VS Code Integration](#vs-code-integration)
+- [System Architecture](#system-architecture)
+- [Building & Testing](#building--testing)
+- [Troubleshooting & Support](#troubleshooting--support)
+- [License Information](#license-information)
 
 </details>
 
 ---
 
-## Do I need anything installed?
+## Overview
 
-> 💡 **No.** Installing the VSIX is enough. The MCP server is bundled inside the extension — no Python, no Node.js, no separate installs required.
+> 💡 **Self-Contained Architecture:** The VS Code extension includes the MCP server pre-packaged. You don't need Python, external Node.js installations, or complex environment setups. Just install and go.
 
 ---
 
-## Installation
+## How to Install
 
-### Option 1 — VS Code Marketplace _(Recommended)_
+### 1. From the VS Code Marketplace (Easiest)
 
-Search for **"OpenGrok MCP Server"** in the VS Code Extensions panel (`Ctrl+Shift+X`) and click Install.
+Inside VS Code, open the Extensions view (`Ctrl+Shift+X`), search for **"OpenGrok MCP Server"**, and hit Install.
 
-### Option 2 — npm
+### 2. Global NPM Package
 
 ```bash
+# Run directly without installing permanently
 npx opengrok-mcp-server
-```
 
-Or install globally:
-
-```bash
+# Or install it globally on your system
 npm install -g opengrok-mcp-server
 ```
 
-### Option 3 — MCP Registry
+### 3. Via the MCP Registry
 
-This server is listed on the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.IcyHot09/opengrok-mcp-server`. Any MCP-compatible client that supports the registry can discover and install it automatically.
+We are officially listed in the [Model Context Protocol Registry](https://registry.modelcontextprotocol.io) under `io.github.IcyHot09/opengrok-mcp-server`. Clients with registry integration can locate and install it natively.
 
 ### Option 4 — Install pre-built VSIX
 
@@ -83,197 +81,207 @@ code --install-extension opengrok-mcp-server-*.vsix
 
 ---
 
-## Setup & Configuration
+## Configuration Guide
 
-1. **Configure Credentials:**
-   - Upon installing, the **Configuration Manager** webview opens automatically.
-   - Enter your OpenGrok server URL, username, and password, then click **Save Settings**. _(Password is saved securely in the OS keychain.)_
-   - A connection test runs automatically. First-time setup requires a **Reload Window** to enable tools.
-   - _(Manage configuration later via the gear icon in the Status Bar, or `OpenGrok: Manage Configuration` in the Command Palette.)_
+1. **Provide Connection Details:**
+   - After installation, the **Settings panel** will launch.
+   - Input your OpenGrok endpoint, username, and password. Hit **Save Settings**. *(Credentials are locked in your native OS keychain).*
+   - The plugin verifies the connection instantly. On your first run, VS Code will ask you to **Reload the Window** to register the MCP tools.
+   - *(Need to change this later? Use the `OpenGrok: Manage Configuration` command or click the gear icon in the status bar).*
 
+2. **Activate the MCP Source in Copilot:**
+   - Launch the **GitHub Copilot Chat** window. Ensure you're using **Agent** mode.
+   - Click the paperclip/tools icon (`🔧`) in the prompt box.
+   - (If an **Update Tools** button appears, click it).
+   - Locate **OpenGrok** in the list, check the box, and confirm.
 
+> ⚠️ Note that VS Code manages tool authorizations **per workspace**. If you open a different repository, you may need to re-check the OpenGrok box in Copilot.
 
-2. **Enable the Tools in Copilot** _(First Time Only)_:
-   - Open **GitHub Copilot Chat** in **Agent** mode.
-   - Click the **`🔧` (Tools icon)** in the chat input box.
-   - If you see **Update Tools**, click it first.
-   - Check **OpenGrok** in the list and click **Done**.
+### 🔌 Third-Party Client Support
 
-> ⚠️ Tool selection is **per workspace** — re-enable in each new workspace as needed.
+While tailored for VS Code, the integrated server logic runs perfectly with other agents natively supporting the MCP protocol, including:
 
-### 🔌 Using with Other MCP Clients
+**Claude Desktop** | **Cursor IDE** | **Windsurf** | **Claude Code** | **Google Antigravity**
 
-The **standalone MCP server** works with any MCP-compatible client:
-
-**Claude Code** · **Cursor** · **Windsurf** · **Claude Desktop** · **OpenCode** · **Google Antigravity**
-
-> **👉 See [MCP_CLIENTS.md](MCP_CLIENTS.md)** for the one-command installer, per-client config snippets, and security considerations.
+> **👉 Refer to [MCP_CLIENTS.md](MCP_CLIENTS.md)** for configuration snippets, terminal wrapper scripts, and advanced daemon setups.
 
 ---
 
-## Usage
+## Prompting Examples
 
-In GitHub Copilot Chat, describe what you're looking for in natural language:
+Talk to GitHub Copilot Chat naturally about your codebase:
 
 ```text
-Use OpenGrok to search for RenderPipeline in the my-project project
+Find the implementation of the render_pipeline function within the graphics engine project.
 
-Ask OpenGrok to show me the file at /path/to/file.cpp lines 100-200
+Retrieve the contents of /src/utils/math.cpp from line 450 to 520.
 
-Have OpenGrok find the definition of CacheManager and show me the header too
+What is the definition of TextureManager? Please show me the header file declaration too.
 
-Search for all references to TaskScheduler across the codebase
+Look for all places in the code where ThreadPool is instantiated or referenced.
 ```
 
 ---
 
-## Available Tools
+## Tool Reference
 
-### Core Tools
+### Primary Operations
 
-| Tool | Description |
+| Tool Name | Purpose |
 | ---- | ----------- |
-| `opengrok_search_code` | Full-text, symbol definition, reference, path, or commit message search. Optional `file_type` filter. |
-| `opengrok_find_file` | Find files by path or name pattern. |
-| `opengrok_get_file_content` | Retrieve file contents — pass `start_line`/`end_line` to limit output. |
-| `opengrok_get_file_history` | Commit history for a file. |
-| `opengrok_browse_directory` | List directory contents. |
-| `opengrok_list_projects` | List all accessible projects. |
-| `opengrok_get_file_annotate` | Git blame with optional line range. |
-| `opengrok_get_file_symbols` | List all top-level symbols in a file. |
-| `opengrok_search_suggest` | Autocomplete/suggestions for partial queries. |
+| `opengrok_search_code` | General search utility (full-text, defs, refs, path, history). Supports `file_type` filtering. |
+| `opengrok_find_file` | Locate files by name or directory pattern. |
+| `opengrok_get_file_content` | Read source code (requires `start_line` and `end_line` for large files). |
+| `opengrok_get_file_history` | Retrieve commit history logs. |
+| `opengrok_browse_directory` | View folder structure and contained files. |
+| `opengrok_list_projects` | See all indexed repositories/projects. |
+| `opengrok_get_file_annotate` | See line-by-line git blame information. |
+| `opengrok_get_file_symbols` | Extract classes, functions, macros, and structs rapidly from a single file. |
+| `opengrok_search_suggest` | Get query autocomplete recommendations. |
 
-### 🚀 Compound Tools — Use These First
+### 🚀 Optimized Workflows (Compound Tools)
 
-> 💡 These collapse common multi-step patterns into a single call, saving **~75–92% of tokens**.
+> 💡 These specialized tools merge multiple network requests into a single operation, reducing API chatter and cutting token usage by **up to 90%**.
 
-| Tool | What it replaces | Token savings |
+| Compound Tool | Functionality Replaced | Efficiency Gain |
 | ---- | ---------------- | ------------- |
-| `opengrok_get_symbol_context` | `opengrok_search_code(defs)` → `opengrok_get_file_content` → `opengrok_search_code(refs)` | **~92%** |
-| `opengrok_search_and_read` | `opengrok_search_code` → `opengrok_get_file_content` | **~92%** |
-| `opengrok_batch_search` | Multiple sequential `opengrok_search_code` calls | **~73%** |
-| `opengrok_index_health` | Manual connection diagnostics | — |
+| `opengrok_get_symbol_context` | 1) searches definition, 2) reads source, 3) fetches headers, 4) gets references | **~92% fewer tokens** |
+| `opengrok_search_and_read` | 1) executes search, 2) immediately fetches surrounding code context | **~92% fewer tokens** |
+| `opengrok_batch_search` | Combines 2-5 individual search queries | **~73% fewer tokens** |
+| `opengrok_index_health` | Checks latency and backend connectivity | Diagnostic utility |
 
-**`file_type` filter** — `opengrok_search_code`, `opengrok_batch_search`, `opengrok_search_and_read`, and `opengrok_get_symbol_context` accept an optional `file_type` to restrict results by language: `cxx`, `c`, `java`, `python`, `javascript`, `typescript`, `csharp`, `golang`, `ruby`, `perl`, `sql`, `xml`, `yaml`, `shell`, `makefile`.
+*(Note: The search functions support language filtering. Pass `file_type` as `java`, `cxx`, `python`, `golang`, etc.)*
 
 <details>
-<summary>⚙️ Local Source Layer (Optional)</summary>
+<summary>⚙️ Automated Compilation Data (Optional)</summary>
 
-| Tool | Description |
+| Tool Name | Capability |
 | ---- | ----------- |
-| `opengrok_get_compile_info` | Compiler flags, include paths, defines, and language standard for a source file. Requires `compile_commands.json` in your workspace. |
+| `opengrok_get_compile_info` | Reads your local `compile_commands.json` to extract compiler flags, defines, and include directories for exact C/C++ accuracy. |
 
 </details>
 
 ---
 
-## Extension Commands
+## VS Code Integration
 
-| Command | Description |
+### Palette Commands
+
+| Command Prompt | Action Performed |
 | :------ | :---------- |
-| `OpenGrok: Manage Configuration` | Open visual configuration panel |
-| `OpenGrok: Configure Credentials` | Quick-configure via input prompts |
-| `OpenGrok: Test Connection` | Verify connectivity to OpenGrok |
-| `OpenGrok: Show Server Logs` | View MCP server diagnostic logs |
-| `OpenGrok: Check for Updates` | Check GitHub Releases for new versions |
-| `OpenGrok: Status Menu` | Quick-pick menu (also accessible from status bar) |
+| `OpenGrok: Manage Configuration` | Launches the interactive settings GUI |
+| `OpenGrok: Configure Credentials` | Fast CLI-style input for authentication |
+| `OpenGrok: Test Connection` | Validates API access and token validity |
+| `OpenGrok: Show Server Logs` | Exposes background process stdout/stderr |
+| `OpenGrok: Check for Updates` | Polls GitHub for new releases |
+| `OpenGrok: Status Menu` | Opens the context menu directly |
 
----
-
-## Extension Settings
+### Core Settings Profile
 
 <details>
-<summary>View settings reference</summary>
+<summary>Expand for JSON Settings Reference</summary>
 
-| Name | Type | Default | Description |
-| :--- | :--- | :------ | :---------- |
-| `opengrok-mcp.baseUrl` | `string` | | OpenGrok server URL |
-| `opengrok-mcp.username` | `string` | | Your username |
-| `opengrok-mcp.verifySsl` | `boolean` | `false` | Verify SSL certificates |
-| `opengrok-mcp.proxy` | `string` | | HTTP proxy URL |
-
-### Local Source Layer
-
-The local layer is **zero-config** — if your workspace contains `compile_commands.json`, `get_compile_info` is enabled automatically.
+| Key | Format | Primary Usage |
+| :--- | :--- | :---------- |
+| `opengrok-mcp.baseUrl` | `string` | The URI of your OpenGrok deployment |
+| `opengrok-mcp.username` | `string` | Authentication identity |
+| `opengrok-mcp.verifySsl` | `boolean` | Disable when using corporate self-signed certs (default: false) |
+| `opengrok-mcp.proxy` | `string` | Optional HTTP traffic router |
 
 </details>
 
 ---
 
-## Architecture
+## System Architecture
 
 <details>
-<summary>View architecture diagram</summary>
+<summary>Show topological diagram</summary>
 
 ```text
-┌─────────────────┐     ┌──────────────────────────────┐     ┌──────────────┐
-│  GitHub Copilot │────▶│  opengrok-mcp-server (MCP)   │────▶│  OpenGrok    │
-│  Chat           │stdio│                              │HTTP │  Server      │
-└─────────────────┘     │  Compound tools:             │     └──────────────┘
-        ▲               │  · get_symbol_context        │
-        │               │  · search_and_read           │     ┌──────────────┐
-        │ configures    │  · batch_search              │────▶│  Local FS    │
-        │ + bundles     │                              │     │  (optional)  │
-┌───────┴─────────┐     │  Response cap: 16 KB         │     └──────────────┘
-│  VS Code        │     │  MCP instructions block      │
-│  Extension      │     └──────────────────────────────┘
-└─────────────────┘
+ [ AI Client ]                       [ Integration Layer ]                    [ Data Source ]
+                              │                                 │
+ +---------------+            │       +-------------------+     │      +----------------------+
+ │ GitHub        │<──(stdio)──┼──────>│ OpenGrok MCP      │<────┼─────>│ OpenGrok REST API &  │
+ │ Copilot Chat  │            │       │ Server (Node.js)  │HTTP │      │ Web Interface        │
+ +---------------+            │       +-------------------+     │      +----------------------+
+      │    ▲                           │          │
+      │    │ (Configures & Hosts)      │    (Context Optimization)
+      ▼    │                           │          │
+ +---------------+                     │   o Context Fetch      │      +----------------------+
+ │ VS Code       │                     │   o Multi-Search       │      │ Local File System    │
+ │ Extension     │                     │   o Auto-Truncate      │<─────┤ (compile_commands) │
+ +---------------+                     │                        │      +----------------------+
 ```
 
-The MCP server is compiled and bundled inside the VSIX as `out/server/main.js`.
-VS Code provides its own Node.js runtime — **no separate installation needed**.
+The underlying code is completely packaged in the marketplace extension via `esbuild`. The server uses standard VS Code Node APIs without external VM requirements.
 
 </details>
 
 ---
 
-## Development
+## Building & Testing
 
 ```bash
+# Initializing
 npm install
-npm test          # Run unit tests (Vitest)
-npm run lint      # TypeScript type-check + ESLint
-npm run compile   # esbuild bundle
-npm run vsix      # Package as .vsix
+
+# Code Quality & Tests
+npm run lint      # Strict TypeScript & ESLint validation
+npm test          # Execute the Vitest test suite
+
+# Packaging
+npm run compile   # Generate the esbuild artifact
+npm run vsix      # Create the downloadable extension file
 ```
 
-Releases are automated via GitHub Actions — push a version tag (`vX.Y.Z`) and the workflow builds, tests, and publishes to [GitHub Releases](https://github.com/IcyHot09/opengrok-mcp-server/releases).
+We leverage GitHub Actions for automated CD. Tagging a commit (e.g., `v1.2.3`) automatically triggers the build matrix and attaches artifacts to a new [GitHub Release](https://github.com/IcyHot09/opengrok-mcp-server/releases).
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
+For deep-dives into the architecture or PR guidelines, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
-## Troubleshooting
+## Troubleshooting & Support
 
-| Problem | Solution |
-| ------- | -------- |
-| Tools not appearing in Copilot | Click **🔧 Tools** → **Update Tools** in the chat input. Reload the window (`Ctrl+Shift+P` → "Reload Window"). |
-| "Connection failed" on test | Verify `OPENGROK_BASE_URL` is reachable. Check proxy settings if behind a corporate firewall. |
-| 401 Unauthorized | Set `OPENGROK_USERNAME` and `OPENGROK_PASSWORD` via `OpenGrok: Configure Credentials`. |
-| Results seem stale | Call `opengrok_index_health` to check connectivity. OpenGrok index may need a rebuild by an admin. |
-| SSL certificate errors | Set `opengrok-mcp.verifySsl` to `false` for self-signed or internal CA certificates. |
-| Timeouts on large repos | Narrow queries with `file_type`, specific projects, or smaller `max_results`. |
-| Debug mode | Set `OPENGROK_LOG_LEVEL=debug` environment variable to enable verbose logging to stderr. |
+**The MCP tools are missing in Copilot Chat**
+* Click the paperclip (`🔧`) icon to "Update Tools"
+* Run `Developer: Reload Window`
+
+**"Connection failed" errors**
+* Double-check your `OPENGROK_BASE_URL`
+* Make sure you aren't blocked by corporate VPNs/proxies
+
+**401 Unauthorized / Authentication failing**
+* Run the `OpenGrok: Configure Credentials` command to save your username/password again
+
+**Self-Signed SSL Certificates**
+* Turn off strict validation by setting `opengrok-mcp.verifySsl` to `false`
+
+**Slow queries or timeouts**
+* Limit the scope using the `file_type` argument or targeting a specific project
+* OpenGrok might be indexing; run `opengrok_index_health`
+
+**Need verbose logs?**
+* Set the environment variable `OPENGROK_LOG_LEVEL=debug` to get extensive stdout trace data
 
 ### OpenGrok Version Compatibility
 
-| OpenGrok Version | Support Level | Notes |
+| OpenGrok Engine | Status | known limitations |
 | ---------------- | ------------- | ----- |
-| 1.13+ | Full | REST API + HTML fallback |
-| 1.7.x – 1.12.x | Full | HTML parsing fallback for `defs`/`refs` search, annotate |
-| < 1.7 | Untested | May work with limited functionality |
+| **v1.13.x and above** | Native Support | None (Full REST API functionality) |
+| **v1.7.0 — v1.12.x** | Legacy Mode | Uses HTML scraping for symbol lookups and blame |
+| **Below v1.7.0** | Unsupported | Unpredictable behaviour |
 
 ---
 
-## License
+## License Information
 
-This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+This system is distributed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
 
-✅ **Free for personal, hobby, research, educational, and non-commercial use**
-❌ **Not allowed for any commercial, business, enterprise, or paid use**
+✅ **Permitted:** Personal use, hobby projects, academic research, education
+❌ **Prohibited:** Any commercial, business, enterprise, or paid utilization
 
-**Enterprises / Companies:**
-If you want to use this MCP server in a commercial context (internal tools, production, SaaS, CI pipelines, etc.), you must purchase a commercial license.
-Contact [rudroy09@gmail.com](mailto:rudroy09@gmail.com) for pricing and terms.
+**Commercial Licensing:**
+To use this extension in an enterprise context (internal tooling, CI pipelines, business infrastructure), a commercial license is strictly required. 
+Reach out to [rudroy09@gmail.com](mailto:rudroy09@gmail.com) for enterprise tier pricing.
 
-See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for details.
+Read [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for full terms.

@@ -199,7 +199,7 @@ Build the server yourself:
 
 ```bash
 git clone https://github.com/IcyHot09/opengrok-mcp-server.git
-cd opengrokmcp-standalone
+cd opengrok-mcp-server
 npm install
 npm run compile
 ```
@@ -224,7 +224,7 @@ Config file: `~/Library/Application Support/Claude/claude_desktop_config.json` (
   "mcpServers": {
     "opengrok": {
       "command": "node",
-      "args": ["/absolute/path/to/opengrokmcp-standalone/out/server/main.js"],
+      "args": ["/absolute/path/to/opengrok-mcp-server/out/server/main.js"],
       "env": {
         "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
         "OPENGROK_USERNAME": "your-username",
@@ -247,7 +247,7 @@ Claude Code supports `${VAR}` expansion in env blocks. Set `OPENGROK_PASSWORD` i
   "mcpServers": {
     "opengrok": {
       "command": "node",
-      "args": ["/absolute/path/to/opengrokmcp-standalone/out/server/main.js"],
+      "args": ["/absolute/path/to/opengrok-mcp-server/out/server/main.js"],
       "env": {
         "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
         "OPENGROK_USERNAME": "your-username",
@@ -268,7 +268,7 @@ Edit `.cursor/mcp.json` in your project root or open **Cursor Settings → Featu
   "mcpServers": {
     "opengrok": {
       "command": "node",
-      "args": ["/absolute/path/to/opengrokmcp-standalone/out/server/main.js"],
+      "args": ["/absolute/path/to/opengrok-mcp-server/out/server/main.js"],
       "env": {
         "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
         "OPENGROK_USERNAME": "your-username",
@@ -289,7 +289,7 @@ Config: `opencode.json` / `opencode.jsonc` in project root or `~/.config/opencod
   "mcp": {
     "opengrok": {
       "type": "local",
-      "command": ["node", "/absolute/path/to/opengrokmcp-standalone/out/server/main.js"],
+      "command": ["node", "/absolute/path/to/opengrok-mcp-server/out/server/main.js"],
       "environment": {
         "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
         "OPENGROK_USERNAME": "your-username",
@@ -309,7 +309,7 @@ Use the MCP Store → *Manage MCP Servers* → *View raw config* and add:
   "mcpServers": {
     "opengrok": {
       "command": "node",
-      "args": ["/path/to/opengrokmcp-standalone/out/server/main.js"],
+      "args": ["/path/to/opengrok-mcp-server/out/server/main.js"],
       "env": {
         "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
         "OPENGROK_USERNAME": "your-username",

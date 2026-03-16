@@ -3,39 +3,40 @@
 ## Project Structure
 
 ```
-opengrokmcp-standalone/
+opengrok-mcp-server/
 ├── src/
 │   ├── extension.ts             # VS Code extension entry point
 │   ├── server/                  # MCP Server (TypeScript)
 │   │   ├── main.ts              # Server entry point
-│   │   ├── server.ts            # McpServer with per-tool registerTool() handlers
-│   │   ├── client.ts            # OpenGrok HTTP client
-│   │   ├── config.ts            # Env-var config (Zod-validated)
-│   │   ├── models.ts            # Zod schemas + TypeScript interfaces
-│   │   ├── parsers.ts           # HTML parsers (node-html-parser)
-│   │   ├── formatters.ts        # Markdown output formatters
-│   │   ├── logger.ts            # Structured logging
+│   │   ├── server.ts            # McpServer with registerTool() per tool
+│   │   ├── client.ts            # OpenGrok HTTP client + caching
+│   │   ├── config.ts            # Environment config (Zod-validated)
+│   │   ├── models.ts            # Zod input/output schemas + interfaces
+│   │   ├── parsers.ts           # HTML response parsers
+│   │   ├── formatters.ts        # Compact markdown formatters
+│   │   ├── logger.ts            # Structured stderr logging
 │   │   └── local/
-│   │       └── compile-info.ts  # Local FS layer (compile_commands.json)
-│   ├── tests/                   # Unit tests (Vitest, 476 tests)
+│   │       └── compile-info.ts  # compile_commands.json index
+│   ├── tests/                   # Unit tests (Vitest, 500+ tests)
 │   │   ├── parsers.test.ts
 │   │   ├── formatters.test.ts
 │   │   ├── client.test.ts
 │   │   ├── server.test.ts
-│   │   ├── fixtures/html.ts     # HTML fixture strings
+│   │   ├── fixtures/html.ts     # HTML fixture data
 │   │   └── local/
 │   │       └── compile-info.test.ts
 │   └── webview/
-│       └── configManager.html   # Configuration Manager UI
+│       └── configManager.html   # Settings webview panel
 ├── package.json
+├── server.json                  # MCP Registry metadata
 ├── tsconfig.json
-├── esbuild.js                   # Builds both extension and server
-├── eslint.config.mjs            # ESLint flat config (typescript-eslint)
-├── vitest.config.ts
+├── esbuild.js                   # Dual-target build (extension + server)
+├── eslint.config.mjs            # ESLint strict flat config
+├── vitest.config.ts             # Test runner + coverage thresholds
 └── scripts/
-    ├── release.ps1              # Automated release script
+    ├── release.ps1              # Release automation
     ├── build-vsix.js
-    └── package-server.js        # Standalone server archives
+    └── package-server.js        # Platform archive builder
 ```
 
 ---
