@@ -975,10 +975,70 @@ export function createServer(
   if (codeMode && memoryBank) {
     registerCodeModeTools(server, client, config, memoryBank);
   } else {
-    registerLegacyTools(server, client, config, local);
+    registerLegacyTools(server, client, config, local, memoryBank);
   }
 
   return server;
+}
+
+// ---------------------------------------------------------------------------
+// Shared memory bank tool registrations (used by both Code Mode and legacy)
+// ---------------------------------------------------------------------------
+
+function registerMemoryTools(
+  server: McpServer,
+  memoryBank: MemoryBank
+): void {
+  server.registerTool(
+    "opengrok_read_memory",
+    {
+      title: "Read Memory Bank",
+      description:
+        "Read a Living Document file. Call at session start to restore context. " +
+        "Files: AGENTS.md, codebase-map.md, symbol-index.md, known-patterns.md, investigation-log.md, active-context.md",
+      inputSchema: {
+        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"]
+        ).describe("File to read from the memory bank"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
+    },
+    async (args) => {
+      try {
+        const content = await memoryBank.read(args.filename);
+        if (!content) {
+          return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
+        }
+        return { content: [{ type: "text", text: capResponse(content) }] };
+      } catch (err) {
+        return makeToolError("opengrok_read_memory", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_update_memory",
+    {
+      title: "Update Memory Bank",
+      description:
+        "Write findings to a Living Document file. Call at session end to persist knowledge. " +
+        "Use mode=append for investigation-log.md to add a new entry.",
+      inputSchema: {
+        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"])
+          .describe("File to update"),
+        content: z.string().min(1).describe("Content to write"),
+        mode: z.enum(["overwrite", "append"]).default("overwrite").describe("append adds to end (use for investigation-log)"),
+      },
+      annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: false, destructiveHint: false },
+    },
+    async (args) => {
+      try {
+        await memoryBank.write(args.filename, args.content, args.mode);
+        return { content: [{ type: "text", text: `Written to ${args.filename}` }] };
+      } catch (err) {
+        return makeToolError("opengrok_update_memory", err);
+      }
+    }
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,56 +1122,7 @@ function registerCodeModeTools(
   );
 
   // Memory bank tools
-  server.registerTool(
-    "opengrok_read_memory",
-    {
-      title: "Read Memory Bank",
-      description:
-        "Read a Living Document file. Call at session start to restore context. " +
-        "Files: AGENTS.md, codebase-map.md, symbol-index.md, known-patterns.md, investigation-log.md, active-context.md",
-      inputSchema: {
-        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"]
-        ).describe("File to read from the memory bank"),
-      },
-      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
-    },
-    async (args) => {
-      try {
-        const content = await memoryBank.read(args.filename);
-        if (!content) {
-          return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
-        }
-        return { content: [{ type: "text", text: capResponse(content) }] };
-      } catch (err) {
-        return makeToolError("opengrok_read_memory", err);
-      }
-    }
-  );
-
-  server.registerTool(
-    "opengrok_update_memory",
-    {
-      title: "Update Memory Bank",
-      description:
-        "Write findings to a Living Document file. Call at session end to persist knowledge. " +
-        "Use mode=append for investigation-log.md to add a new entry.",
-      inputSchema: {
-        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"])
-          .describe("File to update"),
-        content: z.string().min(1).describe("Content to write"),
-        mode: z.enum(["overwrite", "append"]).default("overwrite").describe("append adds to end (use for investigation-log)"),
-      },
-      annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: false, destructiveHint: false },
-    },
-    async (args) => {
-      try {
-        await memoryBank.write(args.filename, args.content, args.mode);
-        return { content: [{ type: "text", text: `Written to ${args.filename}` }] };
-      } catch (err) {
-        return makeToolError("opengrok_update_memory", err);
-      }
-    }
-  );
+  registerMemoryTools(server, memoryBank);
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,7 +1133,8 @@ function registerLegacyTools(
   server: McpServer,
   client: OpenGrokClient,
   config: Config,
-  local: LocalLayer
+  local: LocalLayer,
+  memoryBank?: MemoryBank
 ): void {
   server.registerTool(
     "opengrok_search_code",
@@ -1494,6 +1506,11 @@ function registerLegacyTools(
       }
     }
   );
+
+  // Memory bank tools — available when a MemoryBank is provided
+  if (memoryBank) {
+    registerMemoryTools(server, memoryBank);
+  }
   // registerLegacyTools intentionally returns void — server is mutated in place
 }
 

@@ -240,3 +240,40 @@ describe('Code Mode — memory bank tools', () => {
     await client.close();
   });
 });
+
+describe('Legacy Mode — memory tools available when memoryBank provided', () => {
+  let tmpDir: string;
+  let bank: MemoryBank;
+
+  beforeEach(async () => {
+    tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'opengrok-legacy-mb-test-'));
+    bank = new MemoryBank(tmpDir);
+    await bank.ensureDir();
+  });
+
+  afterEach(async () => {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('registers opengrok_read_memory and opengrok_update_memory in legacy mode', async () => {
+    const ogClient = makeMockClient();
+    // CODE_MODE is false — this forces legacy mode
+    const config = makeConfig({ OPENGROK_CODE_MODE: false });
+    const server = createServer(ogClient as never, config, bank);
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+
+    const client = new Client({ name: 'test-client', version: '1.0' });
+    await client.connect(clientTransport);
+
+    const tools = await client.listTools();
+    const names = tools.tools.map((t) => t.name);
+    expect(names).toContain('opengrok_read_memory');
+    expect(names).toContain('opengrok_update_memory');
+    // Legacy tools should also be present
+    expect(names).toContain('opengrok_search_code');
+
+    await client.close();
+  });
+});
