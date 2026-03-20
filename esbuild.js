@@ -30,6 +30,26 @@ function syncServerJsonVersion() {
   }
 }
 
+// Copy QuickJS WASM file to out/server/ so the emscripten module can find it
+// at runtime via __dirname (which resolves to out/server/ in the bundled worker).
+function copyQuickJsWasm() {
+  const src = path.join(
+    __dirname,
+    'node_modules/@jitl/quickjs-ng-wasmfile-release-sync/dist/emscripten-module.wasm'
+  );
+  const destDir = path.join(__dirname, 'out', 'server');
+  const dest = path.join(destDir, 'emscripten-module.wasm');
+  if (!fs.existsSync(src)) {
+    console.error('Warning: QuickJS WASM not found at', src);
+    return;
+  }
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
+  }
+  fs.copyFileSync(src, dest);
+  console.log('Copied emscripten-module.wasm to out/server/');
+}
+
 // Copy webview files to out directory
 function copyWebviewFiles() {
   const srcDir = path.join(__dirname, 'src', 'webview');
@@ -89,10 +109,10 @@ async function main() {
     ...sharedOptions,
     entryPoints: ['src/server/sandbox-worker.ts'],
     outfile: 'out/server/sandbox-worker.js',
-    loader: { '.wasm': 'copy' }, // copies .wasm to out/server/
-    // QuickJS packages are external: loaded from node_modules at runtime
-    // (emscripten module resolves WASM file via __dirname in node_modules)
-    external: ['@sebastianwessel/quickjs', '@jitl/quickjs-ng-wasmfile-release-sync'],
+    // @sebastianwessel/quickjs and @jitl/quickjs-ng-wasmfile-release-sync are
+    // bundled (not external) so they work inside a VSIX where node_modules is absent.
+    // The emscripten module resolves the WASM via __dirname at runtime, so we
+    // explicitly copy emscripten-module.wasm to out/server/ after the build.
   });
 
   if (watch) {
@@ -108,9 +128,12 @@ async function main() {
     await workerCtx.dispose();
   }
   
+  // Copy QuickJS WASM so sandbox-worker.js can load it at runtime
+  copyQuickJsWasm();
+
   // Copy webview files after build
   copyWebviewFiles();
-  
+
   // Sync server.json version on every build
   syncServerJsonVersion();
 }
