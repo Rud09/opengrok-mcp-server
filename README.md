@@ -150,6 +150,30 @@ Look for all places in the code where ThreadPool is instantiated or referenced.
 
 *(Note: The search functions support language filtering. Pass `file_type` as `java`, `cxx`, `python`, `golang`, etc.)*
 
+### 🧬 Code Mode (v5+) — For Large C++ Codebases
+
+Set `OPENGROK_CODE_MODE=true` to switch to a 2-tool interface optimised for multi-step investigations:
+
+| Tool | Purpose |
+| ---- | ------- |
+| `opengrok_api` | Get the full API spec (call once at session start) |
+| `opengrok_execute` | Run JavaScript in a sandboxed QuickJS VM with access to all OpenGrok operations via `env.opengrok.*` |
+
+All `env.opengrok.*` calls appear **synchronous** inside your code — the sandbox bridges async HTTP calls transparently using a SharedArrayBuffer + Atomics channel. Token savings of 80–95% are typical for complex investigations.
+
+```javascript
+// Example opengrok_execute code
+const refs = env.opengrok.search("handleCrash", { searchType: "refs", maxResults: 5 });
+const first = refs.results[0];
+const content = env.opengrok.getFileContent(first.project, first.path, {
+  startLine: first.matches[0].lineNumber - 5,
+  endLine: first.matches[0].lineNumber + 10,
+});
+return { callerFile: first.path, code: content.content };
+```
+
+The sandbox also exposes a **Memory Bank** — 6 persistent markdown files (`AGENTS.md`, `codebase-map.md`, `symbol-index.md`, `known-patterns.md`, `investigation-log.md`, `active-context.md`) that survive across turns via `env.opengrok.readMemory()` / `env.opengrok.writeMemory()`.
+
 <details>
 <summary>⚙️ Automated Compilation Data (Optional)</summary>
 
@@ -188,6 +212,20 @@ Look for all places in the code where ThreadPool is instantiated or referenced.
 
 </details>
 
+### Advanced Configuration (v5 — env vars)
+
+For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these environment variables:
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_CONTEXT_BUDGET` | `minimal` (default) / `standard` / `generous` | Response size tier: 4 KB / 8 KB / 16 KB |
+| `OPENGROK_CODE_MODE` | `true` / `false` | Switch to 2-tool Code Mode for large C++ codebases |
+| `OPENGROK_MEMORY_BANK_DIR` | path | Directory for Living Document persistent files |
+| `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | `tsv` / `yaml` / `text` / `markdown` | Force a response format globally |
+| `OPENGROK_LOG_LEVEL` | `debug` / `info` | Verbose logging |
+
+VS Code users can set `opengrok-mcp.codeMode`, `opengrok-mcp.contextBudget`, and `opengrok-mcp.memoryBankDir` in VS Code settings instead.
+
 ---
 
 ## System Architecture
@@ -224,11 +262,13 @@ The underlying code is completely packaged in the marketplace extension via `esb
 npm install
 
 # Code Quality & Tests
-npm run lint      # Strict TypeScript & ESLint validation
-npm test          # Execute the Vitest test suite
+npm run lint           # Strict TypeScript & ESLint validation
+npm test               # Execute the Vitest test suite (591 tests)
+npm run test:sandbox   # Sandbox integration tests (requires compile first)
+npm run test:coverage  # Coverage report (≥90% threshold)
 
 # Packaging
-npm run compile   # Generate the esbuild artifact
+npm run compile   # Generate the esbuild artifact (includes sandbox-worker.js)
 npm run vsix      # Create the downloadable extension file
 ```
 

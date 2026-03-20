@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Highlights
 
+### 🧬 v5.0 — Code Mode: Pure-WASM Sandbox + Token Optimization
+
+Code Mode sandbox built on `@sebastianwessel/quickjs` — pure JS + WASM, zero native compilation, no `node-gyp`, works everywhere including `npx` and enterprise Linux. Full token optimization suite: three context budget tiers, compact TSV/YAML/text formats, Living Document memory bank, and session observation masker for long investigations.
+
 ### 🏗️ v4.0 — Modern MCP SDK & Breaking Tool Rename
 
 McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, structured output, `response_format` parameter, security hardening. Full protocol compliance.
@@ -24,6 +28,60 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [5.0.0] - 2026-03-20
+
+Reduces LLM token consumption 80–95% on large C++ codebases. Zero new background processes. Zero impact on shared build machines. Works standalone (Claude Code CLI, `npx`) with no native compilation or Node flags required.
+
+### Changed (Behavioural Defaults)
+
+- **`opengrok_search_and_read` `context_lines` default**: 10 → 5 lines. Pass `context_lines: 10` explicitly to restore previous behaviour.
+
+### Added
+
+#### Phase 1 — Cache-Safe Server Cleanup
+- Rewrote `SERVER_INSTRUCTIONS`: numbered rules, no runtime interpolation, token-efficient.
+- Full-file fetch guard in `opengrok_get_file_content`: warns + auto-applies line range when file exceeds 50 lines and no range given.
+
+#### Phase 2 — Compact Response Formats
+- **TSV format** for search results: `formatSearchResultsTSV()` — ~58% fewer tokens than markdown, tab-delimited (safe for C++ signatures with colons).
+- **YAML format** for symbol context: `formatSymbolContextYAML()` — js-yaml block scalars handle C++ colons/hashes safely.
+- **Text format** for file content: `formatFileContentText()` — no fenced code block overhead.
+- **`selectFormat()`**: auto-selects best format by response type; override globally with `OPENGROK_RESPONSE_FORMAT_OVERRIDE`.
+
+#### Phase 3 — Context Budget Modes
+- **`OPENGROK_CONTEXT_BUDGET`** env var with three tiers:
+  - `minimal` (default) — 4 KB responses, 5 results, 50 inline lines
+  - `standard` — 8 KB, 10 results, 100 lines
+  - `generous` — 16 KB, 25 results, 200 lines
+- `capResponse()` now reads from `BUDGET_LIMITS`; `search_and_read` cap also budget-aware.
+
+#### Phase 4 — Code Mode (2-Tool Interface)
+- **`OPENGROK_CODE_MODE=true`**: activates 2-tool mode (`opengrok_api` + `opengrok_execute`) for large C++ codebases. Write JavaScript; all `env.opengrok.*` calls appear synchronous. Token savings vs. 14-tool standard mode are substantial for multi-step investigations.
+- **`opengrok_api`**: returns full API spec (call once at session start).
+- **`opengrok_execute`**: runs LLM-written JS in a sandboxed QuickJS VM.
+- **`opengrok_read_memory` / `opengrok_update_memory`**: direct memory bank access from standard MCP clients.
+- **Server-side intelligence**:
+  - `env.opengrok.getFileOverview()` — parallel symbols + history + imports fetch; replaces 3–5 sequential tool calls.
+  - `env.opengrok.traceCallChain()` — refs-based caller tracing up to depth 4 (callees require AST, intentionally unimplemented).
+
+#### Phase 5 — Living Document / Memory Bank
+- **Memory Bank**: 6 persistent markdown files (`AGENTS.md`, `codebase-map.md`, `symbol-index.md`, `known-patterns.md`, `investigation-log.md`, `active-context.md`). Stub sentinel detection, append mode, `investigation-log.md` trims at 32 KB on heading boundaries.
+- **Observation Masker**: keeps last 10 full tool outputs in context; older turns compacted to key facts (file paths, line numbers, CamelCase symbols) to prevent context overflow during long sessions.
+- **VS Code config**: three new settings (`codeMode`, `memoryBankDir`, `contextBudget`) wired to env vars via extension passthrough.
+
+#### Phase 6 — QuickJS Sandbox Implementation
+- **Sandbox**: `@sebastianwessel/quickjs` (pure JS + WASM) — no `node-gyp`, no native compilation, no `--node-snapshot` flags. Works on all platforms including `npx` and enterprise Linux with stripped symbols.
+- **Architecture**: dedicated Worker thread + SharedArrayBuffer bridge. Worker calls `Atomics.wait()` (blocks worker thread); main thread event loop stays free for async OpenGrok HTTP calls, writes result, calls `Atomics.notify()`. Buffer layout: bytes 0–15 status (`Int32`), 16–19 length (`Uint32`), 20+ JSON payload (`Uint8`, 1 MB max).
+- **Sandbox limits**: 9 s QuickJS interrupt timeout + 10 s hard `worker.terminate()`. Memory 128 MB, stack 4 MB.
+- **`npm run test:sandbox`**: post-build sandbox integration tests (10 tests, requires `npm run compile` first, uses separate `vitest.sandbox.config.ts`).
+
+### Testing
+
+- **591 tests across 25 test files** (up from ~493 in v4.0), 92% line coverage, 93% branch coverage.
+- New: `config-budget.test.ts`, `formatters-formats.test.ts`, `memory-bank.test.ts`, `observation-masker.test.ts`, `intelligence.test.ts`, `code-mode.test.ts`, `sandbox.test.ts`.
 
 ---
 
