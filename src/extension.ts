@@ -297,6 +297,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.commands.registerCommand('opengrok-mcp.checkUpdate', () => checkForRemoteUpdate(context, { manual: true })),
     );
 
+    // Re-query MCP server definition when any opengrok-mcp setting changes
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('opengrok-mcp')) {
+                notifyMcpServerChanged();
+            }
+        })
+    );
+
     // Fire-and-forget: check for remote updates (throttled to once per 24 h)
     void checkForRemoteUpdate(context);
 
@@ -678,6 +687,14 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
             OPENGROK_USERNAME: username,
             OPENGROK_VERIFY_SSL: verifySsl ? 'true' : 'false',
         };
+
+        const codeMode = config.get<boolean>('codeMode') ?? true;
+        const contextBudget = config.get<string>('contextBudget') ?? 'minimal';
+        const memoryBankDir = config.get<string>('memoryBankDir') ?? '';
+
+        env.OPENGROK_CODE_MODE = codeMode ? 'true' : 'false';
+        env.OPENGROK_CONTEXT_BUDGET = contextBudget;
+        if (memoryBankDir) env.OPENGROK_MEMORY_BANK_DIR = memoryBankDir;
 
         if (password) {
             // Write credentials to secure temporary file with AES-256 encryption
