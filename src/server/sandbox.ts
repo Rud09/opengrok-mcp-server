@@ -234,13 +234,13 @@ export function createSandboxAPI(
   return {
     async search(query, opts = {}) {
       const { searchType = "full", projects, maxResults = 5, startIndex = 0, fileType } = opts;
-      return client.search(query, searchType as any, projects, maxResults, startIndex, fileType);
+      return client.search(query, searchType as "full" | "defs" | "refs" | "path" | "hist", projects, maxResults, startIndex, fileType);
     },
 
     async batchSearch(queries, opts = {}) {
       const { projects, fileType } = opts;
       return Promise.all(queries.map((q) =>
-        client.search(q.query, (q.searchType ?? "full") as any, projects, q.maxResults ?? 5, 0, fileType)
+        client.search(q.query, (q.searchType ?? "full") as "full" | "defs" | "refs" | "path" | "hist", projects, q.maxResults ?? 5, 0, fileType)
       ));
     },
 
@@ -342,7 +342,7 @@ export function createSandboxAPI(
     },
 
     async searchSuggest(query, opts = {}) {
-      const result = await client.suggest(query, opts.project, (opts.field ?? "full") as any);
+      const result = await client.suggest(query, opts.project, (opts.field ?? "full") as "full" | "defs" | "refs" | "path");
       return { query, field: opts.field ?? "full", suggestions: result.suggestions, time: result.time };
     },
 
@@ -389,7 +389,7 @@ export async function executeInSandbox(
   code: string,
   api: SandboxAPI,
   capFn: (text: string) => string,
-  budgetBytes: number
+  _budgetBytes: number
 ): Promise<string> {
   // Create shared communication buffer (layout pinned — must match sandbox-worker.ts)
   const sharedBuffer = new SharedArrayBuffer(SHARED_BUFFER_SIZE);
@@ -481,7 +481,7 @@ export async function executeInSandbox(
     // Hard timeout — terminates worker unconditionally at 10 s
     // (covers cases where worker is blocked in Atomics.wait during a slow API call)
     const hardTimeoutId = setTimeout(() => {
-      worker.terminate();
+      void worker.terminate();
       safeResolve(
         "Error: Sandbox execution timed out (10s limit). Simplify your code or reduce the number of API calls."
       );

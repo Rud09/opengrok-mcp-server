@@ -29,13 +29,13 @@ import variant from "@jitl/quickjs-ng-wasmfile-release-sync";
 // Buffer layout constants (must match sandbox.ts)
 // ---------------------------------------------------------------------------
 
-const SHARED_BUFFER_SIZE = 20 + 1024 * 1024;
+// SHARED_BUFFER_SIZE = 20 + 1024 * 1024  (documented in file header; not used at runtime here)
 
 // ---------------------------------------------------------------------------
 // Main IIFE — required for CJS compatibility (no top-level await)
 // ---------------------------------------------------------------------------
 
-(async () => {
+void (async () => {
   const { sharedBuffer, code } = workerData as {
     sharedBuffer: SharedArrayBuffer;
     code: string;
@@ -138,10 +138,12 @@ const SHARED_BUFFER_SIZE = 20 + 1024 * 1024;
       options
     );
 
-    parentPort!.postMessage(result);
+    if (!parentPort) throw new Error("parentPort is null — worker must run inside worker_threads");
+    parentPort.postMessage(result);
   } catch (err) {
     const error = err as Error;
-    parentPort!.postMessage({
+    if (!parentPort) throw new Error("parentPort is null — worker must run inside worker_threads");
+    parentPort.postMessage({
       ok: false,
       error: {
         name: error.name ?? "Error",
