@@ -89,10 +89,10 @@ const ConfigSchema = z.object({
     .enum(["minimal", "standard", "generous"])
     .default("minimal")
     .describe("Token budget mode: minimal=4KB, standard=8KB, generous=16KB"),
-  // Code Mode — 2-tool sandbox (disabled by default for safety)
+  // Code Mode — 2-tool sandbox (enabled by default)
   OPENGROK_CODE_MODE: z
     .string()
-    .default("false")
+    .default("true")
     .transform((v) => v.toLowerCase() === "true"),
   // Memory bank directory for Living Document system (empty = server-relative default)
   OPENGROK_MEMORY_BANK_DIR: z.string().default(""),

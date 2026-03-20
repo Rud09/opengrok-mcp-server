@@ -69,6 +69,12 @@ describe('loadConfig', () => {
     expect(cfg.OPENGROK_CONTEXT_BUDGET).toBe('minimal');
   });
 
+  it('defaults OPENGROK_CODE_MODE to true', () => {
+    delete process.env.OPENGROK_CODE_MODE;
+    const cfg = loadConfig();
+    expect(cfg.OPENGROK_CODE_MODE).toBe(true);
+  });
+
   it('parses OPENGROK_CODE_MODE=true to boolean true', () => {
     process.env.OPENGROK_CODE_MODE = 'true';
     const cfg = loadConfig();
