@@ -137,7 +137,7 @@
         },
         "opengrok-mcp.codeMode": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Enable Code Mode (2-tool API: opengrok_api + opengrok_execute). Significant token savings on large C++ codebases. Maps to OPENGROK_CODE_MODE env var.",
           "order": 7
         },
