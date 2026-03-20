@@ -118,6 +118,34 @@
           "description": "Whether the user has been prompted to configure OpenGrok credentials at least once",
           "order": 5,
           "scope": "application"
+        },
+        "opengrok-mcp.contextBudget": {
+          "type": "string",
+          "enum": [
+            "minimal",
+            "standard",
+            "generous"
+          ],
+          "enumDescriptions": [
+            "minimal (4 KB) — lowest token usage, fastest searches",
+            "standard (8 KB) — balanced for most codebases",
+            "generous (16 KB) — more context, larger token cost"
+          ],
+          "default": "minimal",
+          "description": "Context budget mode — controls response size limits. Maps to OPENGROK_CONTEXT_BUDGET env var.",
+          "order": 6
+        },
+        "opengrok-mcp.codeMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Code Mode (2-tool API: opengrok_api + opengrok_execute). Significant token savings on large C++ codebases. Maps to OPENGROK_CODE_MODE env var.",
+          "order": 7
+        },
+        "opengrok-mcp.memoryBankDir": {
+          "type": "string",
+          "default": "",
+          "description": "Directory for Living Document memory bank files. Defaults to <extension>/memory-bank/. Maps to OPENGROK_MEMORY_BANK_DIR env var.",
+          "order": 8
         }
       }
     }
@@ -128,6 +156,7 @@
     "watch": "node esbuild.js --watch",
     "package": "node esbuild.js --production",
     "test": "vitest run",
+    "test:sandbox": "npm run compile && vitest run --config vitest.sandbox.config.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "tsc --noEmit && eslint src/",
@@ -144,13 +173,17 @@
     "release:major": "npm run version:major && npm run compile && npm run package-server && npm run vsix"
   },
   "dependencies": {
+    "@jitl/quickjs-ng-wasmfile-release-sync": "^0.31.0",
     "@modelcontextprotocol/sdk": "^1.27.0",
+    "@sebastianwessel/quickjs": "^3.0.1",
+    "js-yaml": "^4.1.1",
     "node-html-parser": "^6.1.0",
     "p-retry": "^7.0.0",
     "undici": "^7.24.2",
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^8.56.1",

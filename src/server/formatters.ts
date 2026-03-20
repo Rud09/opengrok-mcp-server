@@ -2,8 +2,12 @@
  * Compact formatters for MCP tool responses.
  * Optimised for minimal token footprint: no decorative markdown, no links,
  * one-line-per-match for search, dense formats for history/blame/directory.
+ *
+ * v5.0: Added compact formats — TSV (search results, ~50% savings),
+ *       YAML (hierarchical, ~35% savings), Text (raw code, minimal overhead).
  */
 
+import yaml from "js-yaml";
 import type {
   AnnotatedFile,
   DirectoryEntry,
@@ -14,6 +18,43 @@ import type {
   SearchResults,
 } from "./models.js";
 import type { CompileInfo } from "./local/compile-info.js";
+
+// ---------------------------------------------------------------------------
+// Response format type + global format selector
+// ---------------------------------------------------------------------------
+
+export type ResponseFormat = "markdown" | "json" | "tsv" | "yaml" | "text" | "auto";
+
+/**
+ * Resolve the effective format for a given response type.
+ * Global OPENGROK_RESPONSE_FORMAT_OVERRIDE takes priority over the per-call preference.
+ * "auto" defers to the responseType-specific best choice.
+ */
+export function selectFormat(
+  responseType: "search" | "symbol" | "code" | "generic",
+  perCallFormat?: ResponseFormat | null
+): ResponseFormat {
+  // Global override (for rollback / experimentation)
+  const globalOverride = process.env.OPENGROK_RESPONSE_FORMAT_OVERRIDE?.trim().toLowerCase();
+  const validFormats: ResponseFormat[] = ["markdown", "json", "tsv", "yaml", "text", "auto"];
+  const override = validFormats.includes(globalOverride as ResponseFormat)
+    ? (globalOverride as ResponseFormat)
+    : undefined;
+
+  const effective = override ?? perCallFormat ?? "auto";
+
+  if (effective !== "auto") return effective;
+
+  // Auto-selection based on response type
+  switch (responseType) {
+    case "search":  return "tsv";      // Flat, tabular — TSV is most compact
+    case "symbol":  return "yaml";     // Hierarchical — YAML preserves structure
+    case "code":    return "text";     // Raw code — no markdown overhead
+    case "generic": return "markdown"; // Fallback
+  }
+}
+
+
 
 // Max lines returned for a full-file read (no line range specified).
 // Override with OPENGROK_MAX_INLINE_LINES env var.
@@ -598,4 +639,140 @@ export function formatFileSymbols(result: FileSymbols): string {
   }
 
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// COMPACT FORMATTERS — Phase 2 response format upgrades
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// TSV: search results (~50% token savings vs JSON)
+// Format: path\tproject\tline\tcontent
+// ---------------------------------------------------------------------------
+
+/**
+ * Format search results as TSV (tab-separated).
+ * Header row: path, project, line, content
+ * ~50% fewer tokens than JSON; safe for C++ (no comma ambiguity).
+ */
+export function formatSearchResultsTSV(results: SearchResults): string {
+  const rows: string[] = [];
+  rows.push(
+    `# Search: "${results.query}" -- ${results.totalCount.toLocaleString()} matches (${results.timeMs}ms)`
+  );
+  rows.push("path\tproject\tline\tcontent");
+
+  for (const result of results.results) {
+    for (const match of result.matches.slice(0, 5)) {
+      // Tabs in content → spaces; newlines → space — keeps TSV well-formed
+      const content = stripHtmlTags(match.lineContent)
+        .trim()
+        .replace(/\t/g, "  ")
+        .replace(/\n/g, " ");
+      rows.push(`${result.path}\t${result.project}\t${match.lineNumber}\t${content}`);
+    }
+    if (result.matches.length > 5) {
+      rows.push(`# ... +${result.matches.length - 5} more in ${result.path}`);
+    }
+  }
+
+  if (results.endIndex < results.totalCount) {
+    rows.push(
+      `# Showing ${results.results.length} of ${results.totalCount}. Narrow query or increase max_results.`
+    );
+  }
+
+  return rows.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// YAML: symbol context (~35% savings, preserves hierarchy, handles C++ safely)
+// ---------------------------------------------------------------------------
+
+/**
+ * Format symbol context result as YAML.
+ * Uses js-yaml with block scalars for code content — handles C++ safely
+ * (colons, braces, hashes in code won't break YAML structure).
+ */
+export function formatSymbolContextYAML(result: SymbolContextResult): string {
+  if (!result.found) {
+    return yaml.dump({ found: false, symbol: result.symbol, kind: result.kind });
+  }
+
+  const doc: Record<string, unknown> = {
+    found: true,
+    symbol: result.symbol,
+    kind: result.kind,
+  };
+
+  if (result.definition) {
+    const d = result.definition;
+    doc["definition"] = {
+      project: d.project,
+      path: d.path,
+      line: d.line,
+      lang: d.lang,
+      // Block scalar (literal | style) prevents C++ code from breaking YAML
+      context: d.context,
+    };
+  }
+
+  if (result.header) {
+    const h = result.header;
+    doc["header"] = {
+      project: h.project,
+      path: h.path,
+      lang: h.lang,
+      context: h.context,
+    };
+  }
+
+  doc["references"] = {
+    totalFound: result.references.totalFound,
+    samples: result.references.samples.map((s) => ({
+      path: s.path,
+      project: s.project,
+      line: s.lineNumber,
+      content: stripHtmlTags(s.content).trim(),
+    })),
+  };
+
+  if (result.fileSymbols && result.fileSymbols.length > 0) {
+    doc["fileSymbols"] = result.fileSymbols.map((s) => ({
+      symbol: s.symbol,
+      type: s.type,
+      line: s.line,
+    }));
+  }
+
+  return yaml.dump(doc, {
+    lineWidth: 120,
+    quotingType: "'",
+    forceQuotes: false,
+    noRefs: true,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Text: raw file content with minimal header (no markdown code fences)
+// ---------------------------------------------------------------------------
+
+/**
+ * Format file content as plain text with a compact header.
+ * Saves ~15 tokens per file vs markdown (no ``` fences, no line-number padding).
+ */
+export function formatFileContentText(content: FileContent): string {
+  const filename = /* v8 ignore next */ content.path.split("/").pop() ?? content.path;
+  const startL = content.startLine ?? 1;
+  const endL = startL + content.lineCount - 1;
+  const header = `-- ${filename} (${content.project}) L${startL}-${endL} --\n`;
+
+  const contentLines = content.content.split("\n");
+  let displayLines = contentLines;
+
+  if (contentLines.length > MAX_INLINE_LINES) {
+    displayLines = contentLines.slice(0, MAX_INLINE_LINES);
+  }
+
+  return header + displayLines.join("\n");
 }

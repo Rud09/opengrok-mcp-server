@@ -29,3 +29,6 @@ coverage/
 
 # Test output
 test-output.txt
+
+# Plans
+plans/

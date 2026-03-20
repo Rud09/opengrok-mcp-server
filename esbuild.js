@@ -78,20 +78,34 @@ async function main() {
     ...sharedOptions,
     entryPoints: ['src/server/main.ts'],
     outfile: 'out/server/main.js',
-    external: [],  // fully bundle — no runtime install needed
+    loader: { '.wasm': 'copy' }, // in case WASM imports leak through bundling
     banner: {
       js: '#!/usr/bin/env node',
     },
   });
 
+  // ---- Sandbox Worker (separate entry point for worker_threads) ----
+  const workerCtx = await esbuild.context({
+    ...sharedOptions,
+    entryPoints: ['src/server/sandbox-worker.ts'],
+    outfile: 'out/server/sandbox-worker.js',
+    loader: { '.wasm': 'copy' }, // copies .wasm to out/server/
+    // QuickJS packages are external: loaded from node_modules at runtime
+    // (emscripten module resolves WASM file via __dirname in node_modules)
+    external: ['@sebastianwessel/quickjs', '@jitl/quickjs-ng-wasmfile-release-sync'],
+  });
+
   if (watch) {
     await extCtx.watch();
     await srvCtx.watch();
+    await workerCtx.watch();
   } else {
     await extCtx.rebuild();
     await extCtx.dispose();
     await srvCtx.rebuild();
     await srvCtx.dispose();
+    await workerCtx.rebuild();
+    await workerCtx.dispose();
   }
   
   // Copy webview files after build

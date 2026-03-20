@@ -9,6 +9,28 @@ import * as crypto from "crypto";
 import { logger } from "./logger.js";
 
 // ---------------------------------------------------------------------------
+// Context budget types + limits
+// ---------------------------------------------------------------------------
+
+export type ContextBudget = "minimal" | "standard" | "generous";
+
+/** Per-budget response size limits. Consumers import this directly from config.ts. */
+export const BUDGET_LIMITS: Record<
+  ContextBudget,
+  {
+    maxResponseBytes: number;
+    maxInlineLines: number;
+    contextLines: number;
+    maxSearchResults: number;
+    searchAndReadCap: number;
+  }
+> = {
+  minimal:  { maxResponseBytes: 4_096,  maxInlineLines: 50,  contextLines: 3,  maxSearchResults: 5,  searchAndReadCap: 2_048 },
+  standard: { maxResponseBytes: 8_192,  maxInlineLines: 100, contextLines: 5,  maxSearchResults: 10, searchAndReadCap: 4_096 },
+  generous: { maxResponseBytes: 16_384, maxInlineLines: 200, contextLines: 10, maxSearchResults: 25, searchAndReadCap: 8_192 },
+};
+
+// ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
 
@@ -62,6 +84,20 @@ const ConfigSchema = z.object({
   OPENGROK_LOCAL_COMPILE_DB_PATHS: z.string().default(""),
   // Default project to scope searches to when none specified
   OPENGROK_DEFAULT_PROJECT: z.string().default(""),
+  // Optimisation — context budget
+  OPENGROK_CONTEXT_BUDGET: z
+    .enum(["minimal", "standard", "generous"])
+    .default("minimal")
+    .describe("Token budget mode: minimal=4KB, standard=8KB, generous=16KB"),
+  // Code Mode — 2-tool sandbox (disabled by default for safety)
+  OPENGROK_CODE_MODE: z
+    .string()
+    .default("false")
+    .transform((v) => v.toLowerCase() === "true"),
+  // Memory bank directory for Living Document system (empty = server-relative default)
+  OPENGROK_MEMORY_BANK_DIR: z.string().default(""),
+  // Global response format override (empty = auto per-call)
+  OPENGROK_RESPONSE_FORMAT_OVERRIDE: z.string().default(""),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

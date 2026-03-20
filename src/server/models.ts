@@ -5,12 +5,18 @@
 
 import { z } from "zod";
 
-// Shared response format field added to all tool input schemas
+// Shared response format field added to all tool input schemas.
+// Extended with compact formats: tsv (tabular, ~50% token savings), yaml (hierarchical, ~35% savings),
+// text (raw code, minimal overhead), auto (server picks best format per response type).
 const RESPONSE_FORMAT = z
-  .enum(["markdown", "json"])
+  .enum(["markdown", "json", "tsv", "yaml", "text", "auto"])
   .default("markdown")
   .optional()
-  .describe('Output format: "markdown" (default, optimised for LLMs) or "json" (programmatic consumers)');
+  .describe(
+    'Output format. "markdown" (default, LLM-optimised), "json" (programmatic), ' +
+    '"tsv" (tabular search results, most compact), "yaml" (hierarchical data, best for symbol context), ' +
+    '"text" (raw code, no markdown framing), "auto" (server selects best format)'
+  );
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -116,7 +122,7 @@ export const SearchAndReadArgs = z.object({
   query: z.string().min(1),
   search_type: z.enum(["full", "defs", "refs", "path", "hist"]).default("full"),
   projects: z.array(z.string()).optional(),
-  context_lines: z.number().int().min(1).max(50).default(10).describe("Lines of context around each match"),
+  context_lines: z.number().int().min(1).max(50).default(5).describe("Lines of context around each match"),
   max_results: z.number().int().min(1).max(10).default(3),
   file_type: z.string().optional().describe(FILE_TYPE_DESC),
   response_format: RESPONSE_FORMAT,

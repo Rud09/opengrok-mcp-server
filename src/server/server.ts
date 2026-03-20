@@ -10,7 +10,7 @@ import * as path from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
 import type { Config } from "./config.js";
@@ -20,12 +20,16 @@ import {
   formatCompileInfo,
   formatDirectoryListing,
   formatFileContent,
+  formatFileContentText,
   formatFileHistory,
   formatFileSymbols,
   formatProjectsList,
   formatSearchAndRead,
   formatSearchResults,
+  formatSearchResultsTSV,
   formatSymbolContext,
+  formatSymbolContextYAML,
+  selectFormat,
 } from "./formatters.js";
 import type {
   SearchAndReadEntry,
@@ -64,6 +68,13 @@ import type {
   SearchResults,
   Project,
 } from "./models.js";
+import { BUDGET_LIMITS } from "./config.js";
+import type { ContextBudget } from "./config.js";
+import type { ResponseFormat } from "./formatters.js";
+import { MemoryBank } from "./memory-bank.js";
+import { ObservationMasker } from "./observation-masker.js";
+import { createSandboxAPI, executeInSandbox, API_SPEC } from "./sandbox.js";
+import yaml from "js-yaml";
 
 import { logger } from "./logger.js";
 
@@ -71,30 +82,41 @@ import { logger } from "./logger.js";
 // Response size caps
 // ---------------------------------------------------------------------------
 
-// Hard cap on response payload sent to the LLM (in bytes).
+// Hard cap on response payload (in bytes). Falls back to budget-based limit.
 // Override with OPENGROK_MAX_RESPONSE_BYTES env var.
-const MAX_RESPONSE_BYTES = parseInt(
-  process.env.OPENGROK_MAX_RESPONSE_BYTES ?? "16384",
-  10
-);
+const MAX_RESPONSE_BYTES_OVERRIDE = process.env.OPENGROK_MAX_RESPONSE_BYTES
+  ? parseInt(process.env.OPENGROK_MAX_RESPONSE_BYTES, 10)
+  : undefined;
 
 // Cap for the search_and_read compound tool (in bytes).
 // Override with OPENGROK_SEARCH_AND_READ_CAP env var.
-const SEARCH_AND_READ_CAP = parseInt(
-  process.env.OPENGROK_SEARCH_AND_READ_CAP ?? "8192",
-  10
-);
+const SEARCH_AND_READ_CAP_OVERRIDE = process.env.OPENGROK_SEARCH_AND_READ_CAP
+  ? parseInt(process.env.OPENGROK_SEARCH_AND_READ_CAP, 10)
+  : undefined;
 
-function capResponse(text: string): string {
+/** Get the active context budget from env, defaulting to 'minimal'. */
+function getActiveBudget(): ContextBudget {
+  const v = process.env.OPENGROK_CONTEXT_BUDGET?.toLowerCase();
+  if (v === "standard" || v === "generous" || v === "minimal") return v;
+  return "minimal";
+}
+
+/**
+ * Cap a response to the active budget's maxResponseBytes.
+ * Accepts an optional override for per-call limits (e.g. search_and_read).
+ */
+function capResponse(text: string, maxBytes?: number): string {
+  const budget = BUDGET_LIMITS[getActiveBudget()];
+  const limit = maxBytes ?? MAX_RESPONSE_BYTES_OVERRIDE ?? budget.maxResponseBytes;
   const bytes = Buffer.byteLength(text, "utf8");
-  if (bytes <= MAX_RESPONSE_BYTES) return text;
-  const buf = Buffer.from(text, "utf8").subarray(0, MAX_RESPONSE_BYTES);
+  if (bytes <= limit) return text;
+  const buf = Buffer.from(text, "utf8").subarray(0, limit);
   const truncated = buf.toString("utf8");
   const lastNl = truncated.lastIndexOf("\n");
   const safeText = lastNl > 0 ? truncated.slice(0, lastNl) : truncated;
   return (
     safeText +
-    `\n[Response truncated at ${Math.round(MAX_RESPONSE_BYTES / 1024)} KB. Narrow your query or use line ranges.]`
+    `\n[Response truncated at ${Math.round(limit / 1024)} KB. Use line ranges or narrow query.]`
   );
 }
 
@@ -115,21 +137,38 @@ const VERSION = (typeof __VERSION__ !== "undefined"
 // ---------------------------------------------------------------------------
 
 const SERVER_INSTRUCTIONS = `
-OpenGrok MCP server. Rules to maximise efficiency:
-- Use the configured default project unless the user specifies a different one.
-- Use opengrok_get_symbol_context instead of separate opengrok_search_code + opengrok_get_file_content for symbol investigations.
-- Use opengrok_search_and_read instead of opengrok_search_code followed by opengrok_get_file_content.
-- Use opengrok_batch_search instead of multiple sequential opengrok_search_code calls.
-- Always pass start_line and end_line to opengrok_get_file_content. Never fetch full files.
-- For known symbol names (CamelCase, PascalCase), prefer search_type=defs or refs over full.
-- Use search_type=hist to search commit messages and changelogs.
-- Use file_type to narrow results by language: cxx (C++), c, java, python, javascript, typescript, csharp, golang, ruby, etc.
-- Use opengrok_get_compile_info to get compiler flags and include paths for a source file (local layer must be enabled).
-- Use opengrok_get_file_symbols to understand a file's structure (functions, classes, macros) before reading it with opengrok_get_file_content.
-- opengrok_batch_search: pass queries as top-level "queries" array, file_type is top-level not per-query.
-- opengrok_list_projects: filter is a substring match (e.g. "release" matches all release-* projects).
-- All tools support response_format ("markdown" default for LLM, "json" for programmatic use).
+OpenGrok MCP — Code intelligence for large C++ codebases.
+
+RULES (follow ALL of these strictly):
+1. ALWAYS call opengrok_get_file_symbols BEFORE opengrok_get_file_content. It shows file structure cheaply.
+2. ALWAYS call opengrok_get_symbol_context first for any unknown symbol (class, function, macro).
+3. ALWAYS pass start_line AND end_line to opengrok_get_file_content. NEVER fetch full files.
+4. ALWAYS use opengrok_batch_search instead of multiple sequential opengrok_search_code calls.
+5. ALWAYS use opengrok_search_and_read instead of search_code + get_file_content.
+6. ALWAYS pass file_type to narrow by language: cxx (C++), c, java, python, typescript, etc.
+7. LIMIT context_lines to 5 or fewer unless the user specifically asks for more.
+8. LIMIT max_results to 5 or fewer unless the user specifically asks for more.
+9. PREFER search_type=defs for symbol definitions, search_type=refs for usages.
+10. PREFER search_type=hist to search commit messages and changelogs.
+11. Use opengrok_get_compile_info for C/C++ compiler flags and include paths.
+12. Use opengrok_list_projects with filter="substring" to find project names.
+
+ANTI-PATTERNS (NEVER do these):
+- Fetching full files to "understand" them (use opengrok_get_file_symbols first).
+- Running the same search more than once with different params without a reason.
+- Browsing directories speculatively without a clear goal.
+- Calling opengrok_search_code and then opengrok_get_file_content separately (use search_and_read).
+
+OPTIMAL WORKFLOW:
+Step 1: opengrok_batch_search([{query:"Symbol",type:"defs"},{query:"Symbol",type:"refs"}]) — parallel
+Step 2: opengrok_get_file_symbols(project, path) — understand structure (~50 tokens)
+Step 3: opengrok_get_file_content(project, path, start_line, end_line) — exact range only (~100 tokens)
+
+SESSION MEMORY:
+If memory-bank files are present, read AGENTS.md and active-context.md at session start.
+Write findings to investigation-log.md and update symbol-index.md at session end.
 `.trim();
+
 
 // ---------------------------------------------------------------------------
 // Tool annotations
@@ -332,19 +371,25 @@ function makeToolError(name: string, err: unknown): ToolResult {
 }
 
 /**
- * Shared helper: format a tool response for both markdown and JSON modes.
+ * Shared helper: format a tool response, routing to compact formats via selectFormat.
  * Applies capResponse to protect LLM context windows. structuredContent is
  * always returned for programmatic consumers regardless of response_format.
  */
 function formatResponse(
   textMarkdown: string,
   structured: Record<string, unknown>,
-  format: "markdown" | "json" = "markdown"
+  format: ResponseFormat = "markdown",
+  responseType: "search" | "symbol" | "code" | "generic" = "generic"
 ): ToolResult {
-  const text =
-    format === "json"
-      ? capResponse(JSON.stringify(structured, null, 2))
-      : capResponse(textMarkdown);
+  const effective = selectFormat(responseType, format);
+  let text: string;
+  switch (effective) {
+    case "json":
+      text = capResponse(JSON.stringify(structured, null, 2));
+      break;
+    default:
+      text = capResponse(textMarkdown);
+  }
   return {
     content: [{ type: "text", text }],
     structuredContent: structured,
@@ -376,7 +421,7 @@ async function executeSearchCode(
     max_results: number;
     start_index: number;
     file_type?: string;
-    response_format?: "markdown" | "json";
+    response_format?: ResponseFormat;
   },
   client: OpenGrokClient,
   config: Config
@@ -389,7 +434,9 @@ async function executeSearchCode(
     args.start_index,
     args.file_type
   );
-  return { text: formatSearchResults(results), structured: results };
+  const fmt = selectFormat("search", args.response_format);
+  const text = fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+  return { text, structured: results };
 }
 
 async function executeGetFileContent(
@@ -398,7 +445,7 @@ async function executeGetFileContent(
     path: string;
     start_line?: number;
     end_line?: number;
-    response_format?: "markdown" | "json";
+    response_format?: ResponseFormat;
   },
   client: OpenGrokClient,
   local: LocalLayer
@@ -427,11 +474,20 @@ async function executeGetFileContent(
     );
   }
 
-  return { text: formatFileContent(content), structured: content };
+  const fmt = selectFormat("code", args.response_format);
+  const text = fmt === "text" ? formatFileContentText(content) : formatFileContent(content);
+
+  // Warn on full-file fetch (no line range)
+  if (!args.start_line && !args.end_line && content.lineCount > 50) {
+    const warning = `⚠️ Full file fetch (${content.lineCount} lines). Use opengrok_get_file_symbols first, then fetch only the lines you need.\n`;
+    return { text: warning + text, structured: content };
+  }
+
+  return { text, structured: content };
 }
 
 async function executeListProjects(
-  args: { filter?: string; response_format?: "markdown" | "json" },
+  args: { filter?: string; response_format?: ResponseFormat },
   client: OpenGrokClient
 ): Promise<{ text: string; structured: { projects: Project[]; total: number } }> {
   const projects = await client.listProjects(args.filter);
@@ -450,7 +506,7 @@ async function executeBatchSearch(
     }>;
     projects?: string[];
     file_type?: string;
-    response_format?: "markdown" | "json";
+    response_format?: ResponseFormat;
   },
   client: OpenGrokClient,
   config: Config
@@ -540,7 +596,7 @@ async function handleSearchAndRead(
         lang,
       });
 
-      if (totalOutputBytes >= SEARCH_AND_READ_CAP) break;
+      if (totalOutputBytes >= (SEARCH_AND_READ_CAP_OVERRIDE ?? BUDGET_LIMITS[getActiveBudget()].searchAndReadCap)) break;
     } catch {
       // Skip files that can't be read
     }
@@ -866,24 +922,208 @@ async function dispatchTool(
 }
 
 // ---------------------------------------------------------------------------
+// Code Mode SERVER_INSTRUCTIONS (shown when OPENGROK_CODE_MODE=true)
+// ---------------------------------------------------------------------------
+
+const CODE_MODE_INSTRUCTIONS = `
+OpenGrok Code Mode — 2-tool API for large C++ codebases.
+
+Tools:
+- opengrok_api() — get the full API reference (call ONCE at session start)
+- opengrok_execute(code) — run JavaScript that uses the env.opengrok object
+
+RULES:
+1. ALWAYS call opengrok_api() first to read the API reference.
+2. ALWAYS use env.opengrok.batchSearch() instead of multiple env.opengrok.search() calls.
+3. NEVER use Promise.all() — calls are serialized inside the sandbox. Use batchSearch().
+4. ALWAYS read AGENTS.md and active-context.md at session start: env.opengrok.readMemory('AGENTS.md')
+5. ALWAYS write findings to investigation-log.md at session end: env.opengrok.writeMemory('investigation-log.md', ...)
+6. Return useful data from your code — the return value is shown to the user.
+7. Keep code clean and commented — it is shown to the user if debugging is needed.
+
+ANTI-PATTERNS:
+- Using Promise.all() — use batchSearch() instead.
+- Forgetting to return a value from your code.
+- Reading full files — always use startLine/endLine.
+
+Examples:
+env.opengrok.batchSearch([{query:'EventLoop',searchType:'defs'},{query:'EventLoop',searchType:'refs'}])
+env.opengrok.getFileContent('myproject','src/EventLoop.cpp',{startLine:120,endLine:140})
+env.opengrok.readMemory('symbol-index.md')  // read persistent notes
+env.opengrok.writeMemory('active-context.md', 'Investigating crash in EventLoop::handleEvent L245')
+`.trim();
+
+// ---------------------------------------------------------------------------
 // Server factory — McpServer with per-tool registrations
 // ---------------------------------------------------------------------------
 
 export function createServer(
   client: OpenGrokClient,
-  config: Config
+  config: Config,
+  memoryBank?: MemoryBank
 ): McpServer {
+  const codeMode = config.OPENGROK_CODE_MODE;
+  const instructions = codeMode ? CODE_MODE_INSTRUCTIONS : SERVER_INSTRUCTIONS;
+
   const server = new McpServer(
     { name: "opengrok-mcp", version: VERSION },
-    { instructions: SERVER_INSTRUCTIONS }
+    { instructions }
   );
 
   const local = buildLocalLayer(config);
 
-  // -----------------------------------------------------------------------
-  // Core tools
-  // -----------------------------------------------------------------------
+  if (codeMode && memoryBank) {
+    registerCodeModeTools(server, client, config, memoryBank);
+  } else {
+    registerLegacyTools(server, client, config, local);
+  }
 
+  return server;
+}
+
+// ---------------------------------------------------------------------------
+// Code Mode tools: opengrok_api + opengrok_execute
+// ---------------------------------------------------------------------------
+
+function registerCodeModeTools(
+  server: McpServer,
+  client: OpenGrokClient,
+  config: Config,
+  memoryBank: MemoryBank
+): void {
+  // Per-session masker (created once per server, tracks all turns)
+  const masker = new ObservationMasker();
+  let turn = 0;
+
+  // Tool 1: opengrok_api — return the API spec
+  server.registerTool(
+    "opengrok_api",
+    {
+      title: "OpenGrok API Reference",
+      description:
+        "Get the full API specification for Code Mode. " +
+        "Call this ONCE at session start before writing any opengrok_execute code.",
+      inputSchema: { _ : z.string().optional().describe("(no input required)") },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
+    },
+    async () => {
+      try {
+        const specText = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
+        return { content: [{ type: "text", text: capResponse(specText) }] };
+      } catch (err) {
+        return makeToolError("opengrok_api", err);
+      }
+    }
+  );
+
+  // Tool 2: opengrok_execute — run LLM-written JavaScript in the sandbox
+  server.registerTool(
+    "opengrok_execute",
+    {
+      title: "Execute OpenGrok Code",
+      description:
+        "Execute JavaScript code in a secure sandbox with access to the env.opengrok API object. " +
+        "All API calls are synchronous from your code's perspective. " +
+        "Return values via 'return' (not 'export default'). Use env.opengrok.* for API calls.",
+      inputSchema: {
+        code: z.string().min(1).describe(
+          "JavaScript code to execute. Must be able to run as a function body. " +
+          "Use the opengrok object to access the API. Return a value."
+        ),
+      },
+      annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false, destructiveHint: false },
+    },
+    async (args) => {
+      const currentTurn = ++turn;
+      try {
+        const budget = BUDGET_LIMITS[getActiveBudget()];
+        const sandboxApi = createSandboxAPI(client, memoryBank);
+        const historyHeader = masker.getMaskedHistoryHeader();
+
+        const codeWithHistory = historyHeader
+          ? `// Session context:\n${historyHeader.split("\n").map((l) => `// ${l}`).join("\n")}\n\n${args.code}`
+          : args.code;
+
+        const result = await executeInSandbox(codeWithHistory, sandboxApi, capResponse, budget.maxResponseBytes);
+
+        // Record in masker for future turns
+        masker.record(
+          currentTurn,
+          "opengrok_execute",
+          args.code.slice(0, 80).replace(/\n/g, " "),
+          result
+        );
+
+        return { content: [{ type: "text", text: result }] };
+      } catch (err) {
+        return makeToolError("opengrok_execute", err);
+      }
+    }
+  );
+
+  // Memory bank tools
+  server.registerTool(
+    "opengrok_read_memory",
+    {
+      title: "Read Memory Bank",
+      description:
+        "Read a Living Document file. Call at session start to restore context. " +
+        "Files: AGENTS.md, codebase-map.md, symbol-index.md, known-patterns.md, investigation-log.md, active-context.md",
+      inputSchema: {
+        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"]
+        ).describe("File to read from the memory bank"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
+    },
+    async (args) => {
+      try {
+        const content = await memoryBank.read(args.filename);
+        if (!content) {
+          return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
+        }
+        return { content: [{ type: "text", text: capResponse(content) }] };
+      } catch (err) {
+        return makeToolError("opengrok_read_memory", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_update_memory",
+    {
+      title: "Update Memory Bank",
+      description:
+        "Write findings to a Living Document file. Call at session end to persist knowledge. " +
+        "Use mode=append for investigation-log.md to add a new entry.",
+      inputSchema: {
+        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"])
+          .describe("File to update"),
+        content: z.string().min(1).describe("Content to write"),
+        mode: z.enum(["overwrite", "append"]).default("overwrite").describe("append adds to end (use for investigation-log)"),
+      },
+      annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: false, destructiveHint: false },
+    },
+    async (args) => {
+      try {
+        await memoryBank.write(args.filename, args.content, args.mode);
+        return { content: [{ type: "text", text: `Written to ${args.filename}` }] };
+      } catch (err) {
+        return makeToolError("opengrok_update_memory", err);
+      }
+    }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Legacy tools (14 tools, used when Code Mode is disabled)
+// ---------------------------------------------------------------------------
+
+function registerLegacyTools(
+  server: McpServer,
+  client: OpenGrokClient,
+  config: Config,
+  local: LocalLayer
+): void {
   server.registerTool(
     "opengrok_search_code",
     {
@@ -896,14 +1136,15 @@ export function createServer(
     },
     async (args) => {
       try {
-        const format = args.response_format ?? "markdown";
+        const format = args.response_format ?? "auto";
         const { text, structured } = await executeSearchCode(args, client, config);
         const hasMore = structured.endIndex < structured.totalCount;
         const nextOffset = hasMore ? structured.endIndex : undefined;
         return formatResponse(
           text,
           { ...structured as unknown as Record<string, unknown>, hasMore, ...(nextOffset !== undefined ? { nextOffset } : {}) },
-          format
+          format,
+          "search"
         );
       } catch (err) {
         return makeToolError("opengrok_search_code", err);
@@ -928,7 +1169,9 @@ export function createServer(
           args.max_results,
           args.start_index
         );
-        return { content: [{ type: "text", text: capResponse(formatSearchResults(results)) }] };
+        const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
+        const text = fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+        return { content: [{ type: "text", text: capResponse(text) }] };
       } catch (err) {
         return makeToolError("opengrok_find_file", err);
       }
@@ -947,9 +1190,9 @@ export function createServer(
     },
     async (args) => {
       try {
-        const format = args.response_format ?? "markdown";
+        const format = args.response_format ?? "auto";
         const { text, structured } = await executeGetFileContent(args, client, local);
-        return formatResponse(text, structured as unknown as Record<string, unknown>, format);
+        return formatResponse(text, structured as unknown as Record<string, unknown>, format, "code");
       } catch (err) {
         return makeToolError("opengrok_get_file_content", err);
       }
@@ -1014,9 +1257,9 @@ export function createServer(
     },
     async (args) => {
       try {
-        const format = args.response_format ?? "markdown";
+        const format = args.response_format ?? "auto";
         const { text, structured } = await executeListProjects(args, client);
-        return formatResponse(text, structured as unknown as Record<string, unknown>, format);
+        return formatResponse(text, structured as unknown as Record<string, unknown>, format, "generic");
       } catch (err) {
         return makeToolError("opengrok_list_projects", err);
       }
@@ -1095,9 +1338,9 @@ export function createServer(
     },
     async (args) => {
       try {
-        const format = args.response_format ?? "markdown";
+        const format = args.response_format ?? "auto";
         const { text, structured } = await executeBatchSearch(args, client, config);
-        return formatResponse(text, structured as unknown as Record<string, unknown>, format);
+        return formatResponse(text, structured as unknown as Record<string, unknown>, format, "search");
       } catch (err) {
         return makeToolError("opengrok_batch_search", err);
       }
@@ -1145,16 +1388,22 @@ export function createServer(
     },
     async (args) => {
       try {
-        const format = args.response_format ?? "markdown";
+        const format = args.response_format ?? "auto";
         const { text, structured } = await handleGetSymbolContextStructured(
           args as unknown as Record<string, unknown>,
           client,
           config
         );
+        // Use YAML for symbol context when format is auto or yaml
+        const effectiveFmt = selectFormat("symbol", format as ResponseFormat);
+        const displayText = effectiveFmt === "yaml"
+          ? formatSymbolContextYAML(structured as unknown as import("./formatters.js").SymbolContextResult)
+          : text;
         return formatResponse(
-          text,
+          displayText,
           structured as unknown as Record<string, unknown>,
-          format
+          format as ResponseFormat,
+          "symbol"
         );
       } catch (err) {
         return makeToolError("opengrok_get_symbol_context", err);
@@ -1245,8 +1494,7 @@ export function createServer(
       }
     }
   );
-
-  return server;
+  // registerLegacyTools intentionally returns void — server is mutated in place
 }
 
 // ---------------------------------------------------------------------------
@@ -1256,9 +1504,10 @@ export function createServer(
 /* v8 ignore start -- runServer connects to stdio transport; integration-level */
 export async function runServer(
   client: OpenGrokClient,
-  config: Config
+  config: Config,
+  memoryBank?: MemoryBank
 ): Promise<void> {
-  const server = createServer(client, config);
+  const server = createServer(client, config, memoryBank);
   const transport = new StdioServerTransport();
 
   const shutdown = async (signal: string): Promise<void> => {
