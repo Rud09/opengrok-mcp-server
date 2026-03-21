@@ -12,6 +12,7 @@ import { MemoryBank } from '../server/memory-bank.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Config } from '../server/config.js';
+import { createSandboxAPI } from '../server/sandbox.js';
 
 // ---------------------------------------------------------------------------
 // Mock executeInSandbox so Code Mode tests don't need the compiled worker
@@ -238,6 +239,46 @@ describe('Code Mode — memory bank tools', () => {
     expect(content).toContain('First entry');
     expect(content).toContain('Second');
     await client.close();
+  });
+});
+
+describe('createSandboxAPI — getCompileInfo', () => {
+  let bank: MemoryBank;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'opengrok-ci-test-'));
+    bank = new MemoryBank(tmpDir);
+    await bank.ensureDir();
+  });
+
+  afterEach(async () => {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('getCompileInfo returns null when no getCompileInfoFn provided', async () => {
+    const mockClient = makeMockClient();
+    // createSandboxAPI called WITHOUT third arg (current behavior)
+    const api = createSandboxAPI(mockClient as never, bank);
+    const result = await api.getCompileInfo('/some/file.cpp');
+    expect(result).toBeNull();
+  });
+
+  it('getCompileInfo delegates to getCompileInfoFn when provided', async () => {
+    const fakeInfo = {
+      file: '/abs/path/foo.cpp',
+      compiler: 'g++',
+      standard: 'c++17',
+      includes: ['/usr/include'],
+      defines: ['DEBUG'],
+      extraFlags: ['-Wall'],
+    };
+    const fn = vi.fn().mockResolvedValue(fakeInfo);
+    const mockClient = makeMockClient();
+    const api = createSandboxAPI(mockClient as never, bank, fn);
+    const result = await api.getCompileInfo('/abs/path/foo.cpp');
+    expect(result).toEqual(fakeInfo);
+    expect(fn).toHaveBeenCalledWith('/abs/path/foo.cpp');
   });
 });
 

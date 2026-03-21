@@ -229,7 +229,8 @@ export interface SandboxAPI {
  */
 export function createSandboxAPI(
   client: OpenGrokClient,
-  memoryBank: MemoryBank
+  memoryBank: MemoryBank,
+  getCompileInfoFn?: (path: string) => Promise<unknown>
 ): SandboxAPI {
   return {
     async search(query, opts = {}) {
@@ -346,7 +347,8 @@ export function createSandboxAPI(
       return { query, field: opts.field ?? "full", suggestions: result.suggestions, time: result.time };
     },
 
-    async getCompileInfo(_path) {
+    async getCompileInfo(path) {
+      if (getCompileInfoFn) return getCompileInfoFn(path);
       return null;
     },
 

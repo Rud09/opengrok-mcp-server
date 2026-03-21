@@ -941,7 +941,7 @@ export function createServer(
 
   // Also register Code Mode tools when enabled — LLM chooses best approach
   if (codeMode && memoryBank) {
-    registerCodeModeTools(server, client, config, memoryBank);
+    registerCodeModeTools(server, client, config, memoryBank, local);
   }
 
   return server;
@@ -1015,11 +1015,58 @@ function registerCodeModeTools(
   server: McpServer,
   client: OpenGrokClient,
   config: Config,
-  memoryBank: MemoryBank
+  memoryBank: MemoryBank,
+  local: LocalLayer
 ): void {
   // Per-session masker (created once per server, tracks all turns)
   const masker = new ObservationMasker();
   let turn = 0;
+
+  // Build getCompileInfoFn callback when local layer is available
+  const getCompileInfoFn = local.enabled && local.index.size > 0
+    ? async (filePath: string): Promise<unknown> => {
+        let info: CompileInfo | undefined;
+
+        // Absolute path lookup
+        if (path.isAbsolute(filePath)) {
+          try {
+            const resolved = await fsp.realpath(filePath);
+            info = local.index.get(resolved);
+          } catch { /* path doesn't exist */ }
+        }
+
+        // Root-relative lookup
+        if (!info) {
+          const normalized = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+          for (const root of local.roots) {
+            try {
+              const resolved = await fsp.realpath(path.join(root, normalized));
+              info = local.index.get(resolved);
+              if (info) break;
+            } catch { /* try next root */ }
+          }
+        }
+
+        // Basename fallback
+        if (!info) {
+          const basename = path.basename(filePath);
+          for (const [k, v] of local.index) {
+            if (path.basename(k) === basename) { info = v; break; }
+          }
+        }
+
+        if (!info) return null;
+
+        return {
+          file: info.file,
+          compiler: info.compiler,
+          standard: info.standard || undefined,
+          includes: info.includes,
+          defines: info.defines,
+          extraFlags: info.extraFlags,
+        };
+      }
+    : undefined;
 
   // Tool 1: opengrok_api — return the API spec
   server.registerTool(
@@ -1063,7 +1110,7 @@ function registerCodeModeTools(
       const currentTurn = ++turn;
       try {
         const budget = BUDGET_LIMITS[getActiveBudget()];
-        const sandboxApi = createSandboxAPI(client, memoryBank);
+        const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
         const historyHeader = masker.getMaskedHistoryHeader();
 
         const codeWithHistory = historyHeader
