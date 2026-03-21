@@ -137,37 +137,33 @@ const VERSION = (typeof __VERSION__ !== "undefined"
 // ---------------------------------------------------------------------------
 
 const SERVER_INSTRUCTIONS = `
-OpenGrok MCP — Code intelligence for large C++ codebases.
+OpenGrok MCP — Code intelligence for large, multi-language codebases.
+You have access to two distinct sets of tools. Choose the right approach for the task:
 
-RULES (follow ALL of these strictly):
-1. ALWAYS call opengrok_get_file_symbols BEFORE opengrok_get_file_content. It shows file structure cheaply.
-2. ALWAYS call opengrok_get_symbol_context first for any unknown symbol (class, function, macro).
-3. ALWAYS pass start_line AND end_line to opengrok_get_file_content. NEVER fetch full files.
-4. ALWAYS use opengrok_batch_search instead of multiple sequential opengrok_search_code calls.
-5. ALWAYS use opengrok_search_and_read instead of search_code + get_file_content.
-6. ALWAYS pass file_type to narrow by language: cxx (C++), c, java, python, typescript, etc.
-7. LIMIT context_lines to 5 or fewer unless the user specifically asks for more.
-8. LIMIT max_results to 5 or fewer unless the user specifically asks for more.
-9. PREFER search_type=defs for symbol definitions, search_type=refs for usages.
-10. PREFER search_type=hist to search commit messages and changelogs.
-11. Use opengrok_get_compile_info for C/C++ compiler flags and include paths.
-12. Use opengrok_list_projects with filter="substring" to find project names.
+APPROACH 1: INDIVIDUAL TOOLS (For quick, single-step lookups)
+- Use individual tools (opengrok_search_code, opengrok_get_file_symbols, etc.) for quick questions.
+- ALWAYS call opengrok_get_file_symbols BEFORE opengrok_get_file_content to see structure cheaply.
+- ALWAYS call opengrok_get_symbol_context first for any unknown symbol.
+- ALWAYS pass start_line AND end_line to opengrok_get_file_content. NEVER fetch full files.
+- ALWAYS pass file_type to narrow by language (cxx, java, python, etc.).
+- PREFER opengrok_search_and_read instead of search_code + get_file_content.
+- LIMIT max_results to 5 or fewer unless asked.
 
-ANTI-PATTERNS (NEVER do these):
-- Fetching full files to "understand" them (use opengrok_get_file_symbols first).
-- Running the same search more than once with different params without a reason.
-- Browsing directories speculatively without a clear goal.
-- Calling opengrok_search_code and then opengrok_get_file_content separately (use search_and_read).
+APPROACH 2: CODE MODE (For complex, multi-step investigations)
+- Use opengrok_api + opengrok_execute for deep investigations (3+ steps) where you can filter/summarize in JS.
+- Call opengrok_api ONCE to get the API spec, then run opengrok_execute with JS code.
+- Your JS code runs synchronously in a sandbox. env.opengrok.* methods are blocking.
+- ALWAYS use env.opengrok.batchSearch() for parallel searches (Promise.all does NOT parallelize here).
+- Return a value via \`return\` — only the final return value crosses back (saving massive tokens).
+- Example: \`return env.opengrok.batchSearch([{query:"Foo",searchType:"defs"}])[0].results[0].path\`
 
-OPTIMAL WORKFLOW:
-Step 1: opengrok_batch_search([{query:"Symbol",type:"defs"},{query:"Symbol",type:"refs"}]) — parallel
-Step 2: opengrok_get_file_symbols(project, path) — understand structure (~50 tokens)
-Step 3: opengrok_get_file_content(project, path, start_line, end_line) — exact range only (~100 tokens)
-
-SESSION MEMORY:
-If memory-bank files are present, read AGENTS.md and active-context.md at session start.
-Write findings to investigation-log.md and update symbol-index.md at session end.
+SESSION MEMORY (Living Document):
+- On session start: call opengrok_list_memory_files(), then read AGENTS.md and active-context.md.
+- During investigation: append findings to investigation-log.md using opengrok_write_memory().
+- On session end: update symbol-index.md with new symbols, update active-context.md.
 `.trim();
+
+
 
 
 // ---------------------------------------------------------------------------
@@ -922,37 +918,6 @@ async function dispatchTool(
 }
 
 // ---------------------------------------------------------------------------
-// Code Mode SERVER_INSTRUCTIONS (shown when OPENGROK_CODE_MODE=true)
-// ---------------------------------------------------------------------------
-
-const CODE_MODE_INSTRUCTIONS = `
-OpenGrok Code Mode — 2-tool API for large C++ codebases.
-
-Tools:
-- opengrok_api() — get the full API reference (call ONCE at session start)
-- opengrok_execute(code) — run JavaScript that uses the env.opengrok object
-
-RULES:
-1. ALWAYS call opengrok_api() first to read the API reference.
-2. ALWAYS use env.opengrok.batchSearch() instead of multiple env.opengrok.search() calls.
-3. NEVER use Promise.all() — calls are serialized inside the sandbox. Use batchSearch().
-4. ALWAYS read AGENTS.md and active-context.md at session start: env.opengrok.readMemory('AGENTS.md')
-5. ALWAYS write findings to investigation-log.md at session end: env.opengrok.writeMemory('investigation-log.md', ...)
-6. Return useful data from your code — the return value is shown to the user.
-7. Keep code clean and commented — it is shown to the user if debugging is needed.
-
-ANTI-PATTERNS:
-- Using Promise.all() — use batchSearch() instead.
-- Forgetting to return a value from your code.
-- Reading full files — always use startLine/endLine.
-
-Examples:
-env.opengrok.batchSearch([{query:'EventLoop',searchType:'defs'},{query:'EventLoop',searchType:'refs'}])
-env.opengrok.getFileContent('myproject','src/EventLoop.cpp',{startLine:120,endLine:140})
-env.opengrok.readMemory('symbol-index.md')  // read persistent notes
-env.opengrok.writeMemory('active-context.md', 'Investigating crash in EventLoop::handleEvent L245')
-`.trim();
-
 // ---------------------------------------------------------------------------
 // Server factory — McpServer with per-tool registrations
 // ---------------------------------------------------------------------------
@@ -963,19 +928,20 @@ export function createServer(
   memoryBank?: MemoryBank
 ): McpServer {
   const codeMode = config.OPENGROK_CODE_MODE;
-  const instructions = codeMode ? CODE_MODE_INSTRUCTIONS : SERVER_INSTRUCTIONS;
 
   const server = new McpServer(
     { name: "opengrok-mcp", version: VERSION },
-    { instructions }
+    { instructions: SERVER_INSTRUCTIONS }
   );
 
   const local = buildLocalLayer(config);
 
+  // Always register legacy tools — useful for simple lookups
+  registerLegacyTools(server, client, config, local, memoryBank);
+
+  // Also register Code Mode tools when enabled — LLM chooses best approach
   if (codeMode && memoryBank) {
     registerCodeModeTools(server, client, config, memoryBank);
-  } else {
-    registerLegacyTools(server, client, config, local, memoryBank);
   }
 
   return server;
@@ -1120,9 +1086,6 @@ function registerCodeModeTools(
       }
     }
   );
-
-  // Memory bank tools
-  registerMemoryTools(server, memoryBank);
 }
 
 // ---------------------------------------------------------------------------

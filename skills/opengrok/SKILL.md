@@ -58,7 +58,16 @@ to chaining individual calls.
 | Understand a symbol (definition + context + references) | `opengrok_get_symbol_context` | Replaces 3 separate calls. Returns definition source, surrounding context, and reference locations in one shot. Set `include_header: true` for C/C++ to also fetch the matching `.h`/`.hpp`. |
 | Search and immediately read matching files | `opengrok_search_and_read` | Replaces search → read chains. Returns search hits with inline file content. Use `context_lines` (1–50, default 10) to control how much surrounding code is shown. |
 | Run multiple search queries at once | `opengrok_batch_search` | Replaces sequential `opengrok_search_code` calls. Pass up to 5 queries in a `queries` array (max 25 results per query). `file_type` is top-level, not per-query. |
-| Check if OpenGrok is reachable | `opengrok_index_health` | Quick connectivity and index status diagnostic. |
+| Check if OpenGrok is reachable | `opengrok_index_health` | Quick connectivity and index status diagnostic. Run this first in every session. |
+
+### Code Mode Tools (preferred when available)
+
+When Code Mode is enabled, these 2 tools replace all individual tools above:
+
+| Goal | Tool | Why |
+|------|------|-----|
+| Get the API specification | `opengrok_api` | Returns a full spec of the `env.opengrok.*` methods available inside the sandbox. Call this once per session. |
+| Execute a JavaScript program against OpenGrok | `opengrok_execute` | Write JS code that uses `env.opengrok.*` methods. Returns only the final `return` value — intermediate data stays in the sandbox (huge token savings). |
 
 ### Individual Tools
 
@@ -84,7 +93,43 @@ to chaining individual calls.
 > `get_file_history`, `browse_directory`, `get_file_annotate`, `get_file_symbols`)
 > take a single `project: string`. Search tools (`search_code`, `search_and_read`,
 > `batch_search`, `get_symbol_context`) take `projects: string[]` — omit the
-> field to use the server default project.
+> field to use the configured default project (set via Extension Settings → Default Project or `OPENGROK_DEFAULT_PROJECT`).
+
+## Code Mode
+
+Code Mode reduces tool calls to just 2 (`opengrok_api` + `opengrok_execute`), saving 75–95% tokens.
+
+### Workflow
+
+```
+1. Call opengrok_api once to get the API spec
+2. Write JavaScript that uses env.opengrok.* methods
+3. Call opengrok_execute with the code
+4. Only the return value crosses back — intermediate data stays in the sandbox
+```
+
+### Example: Find the definition of a symbol and its callers
+
+```javascript
+// Passed to opengrok_execute as { code: "..." }
+const [defs, refs] = env.opengrok.batchSearch([
+  { query: "EventLoop", searchType: "defs" },
+  { query: "EventLoop", searchType: "refs", maxResults: 5 }
+]);
+
+const defPath = defs.results[0]?.path;
+const defLine = defs.results[0]?.matches[0]?.lineNumber;
+const content = defPath
+  ? env.opengrok.getFileContent('myproject', defPath, { startLine: defLine - 5, endLine: defLine + 15 })
+  : null;
+
+return { definition: content?.content, callers: refs.results.map(r => r.path) };
+```
+
+### Code Mode Notes
+- `Promise.all` does **not** parallelize — use `env.opengrok.batchSearch()` instead
+- All `env.opengrok.*` calls are synchronous from your code's perspective
+- `env.opengrok.readMemory(filename)` / `writeMemory(filename, content)` for Living Document access
 
 ## Search Types
 

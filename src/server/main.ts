@@ -26,12 +26,14 @@ async function main(): Promise<void> {
 
   // Resolve memory bank directory:
   // 1. Prefer OPENGROK_MEMORY_BANK_DIR env var (user-configured)
-  // 2. Fall back to <package root>/memory-bank relative to this file
-  //    (__dirname = out/server/, so go up two levels to the package root)
-  // NOTE: process.cwd() is NOT used — it gives the wrong path in VS Code subprocesses
+  // 2. Fall back to <workspaceRoot>/.opengrok/memory-bank/
+  //    VS Code launches the MCP subprocess with the workspace folder as cwd,
+  //    so process.cwd() gives the correct workspace root. For CLI usage,
+  //    it gives the user's current directory — both are the right workspace root.
+  //    NOTE: __dirname is NOT used here — it would give the extension install dir.
   const memoryBankDir =
     config.OPENGROK_MEMORY_BANK_DIR ||
-    path.join(__dirname, "..", "..", "memory-bank");
+    path.join(process.cwd(), ".opengrok", "memory-bank");
 
   const memoryBank = new MemoryBank(memoryBankDir);
   await memoryBank.ensureDir();

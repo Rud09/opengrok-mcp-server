@@ -31,7 +31,51 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [5.3.1] - 2026-03-21
+
+### ✨ New Features & UX Improvements
+
+- **ViewColumn.Beside Configuration UI**: The Configuration Manager now opens seamlessly next to your active editor, keeping your workspace fluid while avoiding activity bar clutter.
+- **Advanced Settings section**: Collapsible "Advanced Settings" in the config UI groups power-user options (Default Project, HTTP Proxy, Context Budget, Response Format Override, Code Mode toggle, Memory Bank Dir).
+- **Auto Tool Refresh**: Toggling Code Mode directly from the UI now instantly updates the available Copilot tools without requiring a manual window reload.
+- **Unified Tool Availability**: Both Code Mode (`opengrok_api`, `opengrok_execute`) and classic tools (`opengrok_search_code`, etc.) are now always available simultaneously, allowing the LLM to choose the optimal strategy for simple vs. complex queries.
+- **Zero-Prompt Testing**: Eliminated unnecessary "Reload Window" prompts when testing configurations or updating settings.
+- **Default Project setting**: New `opengrok-mcp.defaultProject` VS Code setting and UI field. Maps to `OPENGROK_DEFAULT_PROJECT` env var — scopes all searches to this project when none is specified per-call.
+- **Response Format setting**: New `opengrok-mcp.responseFormatOverride` VS Code setting (`""` / `"markdown"` / `"json"`).
+- **Hidden `hasPromptedConfig`**: Internal setup tracker removed from the user-facing VS Code settings menu for cleaner Preferences.
+
+### 🗂️ Workspace-Specific Memory Bank
+
+- **Default location changed**: Memory bank files now default to `<workspace>/.opengrok/memory-bank/` (workspace-relative via `process.cwd()`) instead of the extension install directory. Each project gets its own memory bank automatically. Old path: `<extension>/memory-bank/`.
+- **VS Code extension**: When a workspace is open, the extension explicitly passes `OPENGROK_MEMORY_BANK_DIR=<workspaceFolder>/.opengrok/memory-bank/` to the MCP subprocess, overriding the server's own default. Customize via the UI Advanced Settings or `opengrok-mcp.memoryBankDir`.
+
+### 🧠 LLM Instruction Improvements
+
+- **Unified Intelligence**: `SERVER_INSTRUCTIONS` now dynamically blends guidance for both classic and Code Mode tools, teaching the LLM *when* to use each pattern based on efficiency.
+- **Step 0 — health check**: Added `opengrok_index_health` as step 0 in the optimal workflow (run once on first call to verify connectivity).
+- **Broadened scope**: Swapped "large C++ codebases" to "large, multi-language codebases" globally.
+- **Expanded SESSION MEMORY**: Living Document instructions now include full read/write lifecycle and the exact memory bank path.
+
+### 📖 Skill Improvements (`skills/opengrok/SKILL.md`)
+
+- Added **Code Mode Tools** section to the Tool Selection table (`opengrok_api` + `opengrok_execute`).
+- Added full **Code Mode** section with workflow, JavaScript example, and sandbox notes.
+- Updated default project note to reference the new VS Code Extension Setting.
+- Marked `opengrok_index_health` as "Run this first in every session".
+
+### 🐛 Bug Fixes
+
+- **Sandbox worker WASM crash** (v5.0.x regression, fixed in prior commit): `esbuild.js` now shims `import.meta.url` in the CJS bundle, fixing the "Received undefined" crash on QuickJS WASM loading.
+
+### Changed
+
+- `memoryBankDir` extension setting description updated to reflect new workspace-relative default.
+- `codeMode` extension setting description de-coupled from C++ framing.
+
+---
+
 ## [5.0.0] - 2026-03-20
+
 
 Reduces LLM token consumption 80–95% on large C++ codebases. Zero new background processes. Zero impact on shared build machines. Works standalone (Claude Code CLI, `npx`) with no native compilation or Node flags required.
 

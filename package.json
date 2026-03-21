@@ -2,7 +2,7 @@
   "name": "opengrok-mcp-server",
   "displayName": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases",
-  "version": "5.0.0",
+  "version": "5.3.1",
   "mcpName": "io.github.IcyHot09/opengrok-mcp-server",
   "license": "PolyForm-Noncommercial-1.0.0",
   "publisher": "IcyHot09",
@@ -60,7 +60,7 @@
       },
       {
         "command": "opengrok-mcp.configureUI",
-        "title": "OpenGrok: Manage Configuration"
+        "title": "OpenGrok: Open Configuration"
       },
       {
         "command": "opengrok-mcp.test",
@@ -138,14 +138,32 @@
         "opengrok-mcp.codeMode": {
           "type": "boolean",
           "default": true,
-          "description": "Enable Code Mode (2-tool API: opengrok_api + opengrok_execute). Significant token savings on large C++ codebases. Maps to OPENGROK_CODE_MODE env var.",
+          "description": "Enable Code Mode (2-tool API: opengrok_api + opengrok_execute). Significant token savings via JavaScript sandbox execution. Maps to OPENGROK_CODE_MODE env var.",
           "order": 7
         },
         "opengrok-mcp.memoryBankDir": {
           "type": "string",
           "default": "",
-          "description": "Directory for Living Document memory bank files. Defaults to <extension>/memory-bank/. Maps to OPENGROK_MEMORY_BANK_DIR env var.",
+          "description": "Directory for Living Document memory bank files. Defaults to <workspace>/.opengrok/memory-bank/. Maps to OPENGROK_MEMORY_BANK_DIR env var.",
           "order": 8
+        },
+        "opengrok-mcp.defaultProject": {
+          "type": "string",
+          "default": "",
+          "description": "Default OpenGrok project to scope searches to when none is specified. Maps to OPENGROK_DEFAULT_PROJECT env var.",
+          "order": 9
+        },
+        "opengrok-mcp.responseFormatOverride": {
+          "type": "string",
+          "enum": ["", "markdown", "json"],
+          "enumDescriptions": [
+            "Auto — let each tool choose the best format",
+            "Force markdown for all tool responses",
+            "Force JSON for all tool responses (programmatic use)"
+          ],
+          "default": "",
+          "description": "Force all tool responses to a specific format (empty = auto). Maps to OPENGROK_RESPONSE_FORMAT_OVERRIDE env var.",
+          "order": 10
         }
       }
     }

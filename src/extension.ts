@@ -23,7 +23,6 @@ let secretStorage: vscode.SecretStorage;
 let mcpProvider: OpenGrokMcpProvider | undefined;
 
 // Tracks if the extension was activated without credentials, requiring a window reload to populate tools
-let needsReloadForTools = false;
 
 /**
  * Clean up stale credential files from temp directory.
@@ -290,7 +289,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     context.subscriptions.push(
         vscode.commands.registerCommand('opengrok-mcp.configure', configureCredentials),
-        vscode.commands.registerCommand('opengrok-mcp.configureUI', () => openConfigurationPanel(context)),
+        vscode.commands.registerCommand('opengrok-mcp.configureUI', () => {
+            openConfigurationPanel(context);
+        }),
         vscode.commands.registerCommand('opengrok-mcp.test', testConnection),
         vscode.commands.registerCommand('opengrok-mcp.showLogs', () => outputChannel.show()),
         vscode.commands.registerCommand('opengrok-mcp.statusMenu', showStatusMenu),
@@ -326,7 +327,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (username) {
         updateStatusBar('ready');
     } else {
-        needsReloadForTools = true;
         updateStatusBar('unconfigured');
         const action = await vscode.window.showInformationMessage(
             'OpenGrok MCP: To enable Copilot codebase search, please configure your OpenGrok credentials.',
@@ -336,7 +336,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (action === 'Configure Now') {
             openConfigurationPanel(context);
         } else if (!config.get<boolean>('hasPromptedConfig')) {
-            // First time setup: popup automatically 
+            // First time setup: open configuration automatically
             openConfigurationPanel(context);
             await config.update('hasPromptedConfig', true, vscode.ConfigurationTarget.Global);
         }
@@ -435,18 +435,6 @@ async function configureCredentials(): Promise<void> {
     updateStatusBar('ready');
 }
 
-// Automatically prompt for reload on first configuration
-function promptForReload() {
-    vscode.window.showInformationMessage(
-        'Connection successful! First-time setup requires a window reload to enable OpenGrok tools in Copilot.',
-        'Reload Window'
-    ).then(selection => {
-        if (selection === 'Reload Window') {
-            vscode.commands.executeCommand('workbench.action.reloadWindow');
-        }
-    });
-}
-
 /**
  * Test connection using Node's https module — properly supports rejectUnauthorized
  * for internal/self-signed certificates on corporate networks.
@@ -489,12 +477,6 @@ async function testConnection(): Promise<void> {
                 log(`Connection test successful (HTTP ${statusCode})`);
                 vscode.window.showInformationMessage('✓ OpenGrok connection successful!');
                 updateStatusBar('ready');
-
-                if (needsReloadForTools) {
-                    promptForReload();
-                    // Don't prompt again if they test multiple times
-                    needsReloadForTools = false;
-                }
             } else if (statusCode === 401) {
                 log('Authentication failed (401)');
                 vscode.window.showErrorMessage('✗ Authentication failed. Check your username and password.');
@@ -694,7 +676,18 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
 
         env.OPENGROK_CODE_MODE = codeMode ? 'true' : 'false';
         env.OPENGROK_CONTEXT_BUDGET = contextBudget;
-        if (memoryBankDir) env.OPENGROK_MEMORY_BANK_DIR = memoryBankDir;
+        if (memoryBankDir) {
+            env.OPENGROK_MEMORY_BANK_DIR = memoryBankDir;
+        } else if (vscode.workspace.workspaceFolders?.length) {
+            // Default: workspace-specific memory bank
+            const wsRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+            env.OPENGROK_MEMORY_BANK_DIR = path.join(wsRoot, '.opengrok', 'memory-bank');
+        }
+
+        const defaultProject = config.get<string>('defaultProject') ?? '';
+        const responseFormatOverride = config.get<string>('responseFormatOverride') ?? '';
+        if (defaultProject) env.OPENGROK_DEFAULT_PROJECT = defaultProject;
+        if (responseFormatOverride) env.OPENGROK_RESPONSE_FORMAT_OVERRIDE = responseFormatOverride;
 
         if (password) {
             // Write credentials to secure temporary file with AES-256 encryption
@@ -763,7 +756,7 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
             process.execPath,
             [getServerScriptPath()],
             env,
-            getExtensionVersion()
+            `${getExtensionVersion()}-${codeMode ? 'code' : 'legacy'}-${contextBudget}`
         );
         return [def];
     }
@@ -779,94 +772,130 @@ function getServerScriptPath(): string {
 }
 
 // ============================================================================
-// Configuration Manager Webview
+// Editor Configuration Panel (Sidebar/Beside)
 // ============================================================================
 
 let configPanel: vscode.WebviewPanel | undefined;
 
 function openConfigurationPanel(context: vscode.ExtensionContext): void {
-    log('Opening Configuration Manager webview...');
-    
     if (configPanel) {
-        configPanel.reveal(vscode.ViewColumn.One);
+        configPanel.reveal(vscode.ViewColumn.Beside);
         return;
     }
-    
+
     configPanel = vscode.window.createWebviewPanel(
-        'opengrokConfig',
+        'opengrok-mcp.configView',
         'OpenGrok Configuration',
-        vscode.ViewColumn.One,
+        vscode.ViewColumn.Beside,
         {
             enableScripts: true,
             retainContextWhenHidden: true
         }
     );
-    
+
     configPanel.webview.html = getConfigManagerHtml(context);
-    
-    configPanel.onDidDispose(() => {
-        configPanel = undefined;
-    });
-    
-    // Handle messages from webview
+
+    // Initial load
+    void _sendCurrentConfig(configPanel.webview);
+
     configPanel.webview.onDidReceiveMessage(
         async (message) => {
-            log(`Config webview message: ${message.type}`);
             if (!configPanel) return;
+            log(`Config webview message: ${message.type}`);
             try {
                 switch (message.type) {
                     case 'getConfig':
-                        await sendCurrentConfig(configPanel);
+                        await _sendCurrentConfig(configPanel.webview);
                         break;
                     case 'testConnection':
-                        await handleWebviewTestConnection(configPanel, message.data);
+                        await _handleTestConnection(configPanel.webview, message.data);
                         break;
                     case 'saveConfiguration':
-                        await handleSaveConfiguration(configPanel, message.data);
+                        await _handleSaveConfiguration(configPanel.webview, message.data);
                         break;
                 }
             } catch (error: unknown) {
                 const errMsg = error instanceof Error ? error.message : String(error);
                 log(`Error handling webview message: ${errMsg}`);
-                configPanel.webview.postMessage({ type: 'error', message: errMsg });
+                configPanel?.webview.postMessage({ type: 'error', message: errMsg });
             }
-        }
+        },
+        undefined,
+        context.subscriptions
     );
-    
-    log('Configuration Manager webview created');
+
+    configPanel.onDidDispose(
+        () => {
+            configPanel = undefined;
+        },
+        null,
+        context.subscriptions
+    );
 }
 
-async function sendCurrentConfig(panel: vscode.WebviewPanel): Promise<void> {
+async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const username = config.get<string>('username') || '';
     const baseUrl = config.get<string>('baseUrl') || '';
     const verifySsl = config.get<boolean>('verifySsl') ?? true;
     const proxy = config.get<string>('proxy') || '';
-    
+    const defaultProject = config.get<string>('defaultProject') || '';
+    const contextBudget = config.get<string>('contextBudget') || 'minimal';
+    const responseFormatOverride = config.get<string>('responseFormatOverride') || '';
+    const codeMode = config.get<boolean>('codeMode') ?? true;
+    const memoryBankDir = config.get<string>('memoryBankDir') || '';
+
     let hasPassword = false;
     if (username) {
         const password = await secretStorage.get(`opengrok-password-${username}`);
         hasPassword = !!password;
     }
-    
-    panel.webview.postMessage({
+
+    webview.postMessage({
         type: 'loadConfig',
-        config: { baseUrl, username, verifySsl, proxy, hasPassword }
+        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir }
     });
 }
 
-async function handleWebviewTestConnection(panel: vscode.WebviewPanel, data: { baseUrl: string; username: string; password: string; verifySsl: boolean }): Promise<void> {
+async function _handleTestConnection(webview: vscode.Webview, data: { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string }): Promise<void> {
+    await handleWebviewTestConnection(
+        (msg: Record<string, unknown>) => { void webview.postMessage(msg); },
+        data
+    );
+}
+
+async function _handleSaveConfiguration(webview: vscode.Webview, data: {
+    baseUrl: string;
+    username: string;
+    password?: string;
+    proxy?: string;
+    verifySsl: boolean;
+    defaultProject?: string;
+    contextBudget?: string;
+    responseFormatOverride?: string;
+    codeMode?: boolean;
+    memoryBankDir?: string;
+}): Promise<void> {
+    await handleSaveConfiguration(
+        (msg: Record<string, unknown>) => { void webview.postMessage(msg); },
+        data
+    );
+}
+
+async function handleWebviewTestConnection(
+    postMessage: (msg: Record<string, unknown>) => void,
+    data: { baseUrl: string; username: string; password: string; verifySsl: boolean }
+): Promise<void> {
     const { baseUrl, username, password, verifySsl } = data;
-    
-    panel.webview.postMessage({ type: 'testing', message: 'Testing connection...' });
-    
+
+    postMessage({ type: 'testing', message: 'Testing connection...' });
+
     try {
         const parsed = new URL(baseUrl);
-        // Normalize base: strip trailing slash, then append the OpenGrok API probe path
         const base = parsed.href.replace(/\/+$/, '');
         const apiUrl = new URL(`${base}/api/v1/projects`);
         const b64 = Buffer.from(`${username}:${password}`).toString('base64');
-        
+
         const options = {
             hostname: apiUrl.hostname,
             port: apiUrl.port || (apiUrl.protocol === 'https:' ? 443 : 80),
@@ -875,9 +904,9 @@ async function handleWebviewTestConnection(panel: vscode.WebviewPanel, data: { b
             headers: { 'Authorization': `Basic ${b64}`, 'Accept': 'application/json' },
             rejectUnauthorized: verifySsl
         };
-        
+
         const protocol = apiUrl.protocol === 'https:' ? https : http;
-        
+
         await new Promise<void>((resolve, reject) => {
             const req = protocol.request(options, (res) => {
                 let body = '';
@@ -890,7 +919,6 @@ async function handleWebviewTestConnection(panel: vscode.WebviewPanel, data: { b
                     } else if (!res.statusCode || res.statusCode >= 400) {
                         reject(new Error(`Server returned status ${res.statusCode} — is this an OpenGrok server?`));
                     } else {
-                        // Verify the response looks like OpenGrok's /api/v1/projects (a JSON array)
                         try {
                             const json = JSON.parse(body);
                             if (!Array.isArray(json)) {
@@ -911,61 +939,71 @@ async function handleWebviewTestConnection(panel: vscode.WebviewPanel, data: { b
             });
             req.end();
         });
-        
+
         log('✓ Webview test connection successful');
-        panel.webview.postMessage({ type: 'testSuccess', message: '✓ Connection successful!' });
+        postMessage({ type: 'testSuccess', message: '✓ Connection successful!' });
     } catch (error: unknown) {
         const errMsg = error instanceof Error ? error.message : String(error);
         log(`✗ Webview test connection failed: ${errMsg}`);
-        panel.webview.postMessage({ type: 'error', message: `✗ Connection failed: ${errMsg}` });
+        postMessage({ type: 'error', message: `✗ Connection failed: ${errMsg}` });
     }
 }
 
-async function handleSaveConfiguration(panel: vscode.WebviewPanel, data: { baseUrl: string; username: string; password?: string; proxy?: string; verifySsl: boolean }): Promise<void> {
-    const { baseUrl, username, password, proxy, verifySsl } = data;
-    
+async function handleSaveConfiguration(
+    postMessage: (msg: Record<string, unknown>) => void,
+    data: {
+        baseUrl: string;
+        username: string;
+        password?: string;
+        proxy?: string;
+        verifySsl: boolean;
+        defaultProject?: string;
+        contextBudget?: string;
+        responseFormatOverride?: string;
+        codeMode?: boolean;
+        memoryBankDir?: string;
+    }
+): Promise<void> {
+    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir } = data;
+
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const oldUsername = config.get<string>('username');
-    
-    // Get existing password if new one not provided
+
     let finalPassword = password;
     if (!finalPassword && oldUsername) {
         finalPassword = await secretStorage.get(`opengrok-password-${oldUsername}`);
     }
-    
+
     if (!finalPassword) {
-        panel.webview.postMessage({ type: 'error', message: 'Password is required' });
+        postMessage({ type: 'error', message: 'Password is required' });
         return;
     }
-    
-    // Save configuration
+
     await config.update('baseUrl', baseUrl, vscode.ConfigurationTarget.Global);
     await config.update('username', username, vscode.ConfigurationTarget.Global);
     await config.update('verifySsl', verifySsl, vscode.ConfigurationTarget.Global);
     await config.update('proxy', proxy || undefined, vscode.ConfigurationTarget.Global);
-    
-    // Store password securely
+    if (defaultProject !== undefined) await config.update('defaultProject', defaultProject || undefined, vscode.ConfigurationTarget.Global);
+    if (contextBudget) await config.update('contextBudget', contextBudget, vscode.ConfigurationTarget.Global);
+    if (responseFormatOverride !== undefined) await config.update('responseFormatOverride', responseFormatOverride || undefined, vscode.ConfigurationTarget.Global);
+    if (codeMode !== undefined) await config.update('codeMode', codeMode, vscode.ConfigurationTarget.Global);
+    if (memoryBankDir !== undefined) await config.update('memoryBankDir', memoryBankDir || undefined, vscode.ConfigurationTarget.Global);
+
     await secretStorage.store(`opengrok-password-${username}`, finalPassword);
-    
-    // Clean up old password if username changed
+
     if (oldUsername && oldUsername !== username) {
         await secretStorage.delete(`opengrok-password-${oldUsername}`);
     }
-    
+
     log(`Configuration saved for user: ${username}`);
     updateStatusBar('ready');
-    
-    // Force VS Code to re-fetch tools with the new credentials
     notifyMcpServerChanged();
-    
-    panel.webview.postMessage({ type: 'success', message: 'Configuration saved successfully! Tools are actively refreshing.' });
 
-    // Now actively test the connection with the new saved configuration
+    postMessage({ type: 'success', message: 'Configuration saved! Tools are refreshing.' });
     void testConnection();
 }
 
 function getConfigManagerHtml(context: vscode.ExtensionContext): string {
-    // Try to load external HTML file
     try {
         const htmlPath = path.join(context.extensionPath, 'out', 'webview', 'configManager.html');
         if (fs.existsSync(htmlPath)) {
@@ -974,13 +1012,10 @@ function getConfigManagerHtml(context: vscode.ExtensionContext): string {
     } catch (err) {
         log(`Warning: Could not load external HTML: ${err}`);
     }
-    
-    // Fallback: external HTML file missing
     return '<html><body><p>Configuration panel unavailable. Please reinstall the extension.</p></body></html>';
 }
 
 export function deactivate(): void {
-    // Clean up any pending credential files on extension deactivation
     cleanupAllCredentialFiles();
     log('OpenGrok MCP extension deactivated');
 }
