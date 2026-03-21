@@ -113,6 +113,18 @@ async function main() {
     // bundled (not external) so they work inside a VSIX where node_modules is absent.
     // The emscripten module resolves the WASM via __dirname at runtime, so we
     // explicitly copy emscripten-module.wasm to out/server/ after the build.
+    //
+    // FIX: The @jitl ESM emscripten loader uses `import.meta.url` to call
+    // createRequire(import.meta.url) and resolve the WASM path. esbuild bundles
+    // to CJS, making import.meta.url === undefined and crashing the worker.
+    // We shim it with a CJS-compatible file URL derived from __filename.
+    define: {
+      ...sharedOptions.define,
+      'import.meta.url': 'importMetaUrl',
+    },
+    banner: {
+      js: 'var importMetaUrl = require("url").pathToFileURL(__filename).href;',
+    },
   });
 
   if (watch) {
