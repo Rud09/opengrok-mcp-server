@@ -2,7 +2,7 @@
  * Comprehensive tests for server.ts — createServer, dispatchTool, handlers.
  * Uses a fully mocked OpenGrokClient to test all 14 tool handlers + error paths.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createServer,
   _capResponse as capResponse,
@@ -10,6 +10,8 @@ import {
   _resolveFileFromIndex as resolveFileFromIndex,
   _applyDefaultProject as applyDefaultProject,
 } from '../server/server.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Config } from '../server/config.js';
 import type { CompileInfo } from '../server/local/compile-info.js';
 
@@ -203,4 +205,138 @@ describe('createServer', () => {
   // a simulated approach by calling the tool directly through MCP client.
   // Since we can't easily call the handler directly, we'll test via
   // the exported utility functions and mock-based integration in server-dispatch.test.ts
+});
+
+// -----------------------------------------------------------------------
+// opengrok_get_symbol_context — format handling via registerTool handler
+// -----------------------------------------------------------------------
+
+function makeFullConfig(overrides: Partial<Config> = {}): Config {
+  return {
+    OPENGROK_BASE_URL: 'https://example.com/source/',
+    OPENGROK_USERNAME: '',
+    OPENGROK_PASSWORD: '',
+    OPENGROK_PASSWORD_FILE: '',
+    OPENGROK_PASSWORD_KEY: '',
+    OPENGROK_VERIFY_SSL: true,
+    OPENGROK_TIMEOUT: 30,
+    OPENGROK_DEFAULT_MAX_RESULTS: 25,
+    OPENGROK_CACHE_ENABLED: false,
+    OPENGROK_CACHE_SEARCH_TTL: 300,
+    OPENGROK_CACHE_FILE_TTL: 600,
+    OPENGROK_CACHE_HISTORY_TTL: 1800,
+    OPENGROK_CACHE_PROJECTS_TTL: 3600,
+    OPENGROK_CACHE_MAX_SIZE: 500,
+    OPENGROK_CACHE_MAX_BYTES: 52428800,
+    OPENGROK_RATELIMIT_ENABLED: false,
+    OPENGROK_RATELIMIT_RPM: 60,
+    HTTP_PROXY: '',
+    HTTPS_PROXY: '',
+    OPENGROK_LOCAL_COMPILE_DB_PATHS: '',
+    OPENGROK_DEFAULT_PROJECT: 'release-2.x',
+    OPENGROK_CONTEXT_BUDGET: 'standard',
+    OPENGROK_CODE_MODE: false,
+    OPENGROK_MEMORY_BANK_DIR: '',
+    OPENGROK_RESPONSE_FORMAT_OVERRIDE: '',
+    ...overrides,
+  } as Config;
+}
+
+function makeSymbolMockClient() {
+  const client = {
+    search: vi.fn(),
+    suggest: vi.fn(),
+    getFileContent: vi.fn(),
+    getFileHistory: vi.fn(),
+    browseDirectory: vi.fn(),
+    listProjects: vi.fn(),
+    getAnnotate: vi.fn(),
+    getFileSymbols: vi.fn(),
+    testConnection: vi.fn(),
+    close: vi.fn(),
+  };
+
+  // def search returns one match (include_header: false → only two search calls: defs + refs)
+  client.search.mockResolvedValueOnce({
+    query: 'MyFunc',
+    searchType: 'defs',
+    totalCount: 1,
+    timeMs: 5,
+    results: [{
+      project: 'proj',
+      path: '/src/foo.cpp',
+      matches: [{ lineNumber: 42, lineContent: 'void MyFunc() {}' }],
+    }],
+    startIndex: 0,
+    endIndex: 1,
+  });
+  // refs search
+  client.search.mockResolvedValueOnce({
+    query: 'MyFunc',
+    searchType: 'refs',
+    totalCount: 0,
+    timeMs: 2,
+    results: [],
+    startIndex: 0,
+    endIndex: 0,
+  });
+  // file content
+  client.getFileContent.mockResolvedValue({
+    project: 'proj',
+    path: '/src/foo.cpp',
+    content: 'void MyFunc() {}\n',
+    lineCount: 1,
+    sizeBytes: 17,
+  });
+  // file symbols
+  client.getFileSymbols.mockResolvedValue({
+    project: 'proj',
+    path: '/src/foo.cpp',
+    symbols: [],
+  });
+
+  return client;
+}
+
+async function createStandardClient(overrides: Partial<Config> = {}) {
+  const ogClient = makeSymbolMockClient();
+  const config = makeFullConfig(overrides);
+  const server = createServer(ogClient as never, config);
+
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+
+  const mcpClient = new Client({ name: 'test-client', version: '1.0' });
+  await mcpClient.connect(clientTransport);
+  return { mcpClient, ogClient };
+}
+
+describe('opengrok_get_symbol_context — format handling', () => {
+  afterEach(() => {
+    delete process.env.OPENGROK_RESPONSE_FORMAT_OVERRIDE;
+  });
+
+  it('returns parseable JSON when response_format is json', async () => {
+    const { mcpClient } = await createStandardClient();
+    const result = await mcpClient.callTool({
+      name: 'opengrok_get_symbol_context',
+      arguments: { symbol: 'MyFunc', response_format: 'json', include_header: false },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    const parsed = JSON.parse(text);
+    expect(parsed).toHaveProperty('found');
+  });
+
+  it('returns non-JSON YAML-style text when response_format is auto', async () => {
+    const { mcpClient } = await createStandardClient();
+    const result = await mcpClient.callTool({
+      name: 'opengrok_get_symbol_context',
+      arguments: { symbol: 'MyFunc', response_format: 'auto', include_header: false },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    // YAML output should not be a JSON object/array
+    expect(() => JSON.parse(text)).toThrow();
+    // YAML should contain the symbol name
+    expect(text).toContain('MyFunc');
+  });
 });

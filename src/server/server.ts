@@ -1363,23 +1363,27 @@ function registerLegacyTools(
     },
     async (args) => {
       try {
-        const format = args.response_format ?? "auto";
+        const format = (args.response_format ?? "auto") as ResponseFormat;
         const { text, structured } = await handleGetSymbolContextStructured(
           args as unknown as Record<string, unknown>,
           client,
           config
         );
-        // Use YAML for symbol context when format is auto or yaml
-        const effectiveFmt = selectFormat("symbol", format as ResponseFormat);
-        const displayText = effectiveFmt === "yaml"
-          ? formatSymbolContextYAML(structured as unknown as import("./formatters.js").SymbolContextResult)
-          : text;
-        return formatResponse(
-          displayText,
-          structured as unknown as Record<string, unknown>,
-          format as ResponseFormat,
-          "symbol"
-        );
+        const effectiveFmt = selectFormat("symbol", format);
+        let displayText: string;
+        if (effectiveFmt === "json") {
+          displayText = capResponse(JSON.stringify(structured, null, 2));
+        } else if (effectiveFmt === "yaml") {
+          displayText = capResponse(
+            formatSymbolContextYAML(structured as unknown as SymbolContextResult)
+          );
+        } else {
+          displayText = capResponse(text);
+        }
+        return {
+          content: [{ type: "text", text: displayText }],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_get_symbol_context", err);
       }
