@@ -158,7 +158,7 @@ APPROACH 2: CODE MODE (For complex, multi-step investigations)
 - Example: \`return env.opengrok.batchSearch([{query:"Foo",searchType:"defs"}])[0].results[0].path\`
 
 SESSION MEMORY (Living Document):
-- On session start: call opengrok_list_memory_files(), then read AGENTS.md and active-context.md.
+- On session start: call opengrok_read_memory() for AGENTS.md, then active-context.md.
 - During investigation: append findings to investigation-log.md using opengrok_write_memory().
 - On session end: update symbol-index.md with new symbols, update active-context.md.
 `.trim();
@@ -1552,5 +1552,6 @@ export {
   readFileAtAbsPath as _readFileAtAbsPath,
   applyDefaultProject as _applyDefaultProject,
   dispatchTool as _dispatchTool,
+  SERVER_INSTRUCTIONS as _SERVER_INSTRUCTIONS,
 };
 export type { LocalLayer as _LocalLayer };

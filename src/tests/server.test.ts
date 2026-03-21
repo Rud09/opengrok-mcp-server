@@ -3,6 +3,7 @@ import {
   _capResponse as capResponse,
   _sanitizeErrorMessage as sanitizeErrorMessage,
   _resolveFileFromIndex as resolveFileFromIndex,
+  _SERVER_INSTRUCTIONS,
 } from '../server/server.js';
 import type { CompileInfo } from '../server/local/compile-info.js';
 
@@ -168,5 +169,19 @@ describe('capResponse edge cases', () => {
   it('preserves single-line text under limit', () => {
     const text = 'no newlines here';
     expect(capResponse(text)).toBe(text);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SERVER_INSTRUCTIONS
+// ---------------------------------------------------------------------------
+
+describe('SERVER_INSTRUCTIONS', () => {
+  it('does not reference non-existent opengrok_list_memory_files tool', () => {
+    expect(_SERVER_INSTRUCTIONS).not.toContain('opengrok_list_memory_files');
+  });
+
+  it('references opengrok_read_memory for session start guidance', () => {
+    expect(_SERVER_INSTRUCTIONS).toContain('opengrok_read_memory');
   });
 });
