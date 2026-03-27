@@ -33,12 +33,45 @@ import type { MemoryBank } from "./memory-bank.js";
 import type { HealthAPIResult } from "./api-types.js";
 import { buildFileOverview, buildCallChain } from "./intelligence.js";
 import { logger } from "./logger.js";
+import { auditLog } from "./audit.js";
 
 // ---------------------------------------------------------------------------
 // Buffer layout constants (must match sandbox-worker.ts)
 // ---------------------------------------------------------------------------
 
 const SHARED_BUFFER_SIZE = 20 + 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// sanitizeSandboxError — strips sensitive data from error messages
+// ---------------------------------------------------------------------------
+
+/**
+ * Sanitize an error from the sandbox before returning it to the LLM caller.
+ * Strips absolute paths, stack traces, and Node.js internal references.
+ * Truncates to 500 chars maximum.
+ */
+export function sanitizeSandboxError(err: unknown): string {
+  let message: string;
+  if (typeof err === "string") {
+    message = err;
+  } else if (err instanceof Error) {
+    message = err.message;
+  } else if (err !== null && err !== undefined && typeof (err as Record<string, unknown>).message === "string") {
+    message = (err as Record<string, unknown>).message as string;
+  } else {
+    message = "Unknown sandbox error";
+  }
+  // Strip stack trace lines
+  message = message.split("\n").filter((line) => !/^\s+at\s/.test(line)).join("\n").trim();
+  // Strip Node.js internal module paths
+  message = message.replace(/\bnode:internal\/\S+/g, "<node-internal>");
+  // Strip absolute filesystem paths (Unix and Windows)
+  message = message.replace(/\/(?:home|tmp|var|usr|build|opt|mnt|srv|root|Users|private)(?:\/\S+)/g, "<path>");
+  message = message.replace(/[A-Z]:\\(?:Users|Windows|Program Files|build)(?:\\\S+)/gi, "<path>");
+  // Collapse excess blank lines
+  message = message.replace(/\n{3,}/g, "\n\n").trim();
+  return message.slice(0, 500);
+}
 
 // ---------------------------------------------------------------------------
 // API_SPEC — the auto-generated documentation exposed by opengrok_api
@@ -490,6 +523,8 @@ export async function executeInSandbox(
   return new Promise<string>((resolve) => {
     _resolve = resolve;
 
+    auditLog({ type: "sandbox_exec", detail: "executing user JS in QuickJS sandbox" });
+
     // Hard timeout — terminates worker unconditionally at 10 s
     // (covers cases where worker is blocked in Atomics.wait during a slow API call)
     const hardTimeoutId = setTimeout(() => {
@@ -526,7 +561,7 @@ export async function executeInSandbox(
           return;
         }
         logger.error("Sandbox execution error:", `${name}: ${message}`);
-        safeResolve(`Error: ${message ?? "Unknown sandbox error"}`);
+        safeResolve(`Error: ${sanitizeSandboxError(message)}`);
         return;
       }
 
@@ -545,7 +580,7 @@ export async function executeInSandbox(
       cleanup();
       clearTimeout(hardTimeoutId);
       logger.error("Sandbox worker error:", err);
-      safeResolve(`Error: ${err.message ?? "Worker error"}`);
+      safeResolve(`Error: ${sanitizeSandboxError(err)}`);
     }
 
     function onExit(code: number): void {

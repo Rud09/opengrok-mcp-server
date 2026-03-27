@@ -396,6 +396,62 @@ export function formatAnnotate(
 }
 
 // ---------------------------------------------------------------------------
+// Blame â markdown table format, optional line range
+// ---------------------------------------------------------------------------
+
+export function formatBlame(
+  annotate: AnnotatedFile,
+  lineStart?: number,
+  lineEnd?: number,
+  includeDiff?: boolean
+): string {
+  const lines: string[] = [];
+  const rangeLabel =
+    lineStart !== undefined || lineEnd !== undefined
+      ? ` (lines ${lineStart ?? 1}â${lineEnd ?? annotate.lines.length})`
+      : "";
+  lines.push(`# Blame: ${annotate.path}${rangeLabel}`);
+
+  if (!annotate.lines.length) {
+    lines.push("\nNo annotations found.");
+    return lines.join("\n");
+  }
+
+  let displayLines = annotate.lines;
+  if (lineStart !== undefined || lineEnd !== undefined) {
+    /* v8 ignore start -- coverage misreports ?? for undefined */
+    const s = lineStart ?? 1;
+    const e = lineEnd ?? Infinity;
+    /* v8 ignore stop */
+    displayLines = annotate.lines.filter(
+      (l) => l.lineNumber >= s && l.lineNumber <= e
+    );
+  }
+
+  if (!displayLines.length) {
+    lines.push("\nNo lines in specified range.");
+    return lines.join("\n");
+  }
+
+  if (includeDiff) {
+    lines.push("\n*Note: commit diff summaries are not available via the annotation endpoint.*");
+  }
+
+  lines.push("");
+  lines.push("| Line | Commit | Author | Date | Content |");
+  lines.push("|------|--------|--------|------|---------|");
+  for (const line of displayLines) {
+    const commit = line.revision ? line.revision.slice(0, 7) : "unknown";
+    const author = line.author ?? "";
+    const date = line.date ?? "";
+    const content = line.content.trimEnd().replace(/\|/g, "\\|");
+    lines.push(`| ${line.lineNumber} | ${commit} | ${author} | ${date} | ${content} |`);
+  }
+
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // What changed — recent lines grouped by commit
 // ---------------------------------------------------------------------------
 

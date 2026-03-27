@@ -75,7 +75,7 @@ import type {
   SearchResults,
   Project,
 } from "./models.js";
-import { BUDGET_LIMITS } from "./config.js";
+import { BUDGET_LIMITS, parsePerToolLimits } from "./config.js";
 import type { ContextBudget } from "./config.js";
 import type { ResponseFormat } from "./formatters.js";
 import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
@@ -85,6 +85,7 @@ import { SandboxWorkerPool } from "./worker-pool.js";
 import yaml from "js-yaml";
 
 import { logger } from "./logger.js";
+import { auditLog } from "./audit.js";
 
 // ---------------------------------------------------------------------------
 // Response size caps
@@ -1091,6 +1092,63 @@ async function dispatchTool(
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
+// Per-tool rate limiter
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-tool rate limiter using token bucket algorithm.
+ * Prevents any single tool from monopolizing the connection.
+ * Applies per-tool limits on top of the global client rate limit.
+ */
+class ToolRateLimiter {
+  private readonly buckets = new Map<string, { tokens: number; lastRefill: number }>();
+  private readonly limits: Map<string, number>; // tool name → calls per minute
+  private readonly defaultLimit: number;
+
+  constructor(limits: Record<string, number>, defaultLimit: number = 60) {
+    this.limits = new Map(Object.entries(limits));
+    this.defaultLimit = defaultLimit;
+  }
+
+  /**
+   * Acquire a token for the given tool name.
+   * Returns immediately if a token is available, otherwise waits.
+   */
+  async acquire(toolName: string): Promise<void> {
+    return new Promise((resolve) => {
+      const checkToken = (): void => {
+        const limit = this.limits.get(toolName) ?? this.defaultLimit;
+        const interval = 60000 / limit; // ms per token
+        const now = Date.now();
+
+        let bucket = this.buckets.get(toolName);
+        if (!bucket) {
+          bucket = { tokens: limit, lastRefill: now };
+          this.buckets.set(toolName, bucket);
+        }
+
+        // Refill tokens based on elapsed time
+        const elapsed = now - bucket.lastRefill;
+        const tokensToAdd = (elapsed / interval) * 1;
+        bucket.tokens = Math.min(limit, bucket.tokens + tokensToAdd);
+        bucket.lastRefill = now;
+
+        if (bucket.tokens >= 1) {
+          bucket.tokens -= 1;
+          resolve();
+        } else {
+          // Wait for next token to be available, then try again
+          const waitMs = Math.max(10, (1 - bucket.tokens) * interval);
+          setTimeout(checkToken, waitMs);
+        }
+      };
+
+      checkToken();
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Server factory — McpServer with per-tool registrations
 // ---------------------------------------------------------------------------
 
@@ -1108,12 +1166,16 @@ export function createServer(
 
   const local = buildLocalLayer(config);
 
+  // Initialize per-tool rate limiter
+  const perToolLimits = parsePerToolLimits(config.OPENGROK_PER_TOOL_RATELIMIT);
+  const toolRateLimiter = new ToolRateLimiter(perToolLimits);
+
   // Always register legacy tools — useful for simple lookups
-  registerLegacyTools(server, client, config, local, codeMode, memoryBank);
+  registerLegacyTools(server, client, config, local, codeMode, memoryBank, toolRateLimiter);
 
   // Also register Code Mode tools when enabled — LLM chooses best approach
   if (codeMode && memoryBank) {
-    registerCodeModeTools(server, client, config, memoryBank, local);
+    registerCodeModeTools(server, client, config, memoryBank, local, toolRateLimiter);
   }
 
   return server;
@@ -1138,6 +1200,7 @@ function registerMemoryTools(
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
     async () => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_memory_status" });
       try {
         const lines: string[] = ["# OpenGrok Memory Status"];
         for (const filename of ALLOWED_FILES) {
@@ -1175,6 +1238,7 @@ function registerMemoryTools(
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_read_memory" });
       try {
         const content = await memoryBank.read(args.filename);
         if (!content) {
@@ -1203,6 +1267,7 @@ function registerMemoryTools(
       annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: false, destructiveHint: false },
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_update_memory" });
       try {
         await memoryBank.write(args.filename, args.content, args.mode);
         return { content: [{ type: "text", text: `Written to ${args.filename}` }] };
@@ -1226,7 +1291,8 @@ function registerCodeModeTools(
   client: OpenGrokClient,
   config: Config,
   memoryBank: MemoryBank,
-  local: LocalLayer
+  local: LocalLayer,
+  toolRateLimiter: ToolRateLimiter
 ): void {
   // Per-session masker (created once per server, tracks all turns)
   const masker = new ObservationMasker();
@@ -1290,6 +1356,7 @@ function registerCodeModeTools(
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
     async () => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_api" });
       try {
         const specText = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
         return { content: [{ type: "text", text: capResponse(specText) }] };
@@ -1317,6 +1384,8 @@ function registerCodeModeTools(
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false, destructiveHint: false },
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_execute" });
+      if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_execute");
       const currentTurn = ++turn;
       try {
         const budget = BUDGET_LIMITS[getActiveBudget()];
@@ -1371,7 +1440,8 @@ function registerLegacyTools(
   config: Config,
   local: LocalLayer,
   codeMode: boolean,
-  memoryBank?: MemoryBank
+  memoryBank?: MemoryBank,
+  toolRateLimiter?: ToolRateLimiter
 ): void {
   const desc = (full: string, compact: string): string => codeMode ? compact : full;
   server.registerTool(
@@ -1387,6 +1457,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_search_code" });
       try {
         const format = args.response_format ?? "auto";
         const { text, structured } = await executeSearchCode(args, client, config);
@@ -1413,6 +1484,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_find_file" });
       try {
         const results = await client.search(
           args.path_pattern,
@@ -1442,6 +1514,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_search_pattern" });
       try {
         const parsed = SearchPatternArgs.parse(args);
         const results = await client.searchPattern({
@@ -1472,6 +1545,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_file_content" });
       try {
         const format = args.response_format ?? "auto";
         const { text, structured } = await executeGetFileContent(args, client, local);
@@ -1491,6 +1565,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_file_history" });
       try {
         const history = await client.getFileHistory(
           args.project,
@@ -1513,6 +1588,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_browse_directory" });
       try {
         const entries = await client.browseDirectory(args.project, args.path);
         return {
@@ -1539,6 +1615,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_list_projects" });
       try {
         const format = args.response_format ?? "auto";
         const { text, structured } = await executeListProjects(args, client);
@@ -1561,6 +1638,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_file_annotate" });
       try {
         const annotated = await client.getAnnotate(args.project, args.path);
         return {
@@ -1586,6 +1664,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_search_suggest" });
       try {
         const result = await client.suggest(args.query, args.project, args.field);
         let text: string;
@@ -1624,6 +1703,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_batch_search" });
       try {
         const format = args.response_format ?? "auto";
         const { text, structured } = await executeBatchSearch(args, client, config);
@@ -1648,6 +1728,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_search_and_read" });
       try {
         const text = await handleSearchAndRead(
           args as unknown as Record<string, unknown>,
@@ -1678,6 +1759,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_symbol_context" });
       try {
         const format = (args.response_format ?? "auto") as ResponseFormat;
         const { text, structured } = await handleGetSymbolContextStructured(
@@ -1715,17 +1797,29 @@ function registerLegacyTools(
         "(fallback) server connectivity and index status"
       ),
       inputSchema: IndexHealthArgs.shape,
+      outputSchema: {
+        connected: z.boolean().describe("Whether the OpenGrok server is reachable"),
+        latencyMs: z.number().optional().describe("Round-trip latency in milliseconds (present when connected)"),
+        message: z.string().describe("Human-readable status message"),
+      },
       annotations: READ_ONLY_OPEN,
     },
     async () => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_index_health" });
       try {
         const start = Date.now();
         const ok = await client.testConnection();
         const latencyMs = Date.now() - start;
-        const text = ok
+        const message = ok
           ? `OpenGrok: connected (${latencyMs}ms latency)`
           : "OpenGrok: connection failed";
-        return { content: [{ type: "text", text }] };
+        const structuredContent = ok
+          ? { connected: true, latencyMs, message }
+          : { connected: false, message };
+        return {
+          content: [{ type: "text", text: message }],
+          structuredContent,
+        };
       } catch (err) {
         return makeToolError("opengrok_index_health", err);
       }
@@ -1748,6 +1842,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_LOCAL,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_compile_info" });
       try {
         const text = await handleGetCompileInfo(
           args as unknown as Record<string, unknown>,
@@ -1777,6 +1872,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_file_symbols" });
       try {
         const result = await client.getFileSymbols(args.project, args.path);
         if (!result.symbols.length) {
@@ -1811,6 +1907,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_what_changed" });
       try {
         const parsed = WhatChangedArgs.parse(args);
         const [history, annotation] = await Promise.all([
@@ -1840,6 +1937,8 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_dependency_map" });
+      if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_dependency_map");
       try {
         const parsed = DependencyMapArgs.parse(args);
         const nodes = await buildDependencyGraph(client, parsed.project, parsed.path, parsed.depth, parsed.direction);

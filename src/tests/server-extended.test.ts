@@ -566,3 +566,89 @@ describe('opengrok_dependency_map — tool registration and call', () => {
     expect(text).toContain('Error');
   });
 });
+
+// -----------------------------------------------------------------------
+// opengrok_blame — registered tool + call via MCP protocol
+// -----------------------------------------------------------------------
+
+describe('opengrok_blame — tool registration and call', () => {
+  const sampleAnnotated = {
+    project: 'proj',
+    path: 'src/EventLoop.cpp',
+    lines: [
+      { lineNumber: 1, revision: 'abc12345', author: 'alice', date: '2024-01-15', content: 'void EventLoop::run() {' },
+      { lineNumber: 2, revision: 'abc12345', author: 'alice', date: '2024-01-15', content: '  while (running_) {' },
+      { lineNumber: 3, revision: 'def67890', author: 'bob',   date: '2024-02-20', content: '    process();' },
+      { lineNumber: 4, revision: 'def67890', author: 'bob',   date: '2024-02-20', content: '  }' },
+      { lineNumber: 5, revision: 'abc12345', author: 'alice', date: '2024-01-15', content: '}' },
+    ],
+  };
+
+  it('is registered as a tool', async () => {
+    const { mcpClient } = await createStandardClient();
+    const { tools } = await mcpClient.listTools();
+    const names = tools.map((t) => t.name);
+    expect(names).toContain('opengrok_blame');
+  });
+
+  it('calls getAnnotate with correct project and path', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp' },
+    });
+    expect(ogClient.getAnnotate).toHaveBeenCalledWith('proj', 'src/EventLoop.cpp');
+  });
+
+  it('returns full markdown table for all lines when no range given', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp' },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('# Blame:');
+    expect(text).toContain('| Line | Commit | Author | Date | Content |');
+    expect(text).toContain('alice');
+    expect(text).toContain('bob');
+    expect(text).toContain('abc1234');
+  });
+
+  it('filters to line range when line_start and line_end are provided', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', line_start: 3, line_end: 4 },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('lines 3');
+    expect(text).toContain('bob');
+    expect(text).not.toContain('alice');
+  });
+
+  it('returns error result when getAnnotate throws', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockRejectedValue(new Error('server unavailable'));
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp' },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('Error');
+  });
+
+  it('includes diff note when include_diff is true', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', include_diff: true },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('diff');
+  });
+});

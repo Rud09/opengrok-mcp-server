@@ -100,9 +100,36 @@ const ConfigSchema = z.object({
   OPENGROK_RESPONSE_FORMAT_OVERRIDE: z.string().default(""),
   // Prompt caching hints (reserved for future explicit cache-control headers)
   OPENGROK_ENABLE_CACHE_HINTS: z.coerce.boolean().default(false),
+  // Per-tool rate limiting (comma-separated tool=rpm pairs, e.g. "opengrok_batch_search=5,opengrok_execute=10")
+  OPENGROK_PER_TOOL_RATELIMIT: z.string().default(""),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+// Per-tool rate limit defaults (calls per minute)
+export const DEFAULT_PER_TOOL_LIMITS: Record<string, number> = {
+  opengrok_batch_search: 5,    // expensive operation
+  opengrok_execute: 10,        // Code Mode sandbox overhead
+  opengrok_dependency_map: 10, // BFS = multiple requests
+};
+
+// Parse per-tool rate limit config from environment string
+export function parsePerToolLimits(configStr: string): Record<string, number> {
+  const limits = { ...DEFAULT_PER_TOOL_LIMITS };
+  if (!configStr || !configStr.trim()) return limits;
+
+  for (const pair of configStr.split(",")) {
+    const [tool, rpm] = pair.trim().split("=");
+    if (tool && rpm) {
+      const parsed = parseInt(rpm, 10);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        limits[tool] = parsed;
+      }
+    }
+  }
+
+  return limits;
+}
 
 // ---------------------------------------------------------------------------
 // Loader
