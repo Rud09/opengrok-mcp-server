@@ -566,3 +566,272 @@ describe('opengrok_dependency_map — tool registration and call', () => {
     expect(text).toContain('Error');
   });
 });
+
+// -----------------------------------------------------------------------
+// opengrok_blame — registered tool + call via MCP protocol
+// -----------------------------------------------------------------------
+
+describe('opengrok_blame — tool registration and call', () => {
+  const sampleAnnotated = {
+    project: 'proj',
+    path: 'src/EventLoop.cpp',
+    lines: [
+      { lineNumber: 1, revision: 'abc12345', author: 'alice', date: '2024-01-15', content: 'void EventLoop::run() {' },
+      { lineNumber: 2, revision: 'abc12345', author: 'alice', date: '2024-01-15', content: '  while (running_) {' },
+      { lineNumber: 3, revision: 'def67890', author: 'bob',   date: '2024-02-20', content: '    process();' },
+      { lineNumber: 4, revision: 'def67890', author: 'bob',   date: '2024-02-20', content: '  }' },
+      { lineNumber: 5, revision: 'abc12345', author: 'alice', date: '2024-01-15', content: '}' },
+    ],
+  };
+
+  it('is registered as a tool', async () => {
+    const { mcpClient } = await createStandardClient();
+    const { tools } = await mcpClient.listTools();
+    const names = tools.map((t) => t.name);
+    expect(names).toContain('opengrok_blame');
+  });
+
+  it('calls getAnnotate with correct project and path', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp' },
+    });
+    expect(ogClient.getAnnotate).toHaveBeenCalledWith('proj', 'src/EventLoop.cpp');
+  });
+
+  it('returns full markdown table for all lines when no range given', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp' },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('# Blame:');
+    expect(text).toContain('| Line | Commit | Author | Date | Content |');
+    expect(text).toContain('alice');
+    expect(text).toContain('bob');
+    expect(text).toContain('abc1234');
+  });
+
+  it('filters to line range when line_start and line_end are provided', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', line_start: 3, line_end: 4 },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('lines 3–4');
+    expect(text).toContain('bob');
+    expect(text).not.toContain('alice');
+  });
+
+  it('returns error result when getAnnotate throws', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockRejectedValue(new Error('server unavailable'));
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp' },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('Error');
+  });
+
+  it('includes diff note when include_diff is true', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', include_diff: true },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('diff');
+  });
+});
+
+// -----------------------------------------------------------------------
+// Task 4.2 / 4.3 — outputSchema + _meta + resource links
+// -----------------------------------------------------------------------
+
+describe('opengrok_get_file_history — outputSchema + _meta + resource link', () => {
+  it('returns structuredContent with _meta and entries', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getFileHistory.mockResolvedValue({
+      project: 'proj',
+      path: '/src/EventLoop.cpp',
+      entries: [
+        { revision: 'abc12345', author: 'Alice', date: '2025-01-01', message: 'initial commit' },
+      ],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_get_file_history',
+      arguments: { project: 'proj', path: '/src/EventLoop.cpp' },
+    });
+    const sc = result.structuredContent as Record<string, unknown> | undefined;
+    expect(sc).toBeDefined();
+    const meta = (sc as Record<string, unknown>)._meta as Record<string, unknown>;
+    expect(meta).toBeDefined();
+    expect(meta.tool).toBe('opengrok_get_file_history');
+    expect(meta.project).toBe('proj');
+    expect(meta.path).toBe('/src/EventLoop.cpp');
+    expect(typeof meta.fetchedAt).toBe('string');
+    expect(typeof meta.version).toBe('string');
+    const entries = (sc as Record<string, unknown>).entries as unknown[];
+    expect(Array.isArray(entries)).toBe(true);
+    expect(entries).toHaveLength(1);
+    const entry = entries[0] as Record<string, unknown>;
+    expect(entry.revision).toBe('abc12345');
+    expect(entry.author).toBe('Alice');
+  });
+
+  it('includes resource_link content item', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getFileHistory.mockResolvedValue({
+      project: 'proj',
+      path: '/src/EventLoop.cpp',
+      entries: [],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_get_file_history',
+      arguments: { project: 'proj', path: '/src/EventLoop.cpp' },
+    });
+    const contentItems = result.content as { type: string }[];
+    const resourceLink = contentItems.find((item) => item.type === 'resource_link');
+    expect(resourceLink).toBeDefined();
+    expect((resourceLink as { uri: string }).uri).toContain('/src/EventLoop.cpp');
+  });
+});
+
+describe('opengrok_get_file_symbols — outputSchema + _meta + resource link', () => {
+  it('returns structuredContent with _meta and symbols', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getFileSymbols.mockResolvedValue({
+      project: 'proj',
+      path: '/src/Foo.cpp',
+      symbols: [
+        { symbol: 'doSomething', type: 'function', signature: null, line: 10, lineStart: 10, lineEnd: 20, namespace: null },
+      ],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_get_file_symbols',
+      arguments: { project: 'proj', path: '/src/Foo.cpp' },
+    });
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc).toBeDefined();
+    const meta = sc._meta as Record<string, unknown>;
+    expect(meta.tool).toBe('opengrok_get_file_symbols');
+    expect(meta.project).toBe('proj');
+    const symbols = sc.symbols as unknown[];
+    expect(Array.isArray(symbols)).toBe(true);
+    expect(symbols).toHaveLength(1);
+    const sym = symbols[0] as Record<string, unknown>;
+    expect(sym.name).toBe('doSomething');
+    expect(sym.type).toBe('function');
+    expect(sym.line).toBe(10);
+  });
+
+  it('includes resource_link when symbols are found', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getFileSymbols.mockResolvedValue({
+      project: 'proj',
+      path: '/src/Foo.cpp',
+      symbols: [
+        { symbol: 'bar', type: 'function', signature: null, line: 5, lineStart: 5, lineEnd: 10, namespace: null },
+      ],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_get_file_symbols',
+      arguments: { project: 'proj', path: '/src/Foo.cpp' },
+    });
+    const contentItems = result.content as { type: string }[];
+    const resourceLink = contentItems.find((item) => item.type === 'resource_link');
+    expect(resourceLink).toBeDefined();
+    expect((resourceLink as { uri: string }).uri).toContain('/src/Foo.cpp');
+  });
+
+  it('returns structuredContent with empty symbols when none found', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getFileSymbols.mockResolvedValue({
+      project: 'proj',
+      path: '/src/Empty.cpp',
+      symbols: [],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_get_file_symbols',
+      arguments: { project: 'proj', path: '/src/Empty.cpp' },
+    });
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc).toBeDefined();
+    expect((sc._meta as Record<string, unknown>).tool).toBe('opengrok_get_file_symbols');
+    expect((sc.symbols as unknown[])).toHaveLength(0);
+  });
+});
+
+describe('opengrok_what_changed — outputSchema + _meta', () => {
+  it('returns structuredContent with _meta and changes', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    const recentDate = new Date();
+    recentDate.setDate(recentDate.getDate() - 1);
+    const recentDateStr = recentDate.toISOString().slice(0, 10);
+    ogClient.getFileHistory.mockResolvedValue({
+      project: 'proj',
+      path: 'src/EventLoop.cpp',
+      entries: [{ revision: 'abc12345', author: 'Alice', date: recentDateStr, message: 'fix bug' }],
+    });
+    ogClient.getAnnotate.mockResolvedValue({
+      project: 'proj',
+      path: 'src/EventLoop.cpp',
+      lines: [
+        { lineNumber: 10, revision: 'abc12345', author: 'Alice', date: recentDateStr, content: 'code' },
+        { lineNumber: 11, revision: 'abc12345', author: 'Alice', date: recentDateStr, content: 'more' },
+      ],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_what_changed',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', since_days: 7 },
+    });
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc).toBeDefined();
+    const meta = sc._meta as Record<string, unknown>;
+    expect(meta.tool).toBe('opengrok_what_changed');
+    expect(meta.project).toBe('proj');
+    expect(meta.path).toBe('src/EventLoop.cpp');
+    expect(typeof meta.fetchedAt).toBe('string');
+    const changes = sc.changes as unknown[];
+    expect(Array.isArray(changes)).toBe(true);
+    expect(changes).toHaveLength(1);
+    const change = changes[0] as Record<string, unknown>;
+    expect(change.commit).toBe('abc12345');
+    expect(change.author).toBe('Alice');
+    expect(Array.isArray(change.lines)).toBe(true);
+    expect(change.lines).toContain(10);
+    expect(change.lines).toContain(11);
+  });
+});
+
+describe('opengrok_dependency_map — outputSchema + _meta', () => {
+  it('returns structuredContent with _meta and nodes', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    // dependency_map uses search internally via buildDependencyGraph
+    ogClient.search.mockResolvedValue({
+      query: '', searchType: 'refs', totalCount: 0, timeMs: 1,
+      results: [], startIndex: 0, endIndex: 0,
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_dependency_map',
+      arguments: { project: 'proj', path: '/src/EventLoop.h', depth: 1, direction: 'both' },
+    });
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc).toBeDefined();
+    const meta = sc._meta as Record<string, unknown>;
+    expect(meta.tool).toBe('opengrok_dependency_map');
+    expect(meta.project).toBe('proj');
+    expect(meta.path).toBe('/src/EventLoop.h');
+    expect(typeof meta.fetchedAt).toBe('string');
+    expect(Array.isArray(sc.nodes)).toBe(true);
+  });
+});

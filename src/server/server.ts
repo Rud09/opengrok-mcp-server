@@ -14,10 +14,12 @@ import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
 import type { Config } from "./config.js";
+import { parsePerToolLimits, parseAllowedClientIds, getConfigDirectory, checkCredentialAge, loadConfig } from "./config.js";
 import {
   formatAnnotate,
   formatBatchSearchResults,
   formatBatchSearchResultsTSV,
+  formatBlame,
   formatCompileInfo,
   formatDirectoryListing,
   formatFileContent,
@@ -48,6 +50,7 @@ import {
 } from "./local/compile-info.js";
 import {
   BatchSearchArgs,
+  BlameArgs,
   BrowseDirectoryArgs,
   GetCompileInfoArgs,
   GetFileAnnotateArgs,
@@ -69,6 +72,11 @@ import {
   ProjectsListOutput,
   BatchSearchOutput,
   SymbolContextOutput,
+  FileHistoryOutput,
+  FileSymbolsOutput,
+  WhatChangedOutput,
+  DependencyMapOutput,
+  BlameOutput,
 } from "./models.js";
 import type {
   FileContent,
@@ -82,9 +90,13 @@ import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
 import { ObservationMasker } from "./observation-masker.js";
 import { createSandboxAPI, executeInSandbox, API_SPEC } from "./sandbox.js";
 import { SandboxWorkerPool } from "./worker-pool.js";
+import * as taskRegistry from "./task-registry.js";
 import yaml from "js-yaml";
 
 import { logger } from "./logger.js";
+import { auditLog } from "./audit.js";
+import { elicitOrFallback } from "./elicitation.js";
+import { sampleOrNull } from "./sampling.js";
 
 // ---------------------------------------------------------------------------
 // Response size caps
@@ -217,9 +229,6 @@ You MUST do both of these before responding to the user:
 
 Memory files: active-task.md (current task) | investigation-log.md (findings log)
 `.trim();
-
-
-
 
 // ---------------------------------------------------------------------------
 // Tool annotations
@@ -399,11 +408,32 @@ async function readFileAtAbsPath(
 // Tool result types and utilities
 // ---------------------------------------------------------------------------
 
+type ResourceLinkItem = {
+  type: "resource_link";
+  uri: string;
+  name: string;
+  mimeType?: string;
+};
+
 type ToolResult = {
   isError?: boolean;
-  content: Array<{ type: "text"; text: string }>;
+  content: Array<{ type: "text"; text: string } | ResourceLinkItem>;
   structuredContent?: Record<string, unknown>;
 };
+
+function getMimeType(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    c: "text/x-c", h: "text/x-c", cpp: "text/x-c++", cc: "text/x-c++",
+    cxx: "text/x-c++", hpp: "text/x-c++", hxx: "text/x-c++",
+    java: "text/x-java-source", py: "text/x-python", js: "text/javascript",
+    ts: "text/typescript", go: "text/x-go", rs: "text/x-rustsrc",
+    rb: "text/x-ruby", sh: "text/x-sh", xml: "text/xml",
+    json: "application/json", yaml: "text/yaml", yml: "text/yaml",
+    md: "text/markdown", txt: "text/plain",
+  };
+  return map[ext] ?? "text/plain";
+}
 
 function makeToolError(name: string, err: unknown): ToolResult {
   logger.error(`Tool "${name}" failed:`, err);
@@ -1012,7 +1042,8 @@ async function dispatchTool(
       try {
         const projects = await client.listProjects();
         indexedProjects = projects.length;
-      } catch (err) {
+      } catch {
+        // err intentionally unused
         warnings.push("Could not retrieve project list");
       }
       
@@ -1084,6 +1115,12 @@ async function dispatchTool(
       return formatDependencyMap(args.path, args.depth, nodes);
     }
 
+    case "opengrok_blame": {
+      const args = BlameArgs.parse(rawArgs);
+      const annotated = await client.getAnnotate(args.project, args.path);
+      return formatBlame(annotated, args.line_start, args.line_end, args.include_diff);
+    }
+
     default:
       return `**Error:** Unknown tool: "${name}"`;
   }
@@ -1108,13 +1145,25 @@ export function createServer(
 
   const local = buildLocalLayer(config);
 
+  // Initialize per-tool rate limiter
+  const perToolLimits = parsePerToolLimits(config.OPENGROK_PER_TOOL_RATELIMIT);
+  const toolRateLimiter = new ToolRateLimiter(perToolLimits);
+
   // Always register legacy tools — useful for simple lookups
-  registerLegacyTools(server, client, config, local, codeMode, memoryBank);
+  registerLegacyTools(server, client, config, local, codeMode, memoryBank, toolRateLimiter);
 
   // Also register Code Mode tools when enabled — LLM chooses best approach
   if (codeMode && memoryBank) {
-    registerCodeModeTools(server, client, config, memoryBank, local);
+    registerCodeModeTools(server, client, config, memoryBank, local, toolRateLimiter);
   }
+
+  // Task 4.5: Register memory files as MCP Resources
+  if (memoryBank) {
+    registerMemoryResources(server, memoryBank);
+  }
+
+  // Task 4.6: Register MCP Prompts
+  registerInvestigationPrompts(server);
 
   return server;
 }
@@ -1138,6 +1187,7 @@ function registerMemoryTools(
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
     async () => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_memory_status" });
       try {
         const lines: string[] = ["# OpenGrok Memory Status"];
         for (const filename of ALLOWED_FILES) {
@@ -1175,6 +1225,7 @@ function registerMemoryTools(
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_read_memory" });
       try {
         const content = await memoryBank.read(args.filename);
         if (!content) {
@@ -1203,6 +1254,7 @@ function registerMemoryTools(
       annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: false, destructiveHint: false },
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_update_memory" });
       try {
         await memoryBank.write(args.filename, args.content, args.mode);
         return { content: [{ type: "text", text: `Written to ${args.filename}` }] };
@@ -1226,7 +1278,8 @@ function registerCodeModeTools(
   client: OpenGrokClient,
   config: Config,
   memoryBank: MemoryBank,
-  local: LocalLayer
+  local: LocalLayer,
+  toolRateLimiter: ToolRateLimiter
 ): void {
   // Per-session masker (created once per server, tracks all turns)
   const masker = new ObservationMasker();
@@ -1290,6 +1343,7 @@ function registerCodeModeTools(
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
     async () => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_api" });
       try {
         const specText = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
         return { content: [{ type: "text", text: capResponse(specText) }] };
@@ -1317,45 +1371,120 @@ function registerCodeModeTools(
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false, destructiveHint: false },
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_execute" });
+      if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_execute");
       const currentTurn = ++turn;
-      try {
-        const budget = BUDGET_LIMITS[getActiveBudget()];
-        const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
-        const workerHandle = await workerPool.acquire();
-        let result: string;
+
+      // Create task immediately and execute asynchronously
+      const taskId = taskRegistry.createTask();
+
+      (async () => {
         try {
-          result = await executeInSandbox(
-            args.code,
-            sandboxApi,
-            (r) => capCodeModeResult(r, budget.maxResponseBytes),
-            budget.maxResponseBytes,
-            workerHandle
+          const budget = BUDGET_LIMITS[getActiveBudget()];
+          const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
+          const workerHandle = await workerPool.acquire();
+          let result: string;
+          try {
+            result = await executeInSandbox(
+              args.code,
+              sandboxApi,
+              (r) => capCodeModeResult(r, budget.maxResponseBytes),
+              budget.maxResponseBytes,
+              workerHandle
+            );
+          } finally {
+            workerPool.release(workerHandle);
+          }
+
+          // When execution fails, use MCP Sampling to get an LLM-generated explanation
+          if (result.startsWith("Error:")) {
+            const suggestion = await sampleOrNull(server, [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `The following JavaScript code failed in a sandbox:\n\`\`\`js\n${args.code}\n\`\`\`\n${result}\n\nBriefly explain what went wrong and suggest a fix.`,
+                },
+              },
+            ], { maxTokens: 256, systemPrompt: "You are a helpful code debugger. Be concise." });
+            taskRegistry.completeTask(taskId, suggestion ? `${result}\n\nSuggestion: ${suggestion}` : result);
+            return;
+          }
+
+          // Record in masker for future turns
+          masker.record(
+            currentTurn,
+            "opengrok_execute",
+            args.code.slice(0, 80).replace(/\n/g, " "),
+            result
           );
-        } finally {
-          workerPool.release(workerHandle);
+
+          const historyHeader = masker.getMaskedHistoryHeader();
+          let finalResult = historyHeader
+            ? `${historyHeader}\n---\n${result}`
+            : result;
+
+          executeCallCount++;
+          if (executeCallCount % 5 === 0 && executeCallCount > 3) {
+            finalResult += "\n\n> Memory: Update active-task.md before answering.";
+          }
+
+          taskRegistry.completeTask(taskId, finalResult);
+        } catch (err) {
+          taskRegistry.failTask(taskId, String(err));
         }
+      })();
 
-        // Record in masker for future turns
-        masker.record(
-          currentTurn,
-          "opengrok_execute",
-          args.code.slice(0, 80).replace(/\n/g, " "),
-          result
-        );
+      return {
+        content: [{ type: "text", text: `Task started. Poll with opengrok_get_task_result({ taskId: "${taskId}" })` }],
+        structuredContent: { taskId, status: "running" },
+      };
+    }
+  );
 
-        const historyHeader = masker.getMaskedHistoryHeader();
-        let finalResult = historyHeader
-          ? `${historyHeader}\n---\n${result}`
-          : result;
-
-        executeCallCount++;
-        if (executeCallCount % 5 === 0 && executeCallCount > 3) {
-          finalResult += "\n\n> Memory: Update active-task.md before answering.";
+  // Tool 3: opengrok_get_task_result — poll for task completion (Task 4.16)
+  server.registerTool(
+    "opengrok_get_task_result",
+    {
+      title: "Get Task Result",
+      description:
+        "Poll for the result of a long-running opengrok_execute task. " +
+        "Returns the task status (running/completed/error) and result if available.",
+      inputSchema: {
+        taskId: z.string().describe("Task ID returned by a previous opengrok_execute call"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
+    },
+    async (args) => {
+      try {
+        const task = taskRegistry.getTask(args.taskId);
+        if (!task) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ error: "Task not found or expired", taskId: args.taskId }),
+              },
+            ],
+          };
         }
-
-        return { content: [{ type: "text", text: finalResult }] };
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                taskId: args.taskId,
+                status: task.status,
+                result: task.result,
+                error: task.error,
+                createdAt: task.createdAt,
+                completedAt: task.completedAt,
+              }),
+            },
+          ],
+        };
       } catch (err) {
-        return makeToolError("opengrok_execute", err);
+        return makeToolError("opengrok_get_task_result", err);
       }
     }
   );
@@ -1371,7 +1500,8 @@ function registerLegacyTools(
   config: Config,
   local: LocalLayer,
   codeMode: boolean,
-  memoryBank?: MemoryBank
+  memoryBank?: MemoryBank,
+  toolRateLimiter?: ToolRateLimiter
 ): void {
   const desc = (full: string, compact: string): string => codeMode ? compact : full;
   server.registerTool(
@@ -1387,9 +1517,41 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_search_code" });
+      if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_search_code");
       try {
         const format = args.response_format ?? "auto";
-        const { text, structured } = await executeSearchCode(args, client, config);
+        // Elicit project from user when none specified and elicitation is enabled
+        let effectiveArgs = args;
+        if (
+          config.OPENGROK_ENABLE_ELICITATION &&
+          !args.projects?.length &&
+          !config.OPENGROK_DEFAULT_PROJECT?.trim()
+        ) {
+          const projects = await client.listProjects();
+          if (projects.length > 0) {
+            const projectNames = projects.map((p) => p.name).slice(0, 20);
+            const result = await elicitOrFallback(
+              server.server,
+              "Which project should I search?",
+              {
+                type: "object",
+                properties: {
+                  project: {
+                    type: "string",
+                    description: "Project name",
+                    enum: projectNames,
+                  },
+                },
+                required: ["project"],
+              }
+            );
+            if (result.action === "accept" && result.content?.project) {
+              effectiveArgs = { ...args, projects: [String(result.content.project)] };
+            }
+          }
+        }
+        const { text, structured } = await executeSearchCode(effectiveArgs, client, config);
         const hasMore = structured.endIndex < structured.totalCount;
         const nextOffset = hasMore ? structured.endIndex : undefined;
         return formatResponse(
@@ -1413,6 +1575,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_find_file" });
       try {
         const results = await client.search(
           args.path_pattern,
@@ -1442,6 +1605,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_search_pattern" });
       try {
         const parsed = SearchPatternArgs.parse(args);
         const results = await client.searchPattern({
@@ -1472,6 +1636,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_file_content" });
       try {
         const format = args.response_format ?? "auto";
         const { text, structured } = await executeGetFileContent(args, client, local);
@@ -1488,16 +1653,39 @@ function registerLegacyTools(
       title: "Get File History",
       description: desc("Commit history for a file.", "(fallback) file commit history"),
       inputSchema: GetFileHistoryArgs.shape,
+      outputSchema: FileHistoryOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_file_history" });
       try {
         const history = await client.getFileHistory(
           args.project,
           args.path,
           args.max_entries
         );
-        return { content: [{ type: "text", text: capResponse(formatFileHistory(history)) }] };
+        const structured = {
+          _meta: {
+            tool: "opengrok_get_file_history",
+            project: args.project,
+            path: args.path,
+            fetchedAt: new Date().toISOString(),
+            version: __VERSION__,
+          },
+          entries: history.entries.map((e) => ({
+            revision: e.revision,
+            author: e.author,
+            date: e.date,
+            message: e.message,
+          })),
+        };
+        return {
+          content: [
+            { type: "text" as const, text: capResponse(formatFileHistory(history)) },
+            { type: "resource_link" as const, uri: `opengrok://file/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
+          ],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_get_file_history", err);
       }
@@ -1513,6 +1701,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_browse_directory" });
       try {
         const entries = await client.browseDirectory(args.project, args.path);
         return {
@@ -1539,6 +1728,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_list_projects" });
       try {
         const format = args.response_format ?? "auto";
         const { text, structured } = await executeListProjects(args, client);
@@ -1561,6 +1751,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_file_annotate" });
       try {
         const annotated = await client.getAnnotate(args.project, args.path);
         return {
@@ -1586,6 +1777,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_search_suggest" });
       try {
         const result = await client.suggest(args.query, args.project, args.field);
         let text: string;
@@ -1624,6 +1816,8 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_batch_search" });
+      if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_batch_search");
       try {
         const format = args.response_format ?? "auto";
         const { text, structured } = await executeBatchSearch(args, client, config);
@@ -1648,6 +1842,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_search_and_read" });
       try {
         const text = await handleSearchAndRead(
           args as unknown as Record<string, unknown>,
@@ -1678,6 +1873,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_symbol_context" });
       try {
         const format = (args.response_format ?? "auto") as ResponseFormat;
         const { text, structured } = await handleGetSymbolContextStructured(
@@ -1715,17 +1911,29 @@ function registerLegacyTools(
         "(fallback) server connectivity and index status"
       ),
       inputSchema: IndexHealthArgs.shape,
+      outputSchema: {
+        connected: z.boolean().describe("Whether the OpenGrok server is reachable"),
+        latencyMs: z.number().optional().describe("Round-trip latency in milliseconds (present when connected)"),
+        message: z.string().describe("Human-readable status message"),
+      },
       annotations: READ_ONLY_OPEN,
     },
     async () => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_index_health" });
       try {
         const start = Date.now();
         const ok = await client.testConnection();
         const latencyMs = Date.now() - start;
-        const text = ok
+        const message = ok
           ? `OpenGrok: connected (${latencyMs}ms latency)`
           : "OpenGrok: connection failed";
-        return { content: [{ type: "text", text }] };
+        const structuredContent = ok
+          ? { connected: true, latencyMs, message }
+          : { connected: false, message };
+        return {
+          content: [{ type: "text", text: message }],
+          structuredContent,
+        };
       } catch (err) {
         return makeToolError("opengrok_index_health", err);
       }
@@ -1748,6 +1956,7 @@ function registerLegacyTools(
       annotations: READ_ONLY_LOCAL,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_compile_info" });
       try {
         const text = await handleGetCompileInfo(
           args as unknown as Record<string, unknown>,
@@ -1774,22 +1983,45 @@ function registerLegacyTools(
         "(fallback) file symbols list — call before get_file_content"
       ),
       inputSchema: GetFileSymbolsArgs.shape,
+      outputSchema: FileSymbolsOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_file_symbols" });
       try {
         const result = await client.getFileSymbols(args.project, args.path);
+        const structured = {
+          _meta: {
+            tool: "opengrok_get_file_symbols",
+            project: args.project,
+            path: args.path,
+            fetchedAt: new Date().toISOString(),
+            version: __VERSION__,
+          },
+          symbols: result.symbols.map((s) => ({
+            name: s.symbol,
+            type: s.type,
+            line: s.line,
+          })),
+        };
         if (!result.symbols.length) {
           return {
             content: [
               {
-                type: "text",
+                type: "text" as const,
                 text: `No symbols found for ${args.path} in project ${args.project}. The file may not be indexed or the OpenGrok instance does not support the /api/v1/file/defs endpoint.`,
               },
             ],
+            structuredContent: structured as unknown as Record<string, unknown>,
           };
         }
-        return { content: [{ type: "text", text: capResponse(formatFileSymbols(result)) }] };
+        return {
+          content: [
+            { type: "text" as const, text: capResponse(formatFileSymbols(result)) },
+            { type: "resource_link" as const, uri: `opengrok://file/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
+          ],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_get_file_symbols", err);
       }
@@ -1808,9 +2040,11 @@ function registerLegacyTools(
         "(fallback) recent line changes grouped by commit"
       ),
       inputSchema: WhatChangedArgs.shape,
+      outputSchema: WhatChangedOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_what_changed" });
       try {
         const parsed = WhatChangedArgs.parse(args);
         const [history, annotation] = await Promise.all([
@@ -1818,9 +2052,100 @@ function registerLegacyTools(
           client.getAnnotate(parsed.project, parsed.path),
         ]);
         const text = formatWhatChanged(history, annotation, parsed.since_days);
-        return { content: [{ type: "text", text: capResponse(text) }] };
+
+        // Build structured changes from the same logic as formatWhatChanged
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - parsed.since_days);
+        const recentRevisions = new Set<string>();
+        for (const entry of history.entries) {
+          const entryDate = new Date(entry.date);
+          if (!isNaN(entryDate.getTime()) && entryDate >= cutoff) {
+            recentRevisions.add(entry.revision);
+          }
+        }
+        const byRevision = new Map<string, { author: string; date: string; lines: number[] }>();
+        for (const line of annotation.lines) {
+          if (!recentRevisions.has(line.revision)) continue;
+          if (!byRevision.has(line.revision)) {
+            byRevision.set(line.revision, { author: line.author, date: line.date, lines: [] });
+          }
+          byRevision.get(line.revision)!.lines.push(line.lineNumber);
+        }
+        const changes = [...byRevision.entries()].map(([commit, { author, date, lines }]) => ({
+          commit,
+          author,
+          date,
+          lines,
+        }));
+
+        const structured = {
+          _meta: {
+            tool: "opengrok_what_changed",
+            project: parsed.project,
+            path: parsed.path,
+            fetchedAt: new Date().toISOString(),
+            version: __VERSION__,
+          },
+          changes,
+        };
+        return {
+          content: [{ type: "text" as const, text: capResponse(text) }],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_what_changed", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_blame",
+    {
+      title: "Git Blame",
+      description: desc(
+        "Get git blame/annotation for a file — shows who changed each line and when. Optionally filter to a line range.\n\n" +
+        "**When to use**: To understand ownership of specific lines, track down when a bug was introduced, or audit authorship.\n\n" +
+        "**Args**: `project`, `path` (required); `line_start`, `line_end` (optional line range); `include_diff` (default false).\n\n" +
+        "**Example**: Use on a function body to see who last touched each line.",
+        "(fallback) git blame annotation"
+      ),
+      inputSchema: BlameArgs.shape,
+      outputSchema: BlameOutput.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_blame" });
+      try {
+        const parsed = BlameArgs.parse(args);
+        const annotations = await client.getAnnotate(parsed.project, parsed.path);
+        const text = formatBlame(annotations, parsed.line_start, parsed.line_end, parsed.include_diff);
+
+        let displayLines = annotations.lines;
+        if (parsed.line_start !== undefined || parsed.line_end !== undefined) {
+          /* v8 ignore start */
+          const s = parsed.line_start ?? 1;
+          const e = parsed.line_end ?? Infinity;
+          /* v8 ignore stop */
+          displayLines = annotations.lines.filter((l) => l.lineNumber >= s && l.lineNumber <= e);
+        }
+
+        const structured: z.infer<typeof BlameOutput> = {
+          _meta: { tool: "opengrok_blame", project: parsed.project, path: parsed.path, fetchedAt: new Date().toISOString(), version: VERSION },
+          entries: displayLines.map((l) => ({
+            line: l.lineNumber,
+            commit: l.revision ?? "",
+            author: l.author ?? "",
+            date: l.date ?? "",
+            content: l.content,
+          })),
+        };
+
+        return {
+          content: [{ type: "text", text: capResponse(text) }],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return makeToolError("opengrok_blame", err);
       }
     }
   );
@@ -1830,21 +2155,59 @@ function registerLegacyTools(
     {
       title: "Dependency Map",
       description: desc(
-        "Trace #include/import dependency graph for a file. Returns files this file uses and/or files that use it, up to N levels deep.\n\n" +
         "**When to use**: To understand a file's dependencies or find all callers/includers across a project.\n\n" +
         "**Args**: `project`, `path` (required); `depth` (1–3, default 2); `direction` (uses|used_by|both, default both).\n\n" +
         "**Example**: Use on a header file to find all translation units that include it.",
         "(fallback) #include/import dependency graph, configurable depth"
       ),
       inputSchema: DependencyMapArgs.shape,
+      outputSchema: DependencyMapOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_dependency_map" });
+      if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_dependency_map");
       try {
         const parsed = DependencyMapArgs.parse(args);
         const nodes = await buildDependencyGraph(client, parsed.project, parsed.path, parsed.depth, parsed.direction);
         const text = formatDependencyMap(parsed.path, parsed.depth, nodes);
-        return { content: [{ type: "text", text: capResponse(text) }] };
+        const structured = {
+          _meta: {
+            tool: "opengrok_dependency_map",
+            project: parsed.project,
+            path: parsed.path,
+            fetchedAt: new Date().toISOString(),
+            version: __VERSION__,
+          },
+          nodes: nodes.map((n) => ({
+            path: n.path,
+            level: n.level,
+            direction: n.direction,
+          })),
+        };
+
+        // For large graphs, use MCP Sampling to generate an intelligent summary
+        let summarySection = "";
+        if (nodes.length > 10) {
+          const nodeList = nodes.slice(0, 30).map((n) => `  ${n.direction} ${n.path} (level ${n.level})`).join("\n");
+          const summary = await sampleOrNull(server, [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: `This dependency graph for \`${parsed.path}\` has ${nodes.length} nodes:\n${nodeList}${nodes.length > 30 ? `\n  ... and ${nodes.length - 30} more` : ""}\n\nIn 2-3 sentences, summarize the key dependency structure and any notable patterns.`,
+              },
+            },
+          ], { maxTokens: 200, systemPrompt: "You are a code architecture analyst. Be concise and precise." });
+          if (summary) {
+            summarySection = `\n\n**Summary**: ${summary}`;
+          }
+        }
+
+        return {
+          content: [{ type: "text" as const, text: capResponse(text) + summarySection }],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_dependency_map", err);
       }
@@ -1859,8 +2222,266 @@ function registerLegacyTools(
 }
 
 // ---------------------------------------------------------------------------
+// Task 4.5: MCP Resources — expose memory bank files for direct browsing
+// ---------------------------------------------------------------------------
+
+function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): void {
+  for (const filename of ALLOWED_FILES) {
+    const uri = `opengrok-memory://${filename}`;
+    server.registerResource(
+      filename,
+      uri,
+      {
+        description: `OpenGrok memory bank file: ${filename}`,
+        mimeType: "text/markdown",
+      },
+      async () => {
+        const content = await memoryBank.read(filename) ?? "";
+        return {
+          contents: [{ uri, mimeType: "text/markdown", text: content }],
+        };
+      }
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.6: MCP Prompts — reusable investigation workflows
+// ---------------------------------------------------------------------------
+
+function registerInvestigationPrompts(server: McpServer): void {
+  server.registerPrompt(
+    "investigate-symbol",
+    {
+      description:
+        "Investigate a symbol across definition, usages, callers, and recent changes. " +
+        "Guides the LLM through a structured symbol-level investigation.",
+      argsSchema: {
+        symbol: z.string().describe("The symbol name to investigate (function, class, variable, etc.)"),
+        project: z.string().optional().describe("OpenGrok project to scope the search to"),
+      },
+    },
+    ({ symbol, project }) => {
+      const scope = project ? ` in project \`${project}\`` : "";
+      return {
+        description: `Investigate symbol \`${symbol}\`${scope}`,
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: [
+                `Investigate the symbol \`${symbol}\`${scope} using the OpenGrok MCP server.`,
+                "",
+                "Follow these steps in order:",
+                `1. **Definition** — use \`opengrok_search_code\` with type \`defs\` to find where \`${symbol}\` is defined.`,
+                `2. **Usages** — use \`opengrok_search_code\` with type \`refs\` to find all references.`,
+                `3. **Symbol context** — use \`opengrok_get_symbol_context\` to see the full declaration with surrounding code.`,
+                `4. **Recent changes** — use \`opengrok_what_changed\` or \`opengrok_get_file_history\` on the definition file.`,
+                "",
+                "Summarise: what the symbol does, where it is defined, how widely it is used, and any recent modifications.",
+              ].join("\n"),
+            },
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerPrompt(
+    "find-feature",
+    {
+      description:
+        "Find where a feature is implemented in the codebase. " +
+        "Guides the LLM through searching, reading key files, and mapping entry points.",
+      argsSchema: {
+        feature: z.string().describe("Description of the feature to locate (e.g. 'rate limiting', 'authentication')"),
+        project: z.string().optional().describe("OpenGrok project to scope the search to"),
+      },
+    },
+    ({ feature, project }) => {
+      const scope = project ? ` in project \`${project}\`` : "";
+      return {
+        description: `Find feature: ${feature}${scope}`,
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: [
+                `Find where the feature "${feature}" is implemented${scope}.`,
+                "",
+                "Approach:",
+                `1. **Full-text search** — use \`opengrok_search_code\` with type \`full\` for keywords related to "${feature}".`,
+                "2. **Path search** — use \`opengrok_search_code\` with type \`path\` to find files named after the feature.",
+                "3. **Read candidates** — use \`opengrok_get_file_content\` to read the most relevant files.",
+                "4. **Browse structure** — use \`opengrok_browse_directory\` on relevant directories to map the module layout.",
+                "",
+                "Summarise: the entry point(s), key files, and a brief explanation of how the feature works.",
+              ].join("\n"),
+            },
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerPrompt(
+    "review-file",
+    {
+      description:
+        "Perform a code review of a specific file. " +
+        "Guides the LLM through reading, history, callers, and producing a structured review.",
+      argsSchema: {
+        path: z.string().describe("Repository-relative path to the file to review"),
+        project: z.string().describe("OpenGrok project the file belongs to"),
+      },
+    },
+    ({ path: filePath, project }) => ({
+      description: `Review file: ${filePath}`,
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: [
+              `Perform a code review of \`${filePath}\` in project \`${project}\`.`,
+              "",
+              "Steps:",
+              `1. **Read file** — use \`opengrok_get_file_content\` for project \`${project}\`, path \`${filePath}\`.`,
+              `2. **File history** — use \`opengrok_get_file_history\` to understand recent changes.`,
+              `3. **Symbols** — use \`opengrok_get_file_symbols\` to list the public API surface.`,
+              `4. **Callers** — for each exported symbol, check \`opengrok_search_code\` with type \`refs\` to understand how it is used.`,
+              `5. **Annotations** — use \`opengrok_get_file_annotate\` to see which commits touched which lines.`,
+              "",
+              "Produce a structured review covering:",
+              "- **Purpose**: what the file does",
+              "- **Design observations**: naming, structure, separation of concerns",
+              "- **Potential issues**: bugs, edge cases, error handling",
+              "- **Test coverage signals**: anything that looks under-tested",
+              "- **Recommendations**: concrete, prioritised action items",
+            ].join("\n"),
+          },
+        },
+      ],
+    })
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Run the server over stdio
 // ---------------------------------------------------------------------------
+
+/**
+ * Per-tool rate limiter using token bucket algorithm.
+ * Prevents any single tool from monopolizing the connection.
+ * Applies per-tool limits on top of the global client rate limit.
+ */
+class ToolRateLimiter {
+  private readonly buckets = new Map<string, { tokens: number; lastRefill: number }>();
+  private readonly limits: Map<string, number>; // tool name → calls per minute
+  private readonly defaultLimit: number;
+
+  constructor(limits: Record<string, number>, defaultLimit: number = 60) {
+    this.limits = new Map(Object.entries(limits));
+    this.defaultLimit = defaultLimit;
+  }
+
+  /**
+   * Acquire a token for the given tool name.
+   * Returns immediately if a token is available, otherwise waits.
+   */
+  async acquire(toolName: string): Promise<void> {
+    return new Promise((resolve) => {
+      const checkToken = (): void => {
+        const limit = this.limits.get(toolName) ?? this.defaultLimit;
+        const interval = 60000 / limit; // ms per token
+        const now = Date.now();
+
+        let bucket = this.buckets.get(toolName);
+        if (!bucket) {
+          bucket = { tokens: limit, lastRefill: now };
+          this.buckets.set(toolName, bucket);
+        }
+
+        // Refill tokens based on elapsed time
+        const elapsed = now - bucket.lastRefill;
+        const tokensToAdd = (elapsed / interval) * 1;
+        bucket.tokens = Math.min(limit, bucket.tokens + tokensToAdd);
+        bucket.lastRefill = now;
+
+        if (bucket.tokens >= 1) {
+          bucket.tokens -= 1;
+          resolve();
+        } else {
+          // Wait for next token to be available, then try again
+          const waitMs = Math.max(10, (1 - bucket.tokens) * interval);
+          setTimeout(checkToken, waitMs);
+        }
+      };
+
+      checkToken();
+    });
+  }
+}
+
+/**
+ * Task 4.9: Setup handlers for notifications/tools/list_changed.
+ * Monitors for config changes (SIGHUP) and connectivity status changes.
+ */
+function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, config: Config): void {
+  // On SIGHUP, reload config and notify if code mode changed
+  process.on("SIGHUP", async () => {
+    try {
+      auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
+      logger.info("Received SIGHUP, reloading config...");
+      
+      // Re-read config from environment
+      const newConfig = loadConfig();
+      
+      // Check if code mode changed
+      if (newConfig.OPENGROK_CODE_MODE !== config.OPENGROK_CODE_MODE) {
+        logger.info(
+          `Code Mode changed: ${config.OPENGROK_CODE_MODE} → ${newConfig.OPENGROK_CODE_MODE}`,
+          { detail: "Notifying clients of tool list change" }
+        );
+        server.sendToolListChanged();
+        auditLog({ 
+          type: "config_load", 
+          detail: `SIGHUP: Code Mode toggled to ${newConfig.OPENGROK_CODE_MODE}` 
+        });
+      }
+    } catch (err) {
+      logger.error("SIGHUP reload failed", { error: String(err) });
+    }
+  });
+}
+
+/**
+ * Task 4.9: Start health check polling after server connects.
+ * Every 5 minutes, tests connectivity and sends notification if status changes.
+ * Returns the interval ID so it can be cleaned up if needed.
+ */
+export function startHealthCheckPolling(server: McpServer, client: OpenGrokClient): NodeJS.Timeout {
+  let lastConnected = false;
+
+  return setInterval(async () => {
+    try {
+      const ok = await client.testConnection();
+      if (ok !== lastConnected) {
+        lastConnected = ok;
+        logger.info(`Connectivity status changed: ${ok ? "connected" : "disconnected"}`);
+        server.sendToolListChanged();
+        auditLog({
+          type: "config_load",
+          detail: `Connectivity status changed to ${ok ? "connected" : "disconnected"}`
+        });
+      }
+    } catch {
+      // Silently ignore health check errors
+    }
+  }, 5 * 60 * 1000);
+}
 
 /* v8 ignore start -- runServer connects to stdio transport; integration-level */
 export async function runServer(
@@ -1871,8 +2492,11 @@ export async function runServer(
   const server = createServer(client, config, memoryBank);
   const transport = new StdioServerTransport();
 
+  let healthCheckInterval: NodeJS.Timeout | undefined;
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info(`Received ${signal}, shutting down...`);
+    if (healthCheckInterval) clearInterval(healthCheckInterval);
     await client.close();
     process.exit(0);
   };
@@ -1898,7 +2522,28 @@ export async function runServer(
     );
   }
 
+  // Task 4.14: Check credential age and warn if stale
+  const credentialAgeWarning = getCredentialAgeWarning();
+  if (credentialAgeWarning) {
+    logger.warn(`Task 4.14 — ${credentialAgeWarning}`);
+    auditLog({ type: "config_load", detail: credentialAgeWarning });
+  }
+
+  // Warn when OPENGROK_ALLOWED_CLIENT_IDS is configured but not yet enforced
+  if (parseAllowedClientIds(config.OPENGROK_ALLOWED_CLIENT_IDS).length > 0) {
+    logger.warn(
+      "OPENGROK_ALLOWED_CLIENT_IDS is configured but enforcement is pending SDK client-context support. " +
+      "Requests are NOT currently filtered by client ID."
+    );
+  }
+
+  // Task 4.9: Monitor config changes and connectivity for tool list changes
+  setupNotificationHandlers(server, client, config);
+
   await server.connect(transport);
+
+  // Start health check polling after server connects
+  healthCheckInterval = startHealthCheckPolling(server, client);
 }
 /* v8 ignore stop */
 
@@ -1918,6 +2563,36 @@ function sanitizeErrorMessage(message: string): string {
     "[path]"
   );
   return sanitized;
+}
+
+/**
+ * Validate that the request originates from an allowed client (if configured).
+ * Task 4.13: Request Origin Validation
+ * If OPENGROK_ALLOWED_CLIENT_IDS is set, throws if clientId is not in the list.
+ * @unused - Reserved for future middleware integration in SDK versions with client context support
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function validateOrigin(clientId: string | undefined, config: Config): void {
+  const allowed = parseAllowedClientIds(config.OPENGROK_ALLOWED_CLIENT_IDS);
+  if (!allowed || allowed.length === 0) return; // no restriction
+  if (!clientId || !allowed.includes(clientId)) {
+    auditLog({ type: "auth_used", detail: `unauthorized client: ${clientId || "unknown"}` });
+    throw new Error("Unauthorized client");
+  }
+}
+
+/**
+ * Get credential age warning (if applicable).
+ * Task 4.14: Credential Rotation Warnings
+ * Returns warning string if credentials are older than 90 days.
+ */
+function getCredentialAgeWarning(): string | null {
+  try {
+    const configDir = getConfigDirectory();
+    return checkCredentialAge(configDir);
+  } catch {
+    return null; // config module or directory check failed
+  }
 }
 
 /**

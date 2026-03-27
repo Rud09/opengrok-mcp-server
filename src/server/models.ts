@@ -123,6 +123,24 @@ export const DependencyMapArgs = z.object({
 });
 export type DependencyMapArgs = z.infer<typeof DependencyMapArgs>;
 
+export const BlameArgs = z.object({
+  project: z.string().min(1).describe("Project name"),
+  path: z.string().min(1).describe("File path relative to project root"),
+  line_start: z.number().int().min(1).optional().describe("Start line (1-indexed, default 1)"),
+  line_end: z.number().int().min(1).optional().describe("End line (inclusive, default: all lines)"),
+  include_diff: z.boolean().default(false).describe("Include the commit diff summary for each unique commit"),
+  response_format: RESPONSE_FORMAT,
+}).superRefine((data, ctx) => {
+  if (data.line_start !== undefined && data.line_end !== undefined && data.line_end < data.line_start) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "line_end must be >= line_start",
+      path: ["line_end"],
+    });
+  }
+});
+export type BlameArgs = z.infer<typeof BlameArgs>;
+
 // ---------------------------------------------------------------------------
 // Compound tool argument schemas
 // ---------------------------------------------------------------------------
@@ -383,4 +401,76 @@ export const SymbolContextOutput = z.object({
       })
     )
     .optional(),
+});
+
+const MetaSchema = z.object({
+  tool: z.string(),
+  project: z.string().optional(),
+  path: z.string().optional(),
+  fetchedAt: z.string(),
+  version: z.string(),
+});
+
+/** Output schema for opengrok_get_file_history */
+export const FileHistoryOutput = z.object({
+  _meta: MetaSchema,
+  entries: z.array(
+    z.object({
+      revision: z.string(),
+      author: z.string(),
+      date: z.string(),
+      message: z.string(),
+    })
+  ),
+});
+
+/** Output schema for opengrok_get_file_symbols */
+export const FileSymbolsOutput = z.object({
+  _meta: MetaSchema,
+  symbols: z.array(
+    z.object({
+      name: z.string(),
+      type: z.string(),
+      line: z.number(),
+    })
+  ),
+});
+
+/** Output schema for opengrok_what_changed */
+export const WhatChangedOutput = z.object({
+  _meta: MetaSchema,
+  changes: z.array(
+    z.object({
+      commit: z.string(),
+      author: z.string(),
+      date: z.string(),
+      lines: z.array(z.number()),
+    })
+  ),
+});
+
+/** Output schema for opengrok_dependency_map */
+export const DependencyMapOutput = z.object({
+  _meta: MetaSchema,
+  nodes: z.array(
+    z.object({
+      path: z.string(),
+      level: z.number(),
+      direction: z.enum(["uses", "used_by"]),
+    })
+  ),
+});
+
+/** Output schema for opengrok_blame */
+export const BlameLineEntry = z.object({
+  line: z.number(),
+  commit: z.string(),
+  author: z.string(),
+  date: z.string(),
+  content: z.string(),
+});
+
+export const BlameOutput = z.object({
+  _meta: MetaSchema,
+  entries: z.array(BlameLineEntry),
 });

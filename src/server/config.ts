@@ -6,6 +6,8 @@
 import { z } from "zod";
 import * as fs from "fs";
 import * as crypto from "crypto";
+import * as path from "path";
+import * as os from "os";
 import { logger } from "./logger.js";
 
 // ---------------------------------------------------------------------------
@@ -100,9 +102,74 @@ const ConfigSchema = z.object({
   OPENGROK_RESPONSE_FORMAT_OVERRIDE: z.string().default(""),
   // Prompt caching hints (reserved for future explicit cache-control headers)
   OPENGROK_ENABLE_CACHE_HINTS: z.coerce.boolean().default(false),
+  // MCP Elicitation — ask user for input during tool execution (e.g., pick project)
+  OPENGROK_ENABLE_ELICITATION: z.coerce.boolean().default(false),
+  // Per-tool rate limiting (comma-separated tool=rpm pairs, e.g. "opengrok_batch_search=5,opengrok_execute=10")
+  OPENGROK_PER_TOOL_RATELIMIT: z.string().default(""),
+  // Allowed client IDs for request origin validation (comma-separated, empty = no restriction)
+  OPENGROK_ALLOWED_CLIENT_IDS: z.string().default(""),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+// Per-tool rate limit defaults (calls per minute)
+export const DEFAULT_PER_TOOL_LIMITS: Record<string, number> = {
+  opengrok_batch_search: 5,    // expensive operation
+  opengrok_execute: 10,        // Code Mode sandbox overhead
+  opengrok_dependency_map: 10, // BFS = multiple requests
+};
+
+// Parse per-tool rate limit config from environment string
+export function parsePerToolLimits(configStr: string): Record<string, number> {
+  const limits = { ...DEFAULT_PER_TOOL_LIMITS };
+  if (!configStr || !configStr.trim()) return limits;
+
+  for (const pair of configStr.split(",")) {
+    const [tool, rpm] = pair.trim().split("=");
+    if (tool && rpm) {
+      const parsed = parseInt(rpm, 10);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        limits[tool] = parsed;
+      }
+    }
+  }
+
+  return limits;
+}
+
+// Parse comma-separated list of allowed client IDs
+export function parseAllowedClientIds(configStr: string): string[] {
+  if (!configStr || !configStr.trim()) return [];
+  return configStr.split(",").map((id) => id.trim()).filter((id) => id.length > 0);
+}
+
+// Check credential age and return warning if older than threshold
+export function checkCredentialAge(configDir: string): string | null {
+  try {
+    const stateFile = path.join(configDir, "last-credential-rotation.json");
+    const content = fs.readFileSync(stateFile, "utf8");
+    const state = JSON.parse(content) as { rotatedAt: string };
+    const ageDays = (Date.now() - new Date(state.rotatedAt).getTime()) / (1000 * 86400);
+    if (!Number.isFinite(ageDays) || ageDays < 0) return null; // clock skew or corrupt
+    if (ageDays > 90) {
+      return `Credentials not rotated in ${Math.floor(ageDays)} days`;
+    }
+    return null;
+  } catch {
+    return null; // no state file = first run or inaccessible
+  }
+}
+
+// Update credential rotation timestamp
+export function updateCredentialRotationTimestamp(configDir: string): void {
+  try {
+    fs.mkdirSync(configDir, { recursive: true });
+    const stateFile = path.join(configDir, "last-credential-rotation.json");
+    fs.writeFileSync(stateFile, JSON.stringify({ rotatedAt: new Date().toISOString() }));
+  } catch (err) {
+    logger.warn("Failed to update credential rotation timestamp:", err);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Loader
@@ -213,6 +280,12 @@ export function loadConfig(): Config {
     data.OPENGROK_PASSWORD_KEY
   );
 
+  // Update credential rotation timestamp if credentials are provided
+  if (password || data.OPENGROK_USERNAME) {
+    const configDir = getConfigDirectory();
+    updateCredentialRotationTimestamp(configDir);
+  }
+
   // Freeze to prevent accidental mutation by consumers
   _config = Object.freeze({ ...data, OPENGROK_PASSWORD: password });
 
@@ -222,6 +295,16 @@ export function loadConfig(): Config {
   }
 
   return _config;
+}
+
+// Get the config directory, respecting XDG_CONFIG_HOME
+export function getConfigDirectory(): string {
+  const xdgConfig = process.env.XDG_CONFIG_HOME;
+  if (xdgConfig) {
+    return path.join(xdgConfig, "opengrok-mcp");
+  }
+  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  return path.join(homeDir, ".config", "opengrok-mcp");
 }
 
 export function resetConfig(): void {
