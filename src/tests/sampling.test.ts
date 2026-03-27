@@ -62,6 +62,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     OPENGROK_PER_TOOL_RATELIMIT: '',
     OPENGROK_ALLOWED_CLIENT_IDS: '',
     OPENGROK_PROXY: '',
+    OPENGROK_SAMPLING_MAX_TOKENS: 256,
+    OPENGROK_SAMPLING_MODEL: '',
     ...overrides,
   } as Config;
 }
@@ -173,6 +175,125 @@ describe('sampleOrNull', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// Tests: production sampling — retry, timeout, defaults, model preference (Task 5.5)
+// ---------------------------------------------------------------------------
+
+describe('sampleOrNull — production features', () => {
+  it('retries on transient failure and returns result on eventual success', async () => {
+    const createMessage = vi.fn()
+      .mockRejectedValueOnce(new Error('transient error'))
+      .mockResolvedValue({
+        model: 'test-model',
+        role: 'assistant',
+        content: { type: 'text', text: 'recovered' },
+      });
+    const mockServer = { server: { createMessage } };
+    const result = await sampleOrNull(
+      mockServer as never,
+      [{ role: 'user', content: { type: 'text', text: 'test' } }],
+      { retries: 2, timeoutMs: 5000 }
+    );
+    expect(result).toBe('recovered');
+    expect(createMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns null after all retries are exhausted', async () => {
+    const createMessage = vi.fn().mockRejectedValue(new Error('always fails'));
+    const mockServer = { server: { createMessage } };
+    const result = await sampleOrNull(
+      mockServer as never,
+      [{ role: 'user', content: { type: 'text', text: 'test' } }],
+      { retries: 1, timeoutMs: 5000 }
+    );
+    expect(result).toBeNull();
+    // 1 initial attempt + 1 retry = 2 total calls
+    expect(createMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns null when timeout expires', async () => {
+    const createMessage = vi.fn().mockImplementation(
+      () => new Promise<never>((_, reject) => setTimeout(() => reject(new Error('late')), 200))
+    );
+    const mockServer = { server: { createMessage } };
+    const result = await sampleOrNull(
+      mockServer as never,
+      [{ role: 'user', content: { type: 'text', text: 'test' } }],
+      // Very short timeout to force expiry; no retries to keep test fast
+      { timeoutMs: 50, retries: 0 }
+    );
+    expect(result).toBeNull();
+  });
+
+  it('passes model hint in modelPreferences when model is specified', async () => {
+    const createMessage = vi.fn().mockResolvedValue({
+      model: 'claude-3-haiku',
+      role: 'assistant',
+      content: { type: 'text', text: 'ok' },
+    });
+    const mockServer = { server: { createMessage } };
+    await sampleOrNull(
+      mockServer as never,
+      [{ role: 'user', content: { type: 'text', text: 'hello' } }],
+      { model: 'claude-3-haiku', retries: 0 }
+    );
+    expect(createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelPreferences: { hints: [{ name: 'claude-3-haiku' }] },
+      })
+    );
+  });
+
+  it('applies default maxTokens of 256 when not specified', async () => {
+    const createMessage = vi.fn().mockResolvedValue({
+      model: 'test-model',
+      role: 'assistant',
+      content: { type: 'text', text: 'ok' },
+    });
+    const mockServer = { server: { createMessage } };
+    await sampleOrNull(mockServer as never, [{ role: 'user', content: { type: 'text', text: 'hi' } }]);
+    expect(createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ maxTokens: 256 })
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Task 5.9 — opengrok_execute / opengrok_api interleaving annotation
+// ---------------------------------------------------------------------------
+
+describe('Code Mode tools — interleaving annotation (Task 5.9)', () => {
+  let tmpDir: string;
+  let bank: MemoryBank;
+
+  beforeEach(async () => {
+    tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'opengrok-interleave-test-'));
+    bank = new MemoryBank(tmpDir);
+    await bank.ensureDir();
+  });
+
+  afterEach(async () => {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('opengrok_execute has x-supports-interleaving annotation in registered tools', async () => {
+    const { server } = await createConnectedClient({ OPENGROK_CODE_MODE: true }, bank);
+    // The MCP SDK strips unknown fields during listTools serialization, so we
+    // inspect the server's internal _registeredTools map directly.
+    const internal = (server as unknown as { _registeredTools: Record<string, { annotations?: Record<string, unknown> }> })._registeredTools;
+    expect(internal['opengrok_execute']).toBeDefined();
+    expect(internal['opengrok_execute'].annotations?.['x-supports-interleaving']).toBe(true);
+  });
+
+  it('opengrok_api has x-supports-interleaving annotation in registered tools', async () => {
+    const { server } = await createConnectedClient({ OPENGROK_CODE_MODE: true }, bank);
+    const internal = (server as unknown as { _registeredTools: Record<string, { annotations?: Record<string, unknown> }> })._registeredTools;
+    expect(internal['opengrok_api']).toBeDefined();
+    expect(internal['opengrok_api'].annotations?.['x-supports-interleaving']).toBe(true);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Tests: opengrok_execute — sampling for error explanation
 // ---------------------------------------------------------------------------
@@ -245,7 +366,8 @@ describe('opengrok_execute — sampling error explanation', () => {
     // Execution is async — poll for the task result
     const sc = execResult.structuredContent as { taskId: string } | undefined;
     const taskId = sc?.taskId ?? (execResult.content as { type: string; text: string }[])[0]?.text?.match(/taskId: "([^"]+)"/)?.[1] ?? '';
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Wait for retries with backoff to complete (~1500ms)
+    await new Promise((resolve) => setTimeout(resolve, 2500));
     const result = await client.callTool({ name: 'opengrok_get_task_result', arguments: { taskId } });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
     const parsed = JSON.parse(text);

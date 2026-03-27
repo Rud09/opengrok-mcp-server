@@ -108,6 +108,12 @@ const ConfigSchema = z.object({
   OPENGROK_PER_TOOL_RATELIMIT: z.string().default(""),
   // Allowed client IDs for request origin validation (comma-separated, empty = no restriction)
   OPENGROK_ALLOWED_CLIENT_IDS: z.string().default(""),
+  // OpenGrok REST API version (Task 5.7)
+  OPENGROK_API_VERSION: z.enum(["v1", "v2"]).default("v1")
+    .describe("OpenGrok REST API version (v1 or v2, default: v1)"),
+  // Sampling — token budget and model preference (Task 5.5)
+  OPENGROK_SAMPLING_MAX_TOKENS: z.coerce.number().int().min(64).max(4096).default(256),
+  OPENGROK_SAMPLING_MODEL: z.string().default(""),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
