@@ -933,7 +933,8 @@ async function dispatchTool(
         fileType: args.file_type,
         maxResults: args.max_results,
       });
-      return formatSearchResults(results);
+      const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
+      return fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
     }
 
     case "opengrok_get_file_content": {
@@ -1920,10 +1921,11 @@ function sanitizeErrorMessage(message: string): string {
 }
 
 /**
- * Build a dependency graph for a file by searching refs/paths up to `depth` levels.
- * "uses"   — searches for what this file includes: finds files whose name appears as
- *            a path in the source (path search for the filename).
- * "used_by" — searches for files that reference/include this file (refs search).
+ * Build a dependency graph for a file by searching refs up to `depth` levels.
+ * "uses"    — finds files that reference/call symbols from this file (refs search).
+ *             Note: true include-graph traversal requires content parsing; this is a
+ *             best-effort approximation using OpenGrok's refs index.
+ * "used_by" — same semantics; both directions use refs search on the filename.
  */
 async function buildDependencyGraph(
   client: OpenGrokClient,
@@ -1937,6 +1939,9 @@ async function buildDependencyGraph(
   // Track which filenames have been expanded per direction to avoid cycles
   const expandedUses = new Set<string>();
   const expandedUsedBy = new Set<string>();
+  // Track full paths already added to nodes to prevent diamond-dependency duplicates
+  const seenUsesPaths = new Set<string>();
+  const seenUsedByPaths = new Set<string>();
 
   // Queue: [filename, level]
   const usesQueue: [string, number][] = [];
@@ -1957,11 +1962,14 @@ async function buildDependencyGraph(
     if (expandedUses.has(filename)) continue;
     expandedUses.add(filename);
 
-    const results = await client.search(filename, "path", [project], 20);
+    const results = await client.search(filename, "refs", [project], 20);
     for (const r of results.results) {
+      if (r.path === filePath) continue; // skip exact self
       const rName = r.path.split("/").pop()!;
-      if (rName === rootName) continue; // skip self
-      nodes.push({ path: r.path, level, direction: "uses" });
+      if (!seenUsesPaths.has(r.path)) {
+        seenUsesPaths.add(r.path);
+        nodes.push({ path: r.path, level, direction: "uses" });
+      }
       if (level < depth) {
         usesQueue.push([rName, level + 1]);
       }
@@ -1976,9 +1984,12 @@ async function buildDependencyGraph(
 
     const results = await client.search(filename, "refs", [project], 20);
     for (const r of results.results) {
+      if (r.path === filePath) continue; // skip exact self
       const rName = r.path.split("/").pop()!;
-      if (rName === rootName) continue; // skip self
-      nodes.push({ path: r.path, level, direction: "used_by" });
+      if (!seenUsedByPaths.has(r.path)) {
+        seenUsedByPaths.add(r.path);
+        nodes.push({ path: r.path, level, direction: "used_by" });
+      }
       if (level < depth) {
         usedByQueue.push([rName, level + 1]);
       }

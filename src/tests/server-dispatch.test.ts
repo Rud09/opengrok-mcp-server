@@ -708,10 +708,10 @@ describe('readFileAtAbsPath', () => {
 describe('dispatchTool — opengrok_dependency_map', () => {
   it('returns dependency map for direction=both', async () => {
     const client = makeMockClient();
-    // First call: path search for "uses"
+    // First call: refs search for "uses" (both directions use refs)
     client.search.mockResolvedValueOnce({
       query: 'EventLoop.cpp',
-      searchType: 'path',
+      searchType: 'refs',
       totalCount: 1,
       timeMs: 5,
       results: [{ project: 'proj', path: 'src/Timer.cpp', matches: [] }],
@@ -739,11 +739,11 @@ describe('dispatchTool — opengrok_dependency_map', () => {
     expect(result).toContain('main.cpp');
   });
 
-  it('only runs path search for direction=uses', async () => {
+  it('only runs refs search for direction=uses', async () => {
     const client = makeMockClient();
     client.search.mockResolvedValue({
       query: 'foo.h',
-      searchType: 'path',
+      searchType: 'refs',
       totalCount: 0,
       timeMs: 5,
       results: [],
@@ -755,9 +755,9 @@ describe('dispatchTool — opengrok_dependency_map', () => {
       { project: 'proj', path: 'src/foo.h', depth: 1, direction: 'uses' },
       client as any, config, emptyLocal()
     );
-    // Should only call search once (path search, no refs search)
+    // Should only call search once (refs search, no additional searches)
     expect(client.search).toHaveBeenCalledTimes(1);
-    expect(client.search).toHaveBeenCalledWith('foo.h', 'path', ['proj'], 20);
+    expect(client.search).toHaveBeenCalledWith('foo.h', 'refs', ['proj'], 20);
   });
 
   it('only runs refs search for direction=used_by', async () => {
