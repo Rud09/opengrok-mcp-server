@@ -55,24 +55,36 @@ describe("SandboxWorkerPool", () => {
   it("3. release() terminates worker when pool is at maxIdle", async () => {
     const pool = new SandboxWorkerPool();
 
-    // Fill pool to capacity (maxIdle = 2)
+    // Fill pool to maxIdle=2
     const h1 = await pool.acquire();
     const h2 = await pool.acquire();
-    pool.release(h1);
-    pool.release(h2);
+    pool.release(h1); // pool.idle.length = 1 → kept
+    pool.release(h2); // pool.idle.length = 2 → kept (at capacity)
 
-    // Third worker should be immediately terminated when released
-    const h3 = await pool.acquire(); // spawns fresh (pool had 2 from h1/h2 reuse)
-    // Re-acquire two more to fill pool
-    const h4 = await pool.acquire();
-    const h5 = await pool.acquire(); // this spawns fresh
-    pool.release(h4); // pool is now full (h1/h2 were re-acquired, h4 goes back)
+    // Third worker returned while pool is already full → must be terminated
+    const h3 = await pool.acquire(); // returns h2 (LIFO pop)
+    const terminateSpy = vi.spyOn(h3, "terminate");
+    pool.release(h3); // pool.idle.length is already 1 (h1 remains), this is 2 → kept
+    // Actually need to verify overflow: acquire h1 back, then release h3 when full
+    // Drain what's in the pool first, then test the overflow
+    await pool.drain(); // clears idle
 
-    // h5 should be terminated since pool is at capacity (h3 and h4 are in pool)
-    const terminateSpy = vi.spyOn(h5, "terminate");
-    pool.release(h5);
+    const ha = await pool.acquire();
+    const hb = await pool.acquire();
+    pool.release(ha);
+    pool.release(hb); // pool now at capacity (2)
 
-    expect(terminateSpy).toHaveBeenCalled();
+    const hc = await pool.acquire(); // spawns fresh (pool had ha/hb, returns hb)
+    const hd = await pool.acquire(); // returns ha
+    const overflow = await pool.acquire(); // pool is empty → spawns fresh
+
+    pool.release(hc); // pool.idle.length=0 → 1, kept
+    pool.release(hd); // pool.idle.length=1 → 2, kept (at maxIdle)
+
+    const overflowTerminate = vi.spyOn(overflow, "terminate");
+    pool.release(overflow); // pool.idle.length == maxIdle → terminate
+
+    expect(overflowTerminate).toHaveBeenCalled();
 
     await pool.drain();
   });
