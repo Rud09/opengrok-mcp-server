@@ -76,6 +76,7 @@ import {
   FileSymbolsOutput,
   WhatChangedOutput,
   DependencyMapOutput,
+  BlameOutput,
 } from "./models.js";
 import type {
   FileContent,
@@ -1373,62 +1374,71 @@ function registerCodeModeTools(
       auditLog({ type: "tool_invoke", tool: "opengrok_execute" });
       if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_execute");
       const currentTurn = ++turn;
-      try {
-        const budget = BUDGET_LIMITS[getActiveBudget()];
-        const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
-        const workerHandle = await workerPool.acquire();
-        let result: string;
+
+      // Create task immediately and execute asynchronously
+      const taskId = taskRegistry.createTask();
+
+      (async () => {
         try {
-          result = await executeInSandbox(
-            args.code,
-            sandboxApi,
-            (r) => capCodeModeResult(r, budget.maxResponseBytes),
-            budget.maxResponseBytes,
-            workerHandle
-          );
-        } finally {
-          workerPool.release(workerHandle);
-        }
-
-        // When execution fails, use MCP Sampling to get an LLM-generated explanation
-        if (result.startsWith("Error:")) {
-          const suggestion = await sampleOrNull(server, [
-            {
-              role: "user",
-              content: {
-                type: "text",
-                text: `The following JavaScript code failed in a sandbox:\n\`\`\`js\n${args.code}\n\`\`\`\n${result}\n\nBriefly explain what went wrong and suggest a fix.`,
-              },
-            },
-          ], { maxTokens: 256, systemPrompt: "You are a helpful code debugger. Be concise." });
-          if (suggestion) {
-            return { content: [{ type: "text", text: `${result}\n\nSuggestion: ${suggestion}` }] };
+          const budget = BUDGET_LIMITS[getActiveBudget()];
+          const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
+          const workerHandle = await workerPool.acquire();
+          let result: string;
+          try {
+            result = await executeInSandbox(
+              args.code,
+              sandboxApi,
+              (r) => capCodeModeResult(r, budget.maxResponseBytes),
+              budget.maxResponseBytes,
+              workerHandle
+            );
+          } finally {
+            workerPool.release(workerHandle);
           }
-          return { content: [{ type: "text", text: result }] };
+
+          // When execution fails, use MCP Sampling to get an LLM-generated explanation
+          if (result.startsWith("Error:")) {
+            const suggestion = await sampleOrNull(server, [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `The following JavaScript code failed in a sandbox:\n\`\`\`js\n${args.code}\n\`\`\`\n${result}\n\nBriefly explain what went wrong and suggest a fix.`,
+                },
+              },
+            ], { maxTokens: 256, systemPrompt: "You are a helpful code debugger. Be concise." });
+            taskRegistry.completeTask(taskId, suggestion ? `${result}\n\nSuggestion: ${suggestion}` : result);
+            return;
+          }
+
+          // Record in masker for future turns
+          masker.record(
+            currentTurn,
+            "opengrok_execute",
+            args.code.slice(0, 80).replace(/\n/g, " "),
+            result
+          );
+
+          const historyHeader = masker.getMaskedHistoryHeader();
+          let finalResult = historyHeader
+            ? `${historyHeader}\n---\n${result}`
+            : result;
+
+          executeCallCount++;
+          if (executeCallCount % 5 === 0 && executeCallCount > 3) {
+            finalResult += "\n\n> Memory: Update active-task.md before answering.";
+          }
+
+          taskRegistry.completeTask(taskId, finalResult);
+        } catch (err) {
+          taskRegistry.failTask(taskId, String(err));
         }
+      })();
 
-        // Record in masker for future turns
-        masker.record(
-          currentTurn,
-          "opengrok_execute",
-          args.code.slice(0, 80).replace(/\n/g, " "),
-          result
-        );
-
-        const historyHeader = masker.getMaskedHistoryHeader();
-        let finalResult = historyHeader
-          ? `${historyHeader}\n---\n${result}`
-          : result;
-
-        executeCallCount++;
-        if (executeCallCount % 5 === 0 && executeCallCount > 3) {
-          finalResult += "\n\n> Memory: Update active-task.md before answering.";
-        }
-
-        return { content: [{ type: "text", text: finalResult }] };
-      } catch (err) {
-        return makeToolError("opengrok_execute", err);
-      }
+      return {
+        content: [{ type: "text", text: `Task started. Poll with opengrok_get_task_result({ taskId: "${taskId}" })` }],
+        structuredContent: { taskId, status: "running" },
+      };
     }
   );
 
@@ -2100,6 +2110,7 @@ function registerLegacyTools(
         "(fallback) git blame annotation"
       ),
       inputSchema: BlameArgs.shape,
+      outputSchema: BlameOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2108,7 +2119,31 @@ function registerLegacyTools(
         const parsed = BlameArgs.parse(args);
         const annotations = await client.getAnnotate(parsed.project, parsed.path);
         const text = formatBlame(annotations, parsed.line_start, parsed.line_end, parsed.include_diff);
-        return { content: [{ type: "text", text: capResponse(text) }] };
+
+        let displayLines = annotations.lines;
+        if (parsed.line_start !== undefined || parsed.line_end !== undefined) {
+          /* v8 ignore start */
+          const s = parsed.line_start ?? 1;
+          const e = parsed.line_end ?? Infinity;
+          /* v8 ignore stop */
+          displayLines = annotations.lines.filter((l) => l.lineNumber >= s && l.lineNumber <= e);
+        }
+
+        const structured: z.infer<typeof BlameOutput> = {
+          _meta: { tool: "opengrok_blame", project: parsed.project, path: parsed.path, fetchedAt: new Date().toISOString(), version: VERSION },
+          entries: displayLines.map((l) => ({
+            line: l.lineNumber,
+            commit: l.revision ?? "",
+            author: l.author ?? "",
+            date: l.date ?? "",
+            content: l.content,
+          })),
+        };
+
+        return {
+          content: [{ type: "text", text: capResponse(text) }],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_blame", err);
       }
@@ -2457,8 +2492,11 @@ export async function runServer(
   const server = createServer(client, config, memoryBank);
   const transport = new StdioServerTransport();
 
+  let healthCheckInterval: NodeJS.Timeout | undefined;
+
   const shutdown = async (signal: string): Promise<void> => {
     logger.info(`Received ${signal}, shutting down...`);
+    if (healthCheckInterval) clearInterval(healthCheckInterval);
     await client.close();
     process.exit(0);
   };
@@ -2491,13 +2529,21 @@ export async function runServer(
     auditLog({ type: "config_load", detail: credentialAgeWarning });
   }
 
+  // Warn when OPENGROK_ALLOWED_CLIENT_IDS is configured but not yet enforced
+  if (parseAllowedClientIds(config.OPENGROK_ALLOWED_CLIENT_IDS).length > 0) {
+    logger.warn(
+      "OPENGROK_ALLOWED_CLIENT_IDS is configured but enforcement is pending SDK client-context support. " +
+      "Requests are NOT currently filtered by client ID."
+    );
+  }
+
   // Task 4.9: Monitor config changes and connectivity for tool list changes
   setupNotificationHandlers(server, client, config);
 
   await server.connect(transport);
 
   // Start health check polling after server connects
-  startHealthCheckPolling(server, client);
+  healthCheckInterval = startHealthCheckPolling(server, client);
 }
 /* v8 ignore stop */
 

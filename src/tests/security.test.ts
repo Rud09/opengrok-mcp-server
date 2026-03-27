@@ -67,6 +67,20 @@ describe('sanitizeSandboxError', () => {
     expect(result).toContain('<path>');
   });
 
+  it('strips /etc and /proc paths', () => {
+    expect(sanitizeSandboxError('/etc/passwd')).toContain('<path>');
+    expect(sanitizeSandboxError('read /proc/self/maps failed')).toContain('<path>');
+  });
+
+  it('strips relative traversal paths', () => {
+    expect(sanitizeSandboxError('../../etc/passwd')).toContain('<path>');
+  });
+
+  it('strips Windows AppData and UNC paths', () => {
+    expect(sanitizeSandboxError('Cannot open C:\\AppData\\Local\\secret')).toContain('<path>');
+    expect(sanitizeSandboxError('\\\\server\\share\\secret')).toContain('<path>');
+  });
+
   it('keeps multi-line errors after stripping stack frames', () => {
     const msg = 'TypeError: Cannot read properties of undefined\n    at doThing (/home/user/src/foo.js:10:5)\n    at main (/home/user/src/bar.js:20:1)';
     const result = sanitizeSandboxError(msg);

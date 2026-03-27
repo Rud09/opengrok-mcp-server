@@ -150,6 +150,7 @@ export function checkCredentialAge(configDir: string): string | null {
     const content = fs.readFileSync(stateFile, "utf8");
     const state = JSON.parse(content) as { rotatedAt: string };
     const ageDays = (Date.now() - new Date(state.rotatedAt).getTime()) / (1000 * 86400);
+    if (!Number.isFinite(ageDays) || ageDays < 0) return null; // clock skew or corrupt
     if (ageDays > 90) {
       return `Credentials not rotated in ${Math.floor(ageDays)} days`;
     }

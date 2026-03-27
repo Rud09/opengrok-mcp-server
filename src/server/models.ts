@@ -130,6 +130,14 @@ export const BlameArgs = z.object({
   line_end: z.number().int().min(1).optional().describe("End line (inclusive, default: all lines)"),
   include_diff: z.boolean().default(false).describe("Include the commit diff summary for each unique commit"),
   response_format: RESPONSE_FORMAT,
+}).superRefine((data, ctx) => {
+  if (data.line_start !== undefined && data.line_end !== undefined && data.line_end < data.line_start) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "line_end must be >= line_start",
+      path: ["line_end"],
+    });
+  }
 });
 export type BlameArgs = z.infer<typeof BlameArgs>;
 
@@ -451,4 +459,18 @@ export const DependencyMapOutput = z.object({
       direction: z.enum(["uses", "used_by"]),
     })
   ),
+});
+
+/** Output schema for opengrok_blame */
+export const BlameLineEntry = z.object({
+  line: z.number(),
+  commit: z.string(),
+  author: z.string(),
+  date: z.string(),
+  content: z.string(),
+});
+
+export const BlameOutput = z.object({
+  _meta: MetaSchema,
+  entries: z.array(BlameLineEntry),
 });

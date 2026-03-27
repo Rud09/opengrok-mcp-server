@@ -32,6 +32,13 @@ export function getTask(taskId: string): TaskResult | null {
   const task = tasks.get(taskId);
   if (!task) return null;
 
+  // Expire stuck running tasks after 30 minutes
+  const MAX_RUNNING_AGE_MS = 30 * 60 * 1000;
+  if (task.status === "running" && Date.now() - task.createdAt > MAX_RUNNING_AGE_MS) {
+    tasks.delete(taskId);
+    return null;
+  }
+
   // Clean up old completed tasks
   if (task.status !== "running" && task.completedAt && Date.now() - task.completedAt > TASK_TTL_MS) {
     tasks.delete(taskId);

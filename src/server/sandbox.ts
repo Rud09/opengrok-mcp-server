@@ -66,8 +66,13 @@ export function sanitizeSandboxError(err: unknown): string {
   // Strip Node.js internal module paths
   message = message.replace(/\bnode:internal\/\S+/g, "<node-internal>");
   // Strip absolute filesystem paths (Unix and Windows)
-  message = message.replace(/\/(?:home|tmp|var|usr|build|opt|mnt|srv|root|Users|private)(?:\/\S+)/g, "<path>");
-  message = message.replace(/[A-Z]:\\(?:Users|Windows|Program Files|build)(?:\\\S+)/gi, "<path>");
+  // Strip Unix absolute paths (any /dir/file pattern)
+  message = message.replace(/\/[\w.-]+(\/[\w.:\-]+)+/g, "<path>");
+  // Strip Windows absolute paths
+  message = message.replace(/[A-Za-z]:\\[\S]+/g, "<path>");
+  message = message.replace(/\\\\[\S]+/g, "<path>");
+  // Strip relative paths traversing upward
+  message = message.replace(/\.\.[\\/][\S]*/g, "<path>");
   // Collapse excess blank lines
   message = message.replace(/\n{3,}/g, "\n\n").trim();
   return message.slice(0, 500);
