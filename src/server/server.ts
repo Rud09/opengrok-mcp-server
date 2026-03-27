@@ -14,7 +14,7 @@ import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
 import type { Config } from "./config.js";
-import { DEFAULT_PER_TOOL_LIMITS, parsePerToolLimits } from "./config.js";
+import { parsePerToolLimits, parseAllowedClientIds, getConfigDirectory, checkCredentialAge } from "./config.js";
 import {
   formatAnnotate,
   formatBatchSearchResults,
@@ -72,6 +72,10 @@ import {
   ProjectsListOutput,
   BatchSearchOutput,
   SymbolContextOutput,
+  FileHistoryOutput,
+  FileSymbolsOutput,
+  WhatChangedOutput,
+  DependencyMapOutput,
 } from "./models.js";
 import type {
   FileContent,
@@ -85,6 +89,7 @@ import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
 import { ObservationMasker } from "./observation-masker.js";
 import { createSandboxAPI, executeInSandbox, API_SPEC } from "./sandbox.js";
 import { SandboxWorkerPool } from "./worker-pool.js";
+import * as taskRegistry from "./task-registry.js";
 import yaml from "js-yaml";
 
 import { logger } from "./logger.js";
@@ -400,11 +405,32 @@ async function readFileAtAbsPath(
 // Tool result types and utilities
 // ---------------------------------------------------------------------------
 
+type ResourceLinkItem = {
+  type: "resource_link";
+  uri: string;
+  name: string;
+  mimeType?: string;
+};
+
 type ToolResult = {
   isError?: boolean;
-  content: Array<{ type: "text"; text: string }>;
+  content: Array<{ type: "text"; text: string } | ResourceLinkItem>;
   structuredContent?: Record<string, unknown>;
 };
+
+function getMimeType(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    c: "text/x-c", h: "text/x-c", cpp: "text/x-c++", cc: "text/x-c++",
+    cxx: "text/x-c++", hpp: "text/x-c++", hxx: "text/x-c++",
+    java: "text/x-java-source", py: "text/x-python", js: "text/javascript",
+    ts: "text/typescript", go: "text/x-go", rs: "text/x-rustsrc",
+    rb: "text/x-ruby", sh: "text/x-sh", xml: "text/xml",
+    json: "application/json", yaml: "text/yaml", yml: "text/yaml",
+    md: "text/markdown", txt: "text/plain",
+  };
+  return map[ext] ?? "text/plain";
+}
 
 function makeToolError(name: string, err: unknown): ToolResult {
   logger.error(`Tool "${name}" failed:`, err);
@@ -1013,7 +1039,8 @@ async function dispatchTool(
       try {
         const projects = await client.listProjects();
         indexedProjects = projects.length;
-      } catch (err) {
+      } catch {
+        // err intentionally unused
         warnings.push("Could not retrieve project list");
       }
       
@@ -1126,6 +1153,14 @@ export function createServer(
   if (codeMode && memoryBank) {
     registerCodeModeTools(server, client, config, memoryBank, local, toolRateLimiter);
   }
+
+  // Task 4.5: Register memory files as MCP Resources
+  if (memoryBank) {
+    registerMemoryResources(server, memoryBank);
+  }
+
+  // Task 4.6: Register MCP Prompts
+  registerInvestigationPrompts(server);
 
   return server;
 }
@@ -1377,6 +1412,53 @@ function registerCodeModeTools(
       }
     }
   );
+
+  // Tool 3: opengrok_get_task_result — poll for task completion (Task 4.16)
+  server.registerTool(
+    "opengrok_get_task_result",
+    {
+      title: "Get Task Result",
+      description:
+        "Poll for the result of a long-running opengrok_execute task. " +
+        "Returns the task status (running/completed/error) and result if available.",
+      inputSchema: {
+        taskId: z.string().describe("Task ID returned by a previous opengrok_execute call"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
+    },
+    async (args) => {
+      try {
+        const task = taskRegistry.getTask(args.taskId);
+        if (!task) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ error: "Task not found or expired", taskId: args.taskId }),
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                taskId: args.taskId,
+                status: task.status,
+                result: task.result,
+                error: task.error,
+                createdAt: task.createdAt,
+                completedAt: task.completedAt,
+              }),
+            },
+          ],
+        };
+      } catch (err) {
+        return makeToolError("opengrok_get_task_result", err);
+      }
+    }
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1512,6 +1594,7 @@ function registerLegacyTools(
       title: "Get File History",
       description: desc("Commit history for a file.", "(fallback) file commit history"),
       inputSchema: GetFileHistoryArgs.shape,
+      outputSchema: FileHistoryOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -1522,7 +1605,28 @@ function registerLegacyTools(
           args.path,
           args.max_entries
         );
-        return { content: [{ type: "text", text: capResponse(formatFileHistory(history)) }] };
+        const structured = {
+          _meta: {
+            tool: "opengrok_get_file_history",
+            project: args.project,
+            path: args.path,
+            fetchedAt: new Date().toISOString(),
+            version: __VERSION__,
+          },
+          entries: history.entries.map((e) => ({
+            revision: e.revision,
+            author: e.author,
+            date: e.date,
+            message: e.message,
+          })),
+        };
+        return {
+          content: [
+            { type: "text" as const, text: capResponse(formatFileHistory(history)) },
+            { type: "resource_link" as const, uri: `opengrok://file/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
+          ],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_get_file_history", err);
       }
@@ -1820,23 +1924,45 @@ function registerLegacyTools(
         "(fallback) file symbols list — call before get_file_content"
       ),
       inputSchema: GetFileSymbolsArgs.shape,
+      outputSchema: FileSymbolsOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_get_file_symbols" });
       try {
         const result = await client.getFileSymbols(args.project, args.path);
+        const structured = {
+          _meta: {
+            tool: "opengrok_get_file_symbols",
+            project: args.project,
+            path: args.path,
+            fetchedAt: new Date().toISOString(),
+            version: __VERSION__,
+          },
+          symbols: result.symbols.map((s) => ({
+            name: s.symbol,
+            type: s.type,
+            line: s.line,
+          })),
+        };
         if (!result.symbols.length) {
           return {
             content: [
               {
-                type: "text",
+                type: "text" as const,
                 text: `No symbols found for ${args.path} in project ${args.project}. The file may not be indexed or the OpenGrok instance does not support the /api/v1/file/defs endpoint.`,
               },
             ],
+            structuredContent: structured as unknown as Record<string, unknown>,
           };
         }
-        return { content: [{ type: "text", text: capResponse(formatFileSymbols(result)) }] };
+        return {
+          content: [
+            { type: "text" as const, text: capResponse(formatFileSymbols(result)) },
+            { type: "resource_link" as const, uri: `opengrok://file/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
+          ],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_get_file_symbols", err);
       }
@@ -1855,6 +1981,7 @@ function registerLegacyTools(
         "(fallback) recent line changes grouped by commit"
       ),
       inputSchema: WhatChangedArgs.shape,
+      outputSchema: WhatChangedOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -1866,7 +1993,46 @@ function registerLegacyTools(
           client.getAnnotate(parsed.project, parsed.path),
         ]);
         const text = formatWhatChanged(history, annotation, parsed.since_days);
-        return { content: [{ type: "text", text: capResponse(text) }] };
+
+        // Build structured changes from the same logic as formatWhatChanged
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - parsed.since_days);
+        const recentRevisions = new Set<string>();
+        for (const entry of history.entries) {
+          const entryDate = new Date(entry.date);
+          if (!isNaN(entryDate.getTime()) && entryDate >= cutoff) {
+            recentRevisions.add(entry.revision);
+          }
+        }
+        const byRevision = new Map<string, { author: string; date: string; lines: number[] }>();
+        for (const line of annotation.lines) {
+          if (!recentRevisions.has(line.revision)) continue;
+          if (!byRevision.has(line.revision)) {
+            byRevision.set(line.revision, { author: line.author, date: line.date, lines: [] });
+          }
+          byRevision.get(line.revision)!.lines.push(line.lineNumber);
+        }
+        const changes = [...byRevision.entries()].map(([commit, { author, date, lines }]) => ({
+          commit,
+          author,
+          date,
+          lines,
+        }));
+
+        const structured = {
+          _meta: {
+            tool: "opengrok_what_changed",
+            project: parsed.project,
+            path: parsed.path,
+            fetchedAt: new Date().toISOString(),
+            version: __VERSION__,
+          },
+          changes,
+        };
+        return {
+          content: [{ type: "text" as const, text: capResponse(text) }],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_what_changed", err);
       }
@@ -1911,6 +2077,7 @@ function registerLegacyTools(
         "(fallback) #include/import dependency graph, configurable depth"
       ),
       inputSchema: DependencyMapArgs.shape,
+      outputSchema: DependencyMapOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -1920,7 +2087,24 @@ function registerLegacyTools(
         const parsed = DependencyMapArgs.parse(args);
         const nodes = await buildDependencyGraph(client, parsed.project, parsed.path, parsed.depth, parsed.direction);
         const text = formatDependencyMap(parsed.path, parsed.depth, nodes);
-        return { content: [{ type: "text", text: capResponse(text) }] };
+        const structured = {
+          _meta: {
+            tool: "opengrok_dependency_map",
+            project: parsed.project,
+            path: parsed.path,
+            fetchedAt: new Date().toISOString(),
+            version: __VERSION__,
+          },
+          nodes: nodes.map((n) => ({
+            path: n.path,
+            level: n.level,
+            direction: n.direction,
+          })),
+        };
+        return {
+          content: [{ type: "text" as const, text: capResponse(text) }],
+          structuredContent: structured as unknown as Record<string, unknown>,
+        };
       } catch (err) {
         return makeToolError("opengrok_dependency_map", err);
       }
@@ -1932,6 +2116,153 @@ function registerLegacyTools(
     registerMemoryTools(server, memoryBank);
   }
   // registerLegacyTools intentionally returns void — server is mutated in place
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.5: MCP Resources — expose memory bank files for direct browsing
+// ---------------------------------------------------------------------------
+
+function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): void {
+  for (const filename of ALLOWED_FILES) {
+    const uri = `opengrok-memory://${filename}`;
+    server.registerResource(
+      filename,
+      uri,
+      {
+        description: `OpenGrok memory bank file: ${filename}`,
+        mimeType: "text/markdown",
+      },
+      async () => {
+        const content = await memoryBank.read(filename) ?? "";
+        return {
+          contents: [{ uri, mimeType: "text/markdown", text: content }],
+        };
+      }
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.6: MCP Prompts — reusable investigation workflows
+// ---------------------------------------------------------------------------
+
+function registerInvestigationPrompts(server: McpServer): void {
+  server.registerPrompt(
+    "investigate-symbol",
+    {
+      description:
+        "Investigate a symbol across definition, usages, callers, and recent changes. " +
+        "Guides the LLM through a structured symbol-level investigation.",
+      argsSchema: {
+        symbol: z.string().describe("The symbol name to investigate (function, class, variable, etc.)"),
+        project: z.string().optional().describe("OpenGrok project to scope the search to"),
+      },
+    },
+    ({ symbol, project }) => {
+      const scope = project ? ` in project \`${project}\`` : "";
+      return {
+        description: `Investigate symbol \`${symbol}\`${scope}`,
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: [
+                `Investigate the symbol \`${symbol}\`${scope} using the OpenGrok MCP server.`,
+                "",
+                "Follow these steps in order:",
+                `1. **Definition** — use \`opengrok_search_code\` with type \`defs\` to find where \`${symbol}\` is defined.`,
+                `2. **Usages** — use \`opengrok_search_code\` with type \`refs\` to find all references.`,
+                `3. **Symbol context** — use \`opengrok_get_symbol_context\` to see the full declaration with surrounding code.`,
+                `4. **Recent changes** — use \`opengrok_what_changed\` or \`opengrok_get_file_history\` on the definition file.`,
+                "",
+                "Summarise: what the symbol does, where it is defined, how widely it is used, and any recent modifications.",
+              ].join("\n"),
+            },
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerPrompt(
+    "find-feature",
+    {
+      description:
+        "Find where a feature is implemented in the codebase. " +
+        "Guides the LLM through searching, reading key files, and mapping entry points.",
+      argsSchema: {
+        feature: z.string().describe("Description of the feature to locate (e.g. 'rate limiting', 'authentication')"),
+        project: z.string().optional().describe("OpenGrok project to scope the search to"),
+      },
+    },
+    ({ feature, project }) => {
+      const scope = project ? ` in project \`${project}\`` : "";
+      return {
+        description: `Find feature: ${feature}${scope}`,
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: [
+                `Find where the feature "${feature}" is implemented${scope}.`,
+                "",
+                "Approach:",
+                `1. **Full-text search** — use \`opengrok_search_code\` with type \`full\` for keywords related to "${feature}".`,
+                "2. **Path search** — use \`opengrok_search_code\` with type \`path\` to find files named after the feature.",
+                "3. **Read candidates** — use \`opengrok_get_file_content\` to read the most relevant files.",
+                "4. **Browse structure** — use \`opengrok_browse_directory\` on relevant directories to map the module layout.",
+                "",
+                "Summarise: the entry point(s), key files, and a brief explanation of how the feature works.",
+              ].join("\n"),
+            },
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerPrompt(
+    "review-file",
+    {
+      description:
+        "Perform a code review of a specific file. " +
+        "Guides the LLM through reading, history, callers, and producing a structured review.",
+      argsSchema: {
+        path: z.string().describe("Repository-relative path to the file to review"),
+        project: z.string().describe("OpenGrok project the file belongs to"),
+      },
+    },
+    ({ path: filePath, project }) => ({
+      description: `Review file: ${filePath}`,
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: [
+              `Perform a code review of \`${filePath}\` in project \`${project}\`.`,
+              "",
+              "Steps:",
+              `1. **Read file** — use \`opengrok_get_file_content\` for project \`${project}\`, path \`${filePath}\`.`,
+              `2. **File history** — use \`opengrok_get_file_history\` to understand recent changes.`,
+              `3. **Symbols** — use \`opengrok_get_file_symbols\` to list the public API surface.`,
+              `4. **Callers** — for each exported symbol, check \`opengrok_search_code\` with type \`refs\` to understand how it is used.`,
+              `5. **Annotations** — use \`opengrok_get_file_annotate\` to see which commits touched which lines.`,
+              "",
+              "Produce a structured review covering:",
+              "- **Purpose**: what the file does",
+              "- **Design observations**: naming, structure, separation of concerns",
+              "- **Potential issues**: bugs, edge cases, error handling",
+              "- **Test coverage signals**: anything that looks under-tested",
+              "- **Recommendations**: concrete, prioritised action items",
+            ].join("\n"),
+          },
+        },
+      ],
+    })
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2027,6 +2358,13 @@ export async function runServer(
     );
   }
 
+  // Task 4.14: Check credential age and warn if stale
+  const credentialAgeWarning = getCredentialAgeWarning();
+  if (credentialAgeWarning) {
+    logger.warn(`Task 4.14 — ${credentialAgeWarning}`);
+    auditLog({ type: "config_load", detail: credentialAgeWarning });
+  }
+
   await server.connect(transport);
 }
 /* v8 ignore stop */
@@ -2047,6 +2385,36 @@ function sanitizeErrorMessage(message: string): string {
     "[path]"
   );
   return sanitized;
+}
+
+/**
+ * Validate that the request originates from an allowed client (if configured).
+ * Task 4.13: Request Origin Validation
+ * If OPENGROK_ALLOWED_CLIENT_IDS is set, throws if clientId is not in the list.
+ * @unused - Reserved for future middleware integration in SDK versions with client context support
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function validateOrigin(clientId: string | undefined, config: Config): void {
+  const allowed = parseAllowedClientIds(config.OPENGROK_ALLOWED_CLIENT_IDS);
+  if (!allowed || allowed.length === 0) return; // no restriction
+  if (!clientId || !allowed.includes(clientId)) {
+    auditLog({ type: "auth_used", detail: `unauthorized client: ${clientId || "unknown"}` });
+    throw new Error("Unauthorized client");
+  }
+}
+
+/**
+ * Get credential age warning (if applicable).
+ * Task 4.14: Credential Rotation Warnings
+ * Returns warning string if credentials are older than 90 days.
+ */
+function getCredentialAgeWarning(): string | null {
+  try {
+    const configDir = getConfigDirectory();
+    return checkCredentialAge(configDir);
+  } catch {
+    return null; // config module or directory check failed
+  }
 }
 
 /**

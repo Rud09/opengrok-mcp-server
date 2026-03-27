@@ -6,6 +6,8 @@
 import { z } from "zod";
 import * as fs from "fs";
 import * as crypto from "crypto";
+import * as path from "path";
+import * as os from "os";
 import { logger } from "./logger.js";
 
 // ---------------------------------------------------------------------------
@@ -102,6 +104,8 @@ const ConfigSchema = z.object({
   OPENGROK_ENABLE_CACHE_HINTS: z.coerce.boolean().default(false),
   // Per-tool rate limiting (comma-separated tool=rpm pairs, e.g. "opengrok_batch_search=5,opengrok_execute=10")
   OPENGROK_PER_TOOL_RATELIMIT: z.string().default(""),
+  // Allowed client IDs for request origin validation (comma-separated, empty = no restriction)
+  OPENGROK_ALLOWED_CLIENT_IDS: z.string().default(""),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -129,6 +133,39 @@ export function parsePerToolLimits(configStr: string): Record<string, number> {
   }
 
   return limits;
+}
+
+// Parse comma-separated list of allowed client IDs
+export function parseAllowedClientIds(configStr: string): string[] {
+  if (!configStr || !configStr.trim()) return [];
+  return configStr.split(",").map((id) => id.trim()).filter((id) => id.length > 0);
+}
+
+// Check credential age and return warning if older than threshold
+export function checkCredentialAge(configDir: string): string | null {
+  try {
+    const stateFile = path.join(configDir, "last-credential-rotation.json");
+    const content = fs.readFileSync(stateFile, "utf8");
+    const state = JSON.parse(content) as { rotatedAt: string };
+    const ageDays = (Date.now() - new Date(state.rotatedAt).getTime()) / (1000 * 86400);
+    if (ageDays > 90) {
+      return `Credentials not rotated in ${Math.floor(ageDays)} days`;
+    }
+    return null;
+  } catch {
+    return null; // no state file = first run or inaccessible
+  }
+}
+
+// Update credential rotation timestamp
+export function updateCredentialRotationTimestamp(configDir: string): void {
+  try {
+    fs.mkdirSync(configDir, { recursive: true });
+    const stateFile = path.join(configDir, "last-credential-rotation.json");
+    fs.writeFileSync(stateFile, JSON.stringify({ rotatedAt: new Date().toISOString() }));
+  } catch (err) {
+    logger.warn("Failed to update credential rotation timestamp:", err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +277,12 @@ export function loadConfig(): Config {
     data.OPENGROK_PASSWORD_KEY
   );
 
+  // Update credential rotation timestamp if credentials are provided
+  if (password || data.OPENGROK_USERNAME) {
+    const configDir = getConfigDirectory();
+    updateCredentialRotationTimestamp(configDir);
+  }
+
   // Freeze to prevent accidental mutation by consumers
   _config = Object.freeze({ ...data, OPENGROK_PASSWORD: password });
 
@@ -249,6 +292,16 @@ export function loadConfig(): Config {
   }
 
   return _config;
+}
+
+// Get the config directory, respecting XDG_CONFIG_HOME
+export function getConfigDirectory(): string {
+  const xdgConfig = process.env.XDG_CONFIG_HOME;
+  if (xdgConfig) {
+    return path.join(xdgConfig, "opengrok-mcp");
+  }
+  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  return path.join(homeDir, ".config", "opengrok-mcp");
 }
 
 export function resetConfig(): void {
