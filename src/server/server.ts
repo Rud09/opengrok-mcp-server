@@ -952,7 +952,7 @@ export function createServer(
   const local = buildLocalLayer(config);
 
   // Always register legacy tools — useful for simple lookups
-  registerLegacyTools(server, client, config, local, memoryBank);
+  registerLegacyTools(server, client, config, local, codeMode, memoryBank);
 
   // Also register Code Mode tools when enabled — LLM chooses best approach
   if (codeMode && memoryBank) {
@@ -984,12 +984,13 @@ function registerMemoryTools(
       try {
         const lines: string[] = ["# OpenGrok Memory Status"];
         for (const filename of ALLOWED_FILES) {
-          const content = await memoryBank.read(filename).catch(() => undefined);
+          const content = await memoryBank.read(filename);
           if (!content) {
             lines.push(`- ${filename}: empty`);
           } else {
             const bytes = Buffer.byteLength(content, "utf8");
-            const preview = content.split("\n")[0]?.trim().slice(0, 60) ?? "";
+            const firstLine = content.split("\n").find(l => l.trim().length > 0) ?? "";
+            const preview = firstLine.trim().slice(0, 60);
             lines.push(`- ${filename}: ${bytes}B — "${preview}"`);
           }
         }
@@ -1198,14 +1199,18 @@ function registerLegacyTools(
   client: OpenGrokClient,
   config: Config,
   local: LocalLayer,
+  codeMode: boolean,
   memoryBank?: MemoryBank
 ): void {
+  const desc = (full: string, compact: string): string => codeMode ? compact : full;
   server.registerTool(
     "opengrok_search_code",
     {
       title: "Search Code",
-      description:
+      description: desc(
         "Search OpenGrok. Types: full (text), defs (definitions), refs (references), path (filenames), hist (commit messages). Prefer defs/refs for known symbol names. Use opengrok_batch_search for multiple queries.",
+        "(fallback) search the codebase"
+      ),
       inputSchema: SearchCodeArgs.shape,
       outputSchema: SearchResultsOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1232,7 +1237,7 @@ function registerLegacyTools(
     "opengrok_find_file",
     {
       title: "Find File",
-      description: "Find files by name/path pattern across the codebase.",
+      description: desc("Find files by name/path pattern across the codebase.", "(fallback) find file by name pattern"),
       inputSchema: FindFileArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1258,8 +1263,10 @@ function registerLegacyTools(
     "opengrok_get_file_content",
     {
       title: "Get File Content",
-      description:
+      description: desc(
         "Get file contents. ALWAYS pass start_line/end_line — never fetch full files. Use opengrok_search_code first to find line numbers. For full symbol context use opengrok_get_symbol_context.",
+        "(fallback) read file lines — always pass start_line + end_line"
+      ),
       inputSchema: GetFileContentArgs.shape,
       outputSchema: FileContentOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1279,7 +1286,7 @@ function registerLegacyTools(
     "opengrok_get_file_history",
     {
       title: "Get File History",
-      description: "Commit history for a file.",
+      description: desc("Commit history for a file.", "(fallback) file commit history"),
       inputSchema: GetFileHistoryArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1301,7 +1308,7 @@ function registerLegacyTools(
     "opengrok_browse_directory",
     {
       title: "Browse Directory",
-      description: "List files/subdirectories at a path.",
+      description: desc("List files/subdirectories at a path.", "(fallback) list directory contents"),
       inputSchema: BrowseDirectoryArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1326,7 +1333,7 @@ function registerLegacyTools(
     "opengrok_list_projects",
     {
       title: "List Projects",
-      description: "List indexed OpenGrok projects.",
+      description: desc("List indexed OpenGrok projects.", "(fallback) list all indexed projects"),
       inputSchema: ListProjectsArgs.shape,
       outputSchema: ProjectsListOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1346,8 +1353,10 @@ function registerLegacyTools(
     "opengrok_get_file_annotate",
     {
       title: "Get File Annotate",
-      description:
+      description: desc(
         "Blame annotations (who changed each line). Use start_line/end_line to limit output.",
+        "(fallback) line-by-line blame"
+      ),
       inputSchema: GetFileAnnotateArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1372,7 +1381,7 @@ function registerLegacyTools(
     "opengrok_search_suggest",
     {
       title: "Search Suggest",
-      description: "Autocomplete suggestions for a partial query.",
+      description: desc("Autocomplete suggestions for a partial query.", "(fallback) search autocomplete suggestions"),
       inputSchema: SearchSuggestArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1403,11 +1412,13 @@ function registerLegacyTools(
     "opengrok_batch_search",
     {
       title: "Batch Search",
-      description:
+      description: desc(
         "Execute up to 5 searches in parallel in one call.\n\n" +
         "**When to use**: Always prefer this over multiple opengrok_search_code calls for the same investigation.\n\n" +
         "**Args**: `queries` array (each with `query`, `search_type`, `max_results`); `projects` and `file_type` apply to all queries.\n\n" +
         "**Example**: Find definition, references, and usage patterns of a symbol in one call.",
+        "(fallback) 2–5 parallel searches in 1 call"
+      ),
       inputSchema: BatchSearchArgs.shape,
       outputSchema: BatchSearchOutput.shape,
       annotations: READ_ONLY_OPEN,
