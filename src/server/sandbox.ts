@@ -51,7 +51,7 @@ const SHARED_BUFFER_SIZE = 20 + 1024 * 1024;
  * IMPORTANT notes embedded in the spec:
  * - batchSearch returns an array of result sets (not a single result)
  * - callees direction always returns empty (not yet implemented)
- * - Promise.all does NOT parallelize inside sandbox — use batchSearch instead
+ * - Promise.all does NOT parallelize inside sandbox (Atomics bridge serializes calls) — use batchSearch instead
  */
 export const API_SPEC = {
   intro:

@@ -308,7 +308,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 
     // Fire-and-forget: check for remote updates (throttled to once per 24 h)
-    void checkForRemoteUpdate(context);
+    setTimeout(() => { void checkForRemoteUpdate(context); }, 30_000);
 
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const username = config.get<string>('username');
@@ -335,10 +335,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         );
         if (action === 'Configure Now') {
             openConfigurationPanel(context);
-        } else if (!config.get<boolean>('hasPromptedConfig')) {
+        } else if (!context.globalState.get<boolean>('hasPromptedConfig')) {
             // First time setup: open configuration automatically
             openConfigurationPanel(context);
-            await config.update('hasPromptedConfig', true, vscode.ConfigurationTarget.Global);
+            await context.globalState.update('hasPromptedConfig', true);
         }
     }
 
@@ -439,30 +439,30 @@ async function configureCredentials(): Promise<void> {
  * Test connection using Node's https module — properly supports rejectUnauthorized
  * for internal/self-signed certificates on corporate networks.
  */
-async function testConnection(): Promise<void> {
+async function testConnection(silent = false): Promise<void> {
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const username = config.get<string>('username');
     const baseUrl = config.get<string>('baseUrl');
     const verifySsl = config.get<boolean>('verifySsl') ?? true;
 
     if (!username) {
-        vscode.window.showErrorMessage('OpenGrok: No username configured.', 'Configure Now')
-            .then(a => { if (a === 'Configure Now') vscode.commands.executeCommand('opengrok-mcp.configureUI'); });
+        if (!silent) {
+            vscode.window.showErrorMessage('OpenGrok: No username configured.', 'Configure Now')
+                .then(a => { if (a === 'Configure Now') vscode.commands.executeCommand('opengrok-mcp.configureUI'); });
+        }
         return;
     }
 
     const password = await secretStorage.get(`opengrok-password-${username}`);
     if (!password) {
-        vscode.window.showErrorMessage('OpenGrok: No password found. Please configure credentials.', 'Configure Now')
-            .then(a => { if (a === 'Configure Now') vscode.commands.executeCommand('opengrok-mcp.configureUI'); });
+        if (!silent) {
+            vscode.window.showErrorMessage('OpenGrok: No password found. Please configure credentials.', 'Configure Now')
+                .then(a => { if (a === 'Configure Now') vscode.commands.executeCommand('opengrok-mcp.configureUI'); });
+        }
         return;
     }
 
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: 'Testing OpenGrok connection...',
-        cancellable: false
-    }, async () => {
+    const runTest = async () => {
         try {
             const targetUrl = baseUrl || '';
             const parsed = new URL(targetUrl);
@@ -475,34 +475,46 @@ async function testConnection(): Promise<void> {
 
             if (statusCode >= 200 && statusCode < 400) {
                 log(`Connection test successful (HTTP ${statusCode})`);
-                vscode.window.showInformationMessage('✓ OpenGrok connection successful!');
+                if (!silent) vscode.window.showInformationMessage('✓ OpenGrok connection successful!');
                 updateStatusBar('ready');
             } else if (statusCode === 401) {
                 log('Authentication failed (401)');
-                vscode.window.showErrorMessage('✗ Authentication failed. Check your username and password.');
+                if (!silent) vscode.window.showErrorMessage('✗ Authentication failed. Check your username and password.');
                 updateStatusBar('error');
             } else {
                 log(`Unexpected status: ${statusCode}`);
-                vscode.window.showWarningMessage(`OpenGrok returned HTTP ${statusCode}`);
+                if (!silent) vscode.window.showWarningMessage(`OpenGrok returned HTTP ${statusCode}`);
             }
         } catch (err: unknown) {
             const msg: string = err instanceof Error ? err.message : String(err);
             log(`Connection test failed: ${msg}`);
-            if (msg.includes('certificate') || msg.includes('self-signed') || msg.includes('CERT') || msg.includes('SSL')) {
-                vscode.window.showErrorMessage(
-                    '✗ SSL certificate error. If using a self-signed/internal CA, disable SSL verification in Settings.',
-                    'Open Settings'
-                ).then(a => {
-                    if (a === 'Open Settings') {
-                        vscode.commands.executeCommand('workbench.action.openSettings', 'opengrok-mcp.verifySsl');
-                    }
-                });
-            } else {
-                vscode.window.showErrorMessage(`✗ Connection failed: ${msg}`);
+            if (!silent) {
+                if (msg.includes('certificate') || msg.includes('self-signed') || msg.includes('CERT') || msg.includes('SSL')) {
+                    vscode.window.showErrorMessage(
+                        '✗ SSL certificate error. If using a self-signed/internal CA, disable SSL verification in Settings.',
+                        'Open Settings'
+                    ).then(a => {
+                        if (a === 'Open Settings') {
+                            vscode.commands.executeCommand('workbench.action.openSettings', 'opengrok-mcp.verifySsl');
+                        }
+                    });
+                } else {
+                    vscode.window.showErrorMessage(`✗ Connection failed: ${msg}`);
+                }
             }
             updateStatusBar('error');
         }
-    });
+    };
+
+    if (silent) {
+        await runTest();
+    } else {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Testing OpenGrok connection...',
+            cancellable: false
+        }, runTest);
+    }
 }
 
 /**
@@ -779,14 +791,18 @@ let configPanel: vscode.WebviewPanel | undefined;
 
 function openConfigurationPanel(context: vscode.ExtensionContext): void {
     if (configPanel) {
-        configPanel.reveal(vscode.ViewColumn.Beside);
+        configPanel.reveal(vscode.ViewColumn.One);
         return;
     }
+
+    const column = vscode.window.activeTextEditor
+        ? vscode.ViewColumn.Beside
+        : vscode.ViewColumn.One;
 
     configPanel = vscode.window.createWebviewPanel(
         'opengrok-mcp.configView',
         'OpenGrok Configuration',
-        vscode.ViewColumn.Beside,
+        column,
         {
             enableScripts: true,
             retainContextWhenHidden: true
@@ -875,6 +891,7 @@ async function _handleSaveConfiguration(webview: vscode.Webview, data: {
     responseFormatOverride?: string;
     codeMode?: boolean;
     memoryBankDir?: string;
+    codeModeChanged?: boolean;
 }): Promise<void> {
     await handleSaveConfiguration(
         (msg: Record<string, unknown>) => { void webview.postMessage(msg); },

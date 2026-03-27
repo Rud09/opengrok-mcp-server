@@ -153,7 +153,7 @@ APPROACH 2: CODE MODE (For complex, multi-step investigations)
 - Use opengrok_api + opengrok_execute for deep investigations (3+ steps) where you can filter/summarize in JS.
 - Call opengrok_api ONCE to get the API spec, then run opengrok_execute with JS code.
 - Your JS code runs synchronously in a sandbox. env.opengrok.* methods are blocking.
-- ALWAYS use env.opengrok.batchSearch() for parallel searches (Promise.all does NOT parallelize here).
+- ALWAYS use env.opengrok.batchSearch() for parallel searches — Promise.all does NOT parallelize inside the sandbox VM (calls are serialized via the Atomics bridge; batchSearch runs queries in parallel on the host event loop).
 - Return a value via \`return\` — only the final return value crosses back (saving massive tokens).
 - Example: \`return env.opengrok.batchSearch([{query:"Foo",searchType:"defs"}])[0].results[0].path\`
 

@@ -43,7 +43,8 @@
     "onCommand:opengrok-mcp.configureUI",
     "onCommand:opengrok-mcp.test",
     "onCommand:opengrok-mcp.statusMenu",
-    "onCommand:opengrok-mcp.checkUpdate"
+    "onCommand:opengrok-mcp.checkUpdate",
+    "onCommand:opengrok-mcp.showLogs"
   ],
   "main": "./out/extension.js",
   "types": "./out/server/main.d.ts",
