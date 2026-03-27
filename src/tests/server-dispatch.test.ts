@@ -512,6 +512,61 @@ describe('dispatchTool — opengrok_get_file_symbols', () => {
 // unknown tool
 // -----------------------------------------------------------------------
 
+describe('dispatchTool — opengrok_what_changed', () => {
+  const recentDate = new Date();
+  recentDate.setDate(recentDate.getDate() - 2); // 2 days ago — within default 7-day window
+  const recentDateStr = recentDate.toISOString().slice(0, 10);
+
+  it('returns formatted output grouped by commit', async () => {
+    const client = makeMockClient();
+    client.getFileHistory.mockResolvedValue({
+      project: 'proj', path: 'src/EventLoop.cpp',
+      entries: [
+        { revision: 'abc12345', author: 'John Doe', date: recentDateStr, message: 'fix event loop' },
+      ],
+    });
+    client.getAnnotate.mockResolvedValue({
+      project: 'proj', path: 'src/EventLoop.cpp',
+      lines: [
+        { lineNumber: 42, revision: 'abc12345', author: 'John Doe', date: recentDateStr, content: 'line content' },
+        { lineNumber: 43, revision: 'abc12345', author: 'John Doe', date: recentDateStr, content: 'next line' },
+      ],
+    });
+    const result = await dispatchTool('opengrok_what_changed', { project: 'proj', path: 'src/EventLoop.cpp' }, client as any, config, emptyLocal());
+    expect(result).toContain('Recent changes');
+    expect(result).toContain('abc1234');
+    expect(result).toContain('John Doe');
+    expect(result).toContain('42');
+  });
+
+  it('reports no changes when no commits fall within since_days', async () => {
+    const client = makeMockClient();
+    client.getFileHistory.mockResolvedValue({
+      project: 'proj', path: 'file.cpp',
+      entries: [
+        { revision: 'old00001', author: 'Dev', date: '2000-01-01', message: 'ancient commit' },
+      ],
+    });
+    client.getAnnotate.mockResolvedValue({
+      project: 'proj', path: 'file.cpp',
+      lines: [
+        { lineNumber: 1, revision: 'old00001', author: 'Dev', date: '2000-01-01', content: 'old line' },
+      ],
+    });
+    const result = await dispatchTool('opengrok_what_changed', { project: 'proj', path: 'file.cpp', since_days: 7 }, client as any, config, emptyLocal());
+    expect(result).toContain('No lines changed');
+  });
+
+  it('calls getFileHistory and getAnnotate in parallel', async () => {
+    const client = makeMockClient();
+    client.getFileHistory.mockResolvedValue({ project: 'proj', path: 'file.cpp', entries: [] });
+    client.getAnnotate.mockResolvedValue({ project: 'proj', path: 'file.cpp', lines: [] });
+    await dispatchTool('opengrok_what_changed', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    expect(client.getFileHistory).toHaveBeenCalledWith('proj', 'file.cpp');
+    expect(client.getAnnotate).toHaveBeenCalledWith('proj', 'file.cpp');
+  });
+});
+
 describe('dispatchTool — unknown', () => {
   it('returns error for unknown tool name', async () => {
     const client = makeMockClient();

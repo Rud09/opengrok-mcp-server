@@ -30,6 +30,7 @@ import {
   formatSearchResultsTSV,
   formatSymbolContext,
   formatSymbolContextYAML,
+  formatWhatChanged,
   selectFormat,
 } from "./formatters.js";
 import type {
@@ -58,6 +59,7 @@ import {
   SearchCodeArgs,
   SearchSuggestArgs,
   FindFileArgs,
+  WhatChangedArgs,
   SearchResultsOutput,
   FileContentOutput,
   ProjectsListOutput,
@@ -1004,6 +1006,15 @@ async function dispatchTool(
       return formatFileSymbols(result);
     }
 
+    case "opengrok_what_changed": {
+      const args = WhatChangedArgs.parse(rawArgs);
+      const [history, annotation] = await Promise.all([
+        client.getFileHistory(args.project, args.path),
+        client.getAnnotate(args.project, args.path),
+      ]);
+      return formatWhatChanged(history, annotation, args.since_days);
+    }
+
     default:
       return `**Error:** Unknown tool: "${name}"`;
   }
@@ -1683,6 +1694,35 @@ function registerLegacyTools(
         return { content: [{ type: "text", text: capResponse(formatFileSymbols(result)) }] };
       } catch (err) {
         return makeToolError("opengrok_get_file_symbols", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_what_changed",
+    {
+      title: "What Changed",
+      description: desc(
+        "Show which lines changed recently in a file, grouped by commit. Combines file history + blame in one call.\n\n" +
+        "**When to use**: To understand what recently changed in a file and who changed it.\n\n" +
+        "**Args**: `project`, `path` (required), `since_days` (1–90, default 7).\n\n" +
+        "**Example**: Use to audit recent changes to a critical source file before code review.",
+        "(fallback) recent line changes grouped by commit"
+      ),
+      inputSchema: WhatChangedArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const parsed = WhatChangedArgs.parse(args);
+        const [history, annotation] = await Promise.all([
+          client.getFileHistory(parsed.project, parsed.path),
+          client.getAnnotate(parsed.project, parsed.path),
+        ]);
+        const text = formatWhatChanged(history, annotation, parsed.since_days);
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_what_changed", err);
       }
     }
   );

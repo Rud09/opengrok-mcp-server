@@ -396,6 +396,87 @@ export function formatAnnotate(
 }
 
 // ---------------------------------------------------------------------------
+// What changed — recent lines grouped by commit
+// ---------------------------------------------------------------------------
+
+export function formatWhatChanged(
+  history: FileHistory,
+  annotation: AnnotatedFile,
+  sinceDays: number
+): string {
+  const filename = /* v8 ignore next */ annotation.path.split("/").pop() ?? annotation.path;
+  const lines: string[] = [];
+  lines.push(`# Recent changes: ${annotation.path} (last ${sinceDays} days)`);
+
+  if (!annotation.lines.length) {
+    lines.push("\nNo annotation data available.");
+    return lines.join("\n");
+  }
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - sinceDays);
+
+  // Build a set of recent revision IDs from history entries within sinceDays
+  const recentRevisions = new Set<string>();
+  for (const entry of history.entries) {
+    const entryDate = new Date(entry.date);
+    if (!isNaN(entryDate.getTime()) && entryDate >= cutoff) {
+      recentRevisions.add(entry.revision);
+    }
+  }
+
+  // Group annotated lines by revision, filtering to recent ones only
+  const byRevision = new Map<string, { author: string; date: string; lineNumbers: number[] }>();
+  for (const line of annotation.lines) {
+    if (!recentRevisions.has(line.revision)) continue;
+    if (!byRevision.has(line.revision)) {
+      byRevision.set(line.revision, { author: line.author, date: line.date, lineNumbers: [] });
+    }
+    byRevision.get(line.revision)!.lineNumbers.push(line.lineNumber);
+  }
+
+  if (!byRevision.size) {
+    lines.push(`\nNo lines changed within the last ${sinceDays} days.`);
+    return lines.join("\n");
+  }
+
+  // Sort revisions by date descending (most recent first)
+  const sorted = [...byRevision.entries()].sort(([, a], [, b]) => {
+    return new Date(b.date).getTime() - new Date(a.date).getTime();
+  });
+
+  for (const [rev, { author, date, lineNumbers }] of sorted) {
+    const revShort = rev.length > 8 ? rev.slice(0, 8) : rev;
+    const authorShort = author.split("<")[0].trim();
+    lines.push(`\n## ${revShort} — ${authorShort} (${date})`);
+    lines.push(`Lines: ${compactLineRanges(lineNumbers)}`);
+  }
+
+  void filename; // path shown in header
+  return lines.join("\n");
+}
+
+/** Compact consecutive line numbers into range notation: [1,2,3,5,6] → "1–3, 5–6" */
+function compactLineRanges(lineNumbers: number[]): string {
+  if (!lineNumbers.length) return "";
+  const sorted = [...lineNumbers].sort((a, b) => a - b);
+  const ranges: string[] = [];
+  let start = sorted[0];
+  let end = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === end + 1) {
+      end = sorted[i];
+    } else {
+      ranges.push(start === end ? `${start}` : `${start}–${end}`);
+      start = sorted[i];
+      end = sorted[i];
+    }
+  }
+  ranges.push(start === end ? `${start}` : `${start}–${end}`);
+  return ranges.join(", ");
+}
+
+// ---------------------------------------------------------------------------
 // Compound: search_and_read
 // ---------------------------------------------------------------------------
 

@@ -340,3 +340,54 @@ describe('opengrok_get_symbol_context — format handling', () => {
     expect(text).toContain('MyFunc');
   });
 });
+
+// -----------------------------------------------------------------------
+// opengrok_what_changed — registered tool + call via MCP protocol
+// -----------------------------------------------------------------------
+
+describe('opengrok_what_changed — tool registration and call', () => {
+  it('is registered as a tool', async () => {
+    const { mcpClient } = await createStandardClient();
+    const { tools } = await mcpClient.listTools();
+    const names = tools.map((t) => t.name);
+    expect(names).toContain('opengrok_what_changed');
+  });
+
+  it('returns formatted output on successful call', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    const recentDate = new Date();
+    recentDate.setDate(recentDate.getDate() - 1);
+    const recentDateStr = recentDate.toISOString().slice(0, 10);
+    ogClient.getFileHistory.mockResolvedValue({
+      project: 'proj', path: 'src/EventLoop.cpp',
+      entries: [{ revision: 'abc12345', author: 'John Doe', date: recentDateStr, message: 'fix' }],
+    });
+    ogClient.getAnnotate.mockResolvedValue({
+      project: 'proj', path: 'src/EventLoop.cpp',
+      lines: [
+        { lineNumber: 42, revision: 'abc12345', author: 'John Doe', date: recentDateStr, content: 'x' },
+      ],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_what_changed',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', since_days: 7 },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('Recent changes');
+    expect(text).toContain('abc1234');
+    expect(text).toContain('42');
+  });
+
+  it('returns error result when client throws', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getFileHistory.mockRejectedValue(new Error('network failure'));
+    ogClient.getAnnotate.mockResolvedValue({ project: 'proj', path: 'file.cpp', lines: [] });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_what_changed',
+      arguments: { project: 'proj', path: 'file.cpp' },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('Error');
+  });
+});
