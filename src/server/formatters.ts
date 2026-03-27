@@ -396,7 +396,7 @@ export function formatAnnotate(
 }
 
 // ---------------------------------------------------------------------------
-// Blame â markdown table format, optional line range
+// Blame — markdown table format, optional line range
 // ---------------------------------------------------------------------------
 
 export function formatBlame(
@@ -408,7 +408,7 @@ export function formatBlame(
   const lines: string[] = [];
   const rangeLabel =
     lineStart !== undefined || lineEnd !== undefined
-      ? ` (lines ${lineStart ?? 1}â${lineEnd ?? annotate.lines.length})`
+      ? ` (lines ${lineStart ?? 1}–${lineEnd ?? annotate.lines.length})`
       : "";
   lines.push(`# Blame: ${annotate.path}${rangeLabel}`);
 

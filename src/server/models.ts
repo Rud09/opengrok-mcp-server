@@ -123,6 +123,16 @@ export const DependencyMapArgs = z.object({
 });
 export type DependencyMapArgs = z.infer<typeof DependencyMapArgs>;
 
+export const BlameArgs = z.object({
+  project: z.string().min(1).describe("Project name"),
+  path: z.string().min(1).describe("File path relative to project root"),
+  line_start: z.number().int().min(1).optional().describe("Start line (1-indexed, default 1)"),
+  line_end: z.number().int().min(1).optional().describe("End line (inclusive, default: all lines)"),
+  include_diff: z.boolean().default(false).describe("Include the commit diff summary for each unique commit"),
+  response_format: RESPONSE_FORMAT,
+});
+export type BlameArgs = z.infer<typeof BlameArgs>;
+
 // ---------------------------------------------------------------------------
 // Compound tool argument schemas
 // ---------------------------------------------------------------------------

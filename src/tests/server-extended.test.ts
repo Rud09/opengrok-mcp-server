@@ -624,7 +624,7 @@ describe('opengrok_blame — tool registration and call', () => {
       arguments: { project: 'proj', path: 'src/EventLoop.cpp', line_start: 3, line_end: 4 },
     });
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
-    expect(text).toContain('lines 3');
+    expect(text).toContain('lines 3–4');
     expect(text).toContain('bob');
     expect(text).not.toContain('alice');
   });

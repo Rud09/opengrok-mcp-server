@@ -14,10 +14,12 @@ import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
 import type { Config } from "./config.js";
+import { DEFAULT_PER_TOOL_LIMITS, parsePerToolLimits } from "./config.js";
 import {
   formatAnnotate,
   formatBatchSearchResults,
   formatBatchSearchResultsTSV,
+  formatBlame,
   formatCompileInfo,
   formatDirectoryListing,
   formatFileContent,
@@ -48,6 +50,7 @@ import {
 } from "./local/compile-info.js";
 import {
   BatchSearchArgs,
+  BlameArgs,
   BrowseDirectoryArgs,
   GetCompileInfoArgs,
   GetFileAnnotateArgs,
@@ -75,7 +78,7 @@ import type {
   SearchResults,
   Project,
 } from "./models.js";
-import { BUDGET_LIMITS, parsePerToolLimits } from "./config.js";
+import { BUDGET_LIMITS } from "./config.js";
 import type { ContextBudget } from "./config.js";
 import type { ResponseFormat } from "./formatters.js";
 import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
@@ -218,9 +221,6 @@ You MUST do both of these before responding to the user:
 
 Memory files: active-task.md (current task) | investigation-log.md (findings log)
 `.trim();
-
-
-
 
 // ---------------------------------------------------------------------------
 // Tool annotations
@@ -1085,69 +1085,18 @@ async function dispatchTool(
       return formatDependencyMap(args.path, args.depth, nodes);
     }
 
+    case "opengrok_blame": {
+      const args = BlameArgs.parse(rawArgs);
+      const annotated = await client.getAnnotate(args.project, args.path);
+      return formatBlame(annotated, args.line_start, args.line_end, args.include_diff);
+    }
+
     default:
       return `**Error:** Unknown tool: "${name}"`;
   }
 }
 
 // ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Per-tool rate limiter
-// ---------------------------------------------------------------------------
-
-/**
- * Per-tool rate limiter using token bucket algorithm.
- * Prevents any single tool from monopolizing the connection.
- * Applies per-tool limits on top of the global client rate limit.
- */
-class ToolRateLimiter {
-  private readonly buckets = new Map<string, { tokens: number; lastRefill: number }>();
-  private readonly limits: Map<string, number>; // tool name → calls per minute
-  private readonly defaultLimit: number;
-
-  constructor(limits: Record<string, number>, defaultLimit: number = 60) {
-    this.limits = new Map(Object.entries(limits));
-    this.defaultLimit = defaultLimit;
-  }
-
-  /**
-   * Acquire a token for the given tool name.
-   * Returns immediately if a token is available, otherwise waits.
-   */
-  async acquire(toolName: string): Promise<void> {
-    return new Promise((resolve) => {
-      const checkToken = (): void => {
-        const limit = this.limits.get(toolName) ?? this.defaultLimit;
-        const interval = 60000 / limit; // ms per token
-        const now = Date.now();
-
-        let bucket = this.buckets.get(toolName);
-        if (!bucket) {
-          bucket = { tokens: limit, lastRefill: now };
-          this.buckets.set(toolName, bucket);
-        }
-
-        // Refill tokens based on elapsed time
-        const elapsed = now - bucket.lastRefill;
-        const tokensToAdd = (elapsed / interval) * 1;
-        bucket.tokens = Math.min(limit, bucket.tokens + tokensToAdd);
-        bucket.lastRefill = now;
-
-        if (bucket.tokens >= 1) {
-          bucket.tokens -= 1;
-          resolve();
-        } else {
-          // Wait for next token to be available, then try again
-          const waitMs = Math.max(10, (1 - bucket.tokens) * interval);
-          setTimeout(checkToken, waitMs);
-        }
-      };
-
-      checkToken();
-    });
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Server factory — McpServer with per-tool registrations
 // ---------------------------------------------------------------------------
@@ -1458,6 +1407,7 @@ function registerLegacyTools(
     },
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_search_code" });
+      if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_search_code");
       try {
         const format = args.response_format ?? "auto";
         const { text, structured } = await executeSearchCode(args, client, config);
@@ -1704,6 +1654,7 @@ function registerLegacyTools(
     },
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_batch_search" });
+      if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_batch_search");
       try {
         const format = args.response_format ?? "auto";
         const { text, structured } = await executeBatchSearch(args, client, config);
@@ -1923,11 +1874,37 @@ function registerLegacyTools(
   );
 
   server.registerTool(
+    "opengrok_blame",
+    {
+      title: "Git Blame",
+      description: desc(
+        "Get git blame/annotation for a file — shows who changed each line and when. Optionally filter to a line range.\n\n" +
+        "**When to use**: To understand ownership of specific lines, track down when a bug was introduced, or audit authorship.\n\n" +
+        "**Args**: `project`, `path` (required); `line_start`, `line_end` (optional line range); `include_diff` (default false).\n\n" +
+        "**Example**: Use on a function body to see who last touched each line.",
+        "(fallback) git blame annotation"
+      ),
+      inputSchema: BlameArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_blame" });
+      try {
+        const parsed = BlameArgs.parse(args);
+        const annotations = await client.getAnnotate(parsed.project, parsed.path);
+        const text = formatBlame(annotations, parsed.line_start, parsed.line_end, parsed.include_diff);
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_blame", err);
+      }
+    }
+  );
+
+  server.registerTool(
     "opengrok_dependency_map",
     {
       title: "Dependency Map",
       description: desc(
-        "Trace #include/import dependency graph for a file. Returns files this file uses and/or files that use it, up to N levels deep.\n\n" +
         "**When to use**: To understand a file's dependencies or find all callers/includers across a project.\n\n" +
         "**Args**: `project`, `path` (required); `depth` (1–3, default 2); `direction` (uses|used_by|both, default both).\n\n" +
         "**Example**: Use on a header file to find all translation units that include it.",
@@ -1960,6 +1937,59 @@ function registerLegacyTools(
 // ---------------------------------------------------------------------------
 // Run the server over stdio
 // ---------------------------------------------------------------------------
+
+/**
+ * Per-tool rate limiter using token bucket algorithm.
+ * Prevents any single tool from monopolizing the connection.
+ * Applies per-tool limits on top of the global client rate limit.
+ */
+class ToolRateLimiter {
+  private readonly buckets = new Map<string, { tokens: number; lastRefill: number }>();
+  private readonly limits: Map<string, number>; // tool name → calls per minute
+  private readonly defaultLimit: number;
+
+  constructor(limits: Record<string, number>, defaultLimit: number = 60) {
+    this.limits = new Map(Object.entries(limits));
+    this.defaultLimit = defaultLimit;
+  }
+
+  /**
+   * Acquire a token for the given tool name.
+   * Returns immediately if a token is available, otherwise waits.
+   */
+  async acquire(toolName: string): Promise<void> {
+    return new Promise((resolve) => {
+      const checkToken = (): void => {
+        const limit = this.limits.get(toolName) ?? this.defaultLimit;
+        const interval = 60000 / limit; // ms per token
+        const now = Date.now();
+
+        let bucket = this.buckets.get(toolName);
+        if (!bucket) {
+          bucket = { tokens: limit, lastRefill: now };
+          this.buckets.set(toolName, bucket);
+        }
+
+        // Refill tokens based on elapsed time
+        const elapsed = now - bucket.lastRefill;
+        const tokensToAdd = (elapsed / interval) * 1;
+        bucket.tokens = Math.min(limit, bucket.tokens + tokensToAdd);
+        bucket.lastRefill = now;
+
+        if (bucket.tokens >= 1) {
+          bucket.tokens -= 1;
+          resolve();
+        } else {
+          // Wait for next token to be available, then try again
+          const waitMs = Math.max(10, (1 - bucket.tokens) * interval);
+          setTimeout(checkToken, waitMs);
+        }
+      };
+
+      checkToken();
+    });
+  }
+}
 
 /* v8 ignore start -- runServer connects to stdio transport; integration-level */
 export async function runServer(
