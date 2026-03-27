@@ -166,20 +166,29 @@ describe('registerTool handlers — opengrok_get_symbol_context structured outpu
 });
 
 describe('registerTool handlers — opengrok_index_health', () => {
-  it('returns connected status', async () => {
+  it('returns connected status with enhanced data', async () => {
     const client = makeMockClient();
     client.testConnection.mockResolvedValue(true);
+    client.listProjects.mockResolvedValue([
+      { name: 'project1', category: 'cat1' },
+      { name: 'project2', category: 'cat1' },
+    ]);
     const config = makeConfig();
     const result = await dispatchTool('opengrok_index_health', {}, client as never, config, emptyLocal());
-    expect(result).toContain('connected');
+    expect(result).toContain('Connected');
+    expect(result).toContain('Latency');
+    expect(result).toContain('Indexed projects');
+    expect(result).toContain('2');
   });
 
   it('returns failed status', async () => {
     const client = makeMockClient();
     client.testConnection.mockResolvedValue(false);
+    client.listProjects.mockResolvedValue([]);
     const config = makeConfig();
     const result = await dispatchTool('opengrok_index_health', {}, client as never, config, emptyLocal());
-    expect(result).toContain('failed');
+    expect(result).toContain('Connected');
+    expect(result).toContain('false');
   });
 });
 

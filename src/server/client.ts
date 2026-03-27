@@ -553,6 +553,29 @@ export class OpenGrokClient {
     return parseWebSearchResults(html, searchType, query);
   }
 
+  async searchPattern(opts: {
+    pattern: string;
+    projects?: string[];
+    fileType?: string;
+    maxResults?: number;
+  }): Promise<SearchResults> {
+    const { pattern, projects, fileType, maxResults = 20 } = opts;
+    const url = buildSafeUrl(this.baseUrl, "api/v1/search");
+    url.searchParams.set("full", pattern);
+    url.searchParams.set("regexp", "true");
+    url.searchParams.set("maxresults", String(maxResults));
+    if (projects?.length) {
+      url.searchParams.set("projects", [...projects].sort().join(","));
+    }
+    if (fileType) {
+      url.searchParams.set("type", fileType);
+    }
+
+    const response = await this.request(url, TIMEOUTS.search, "application/json");
+    const data = (await response.json()) as Record<string, unknown>;
+    return parseSearchResponse(data, "full", pattern);
+  }
+
   async suggest(
     query: string,
     project?: string,

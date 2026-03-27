@@ -31,11 +31,13 @@ import {
   formatSymbolContext,
   formatSymbolContextYAML,
   formatWhatChanged,
+  formatDependencyMap,
   selectFormat,
 } from "./formatters.js";
 import type {
   SearchAndReadEntry,
   SymbolContextResult,
+  DependencyNode,
 } from "./formatters.js";
 import type { CompileInfo } from "./local/compile-info.js";
 import {
@@ -57,9 +59,11 @@ import {
   ListProjectsArgs,
   SearchAndReadArgs,
   SearchCodeArgs,
+  SearchPatternArgs,
   SearchSuggestArgs,
   FindFileArgs,
   WhatChangedArgs,
+  DependencyMapArgs,
   SearchResultsOutput,
   FileContentOutput,
   ProjectsListOutput,
@@ -921,6 +925,17 @@ async function dispatchTool(
       return formatSearchResults(results);
     }
 
+    case "opengrok_search_pattern": {
+      const args = SearchPatternArgs.parse(rawArgs);
+      const results = await client.searchPattern({
+        pattern: args.pattern,
+        projects: applyDefaultProject(args.projects, config),
+        fileType: args.file_type,
+        maxResults: args.max_results,
+      });
+      return formatSearchResults(results);
+    }
+
     case "opengrok_get_file_content": {
       const args = GetFileContentArgs.parse(rawArgs);
       const { text } = await executeGetFileContent(args, client, local);
@@ -982,16 +997,63 @@ async function dispatchTool(
     }
 
     case "opengrok_index_health": {
-      IndexHealthArgs.parse(rawArgs);
+      const args = IndexHealthArgs.parse(rawArgs);
+      const format = selectFormat("generic", args.response_format);
+      
       const start = Date.now();
       const ok = await client.testConnection();
       const latencyMs = Date.now() - start;
+      
+      // Collect project count and any warnings
+      let indexedProjects = 0;
+      const warnings: string[] = [];
+      
+      try {
+        const projects = await client.listProjects();
+        indexedProjects = projects.length;
+      } catch (err) {
+        warnings.push("Could not retrieve project list");
+      }
+      
+      // Construct the result object
+      const health = {
+        connected: ok,
+        latencyMs,
+        indexedProjects,
+        warnings,
+      };
+      
       if (ok) {
         client.warmCache();
       }
-      return ok
-        ? `OpenGrok: connected (${latencyMs}ms latency)`
-        : "OpenGrok: connection failed";
+      
+      // Format the response
+      if (format === "json") {
+        return JSON.stringify(health, null, 2);
+      } else if (format === "yaml") {
+        const yamlLines = [
+          `connected: ${health.connected}`,
+          `latencyMs: ${health.latencyMs}`,
+          `indexedProjects: ${health.indexedProjects}`,
+          ...(health.warnings.length > 0
+            ? [`warnings:\n${health.warnings.map((w) => `  - ${w}`).join("\n")}`]
+            : []),
+        ];
+        return yamlLines.join("\n");
+      } else {
+        // markdown or text (default)
+        const markdown = [
+          "# OpenGrok Health",
+          "",
+          `- **Connected:** ${health.connected}`,
+          `- **Latency:** ${health.latencyMs}ms`,
+          `- **Indexed projects:** ${health.indexedProjects}`,
+          ...(health.warnings.length > 0
+            ? [`- **Warnings:** ${health.warnings.join(", ")}`]
+            : []),
+        ].join("\n");
+        return markdown;
+      }
     }
 
     case "opengrok_get_compile_info":
@@ -1013,6 +1075,12 @@ async function dispatchTool(
         client.getAnnotate(args.project, args.path),
       ]);
       return formatWhatChanged(history, annotation, args.since_days);
+    }
+
+    case "opengrok_dependency_map": {
+      const args = DependencyMapArgs.parse(rawArgs);
+      const nodes = await buildDependencyGraph(client, args.project, args.path, args.depth, args.direction);
+      return formatDependencyMap(args.path, args.depth, nodes);
     }
 
     default:
@@ -1357,6 +1425,35 @@ function registerLegacyTools(
         return { content: [{ type: "text", text: capResponse(text) }] };
       } catch (err) {
         return makeToolError("opengrok_find_file", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_search_pattern",
+    {
+      title: "Search Pattern",
+      description: desc(
+        "Search the codebase using a regular expression pattern. More powerful than keyword search for matching code patterns.",
+        "(fallback) regex pattern search"
+      ),
+      inputSchema: SearchPatternArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const parsed = SearchPatternArgs.parse(args);
+        const results = await client.searchPattern({
+          pattern: parsed.pattern,
+          projects: applyDefaultProject(parsed.projects, config),
+          fileType: parsed.file_type,
+          maxResults: parsed.max_results,
+        });
+        const fmt = selectFormat("search", parsed.response_format as ResponseFormat | undefined);
+        const text = fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_search_pattern", err);
       }
     }
   );
@@ -1727,6 +1824,32 @@ function registerLegacyTools(
     }
   );
 
+  server.registerTool(
+    "opengrok_dependency_map",
+    {
+      title: "Dependency Map",
+      description: desc(
+        "Trace #include/import dependency graph for a file. Returns files this file uses and/or files that use it, up to N levels deep.\n\n" +
+        "**When to use**: To understand a file's dependencies or find all callers/includers across a project.\n\n" +
+        "**Args**: `project`, `path` (required); `depth` (1–3, default 2); `direction` (uses|used_by|both, default both).\n\n" +
+        "**Example**: Use on a header file to find all translation units that include it.",
+        "(fallback) #include/import dependency graph, configurable depth"
+      ),
+      inputSchema: DependencyMapArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const parsed = DependencyMapArgs.parse(args);
+        const nodes = await buildDependencyGraph(client, parsed.project, parsed.path, parsed.depth, parsed.direction);
+        const text = formatDependencyMap(parsed.path, parsed.depth, nodes);
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_dependency_map", err);
+      }
+    }
+  );
+
   // Memory bank tools — available when a MemoryBank is provided
   if (memoryBank) {
     registerMemoryTools(server, memoryBank);
@@ -1794,6 +1917,75 @@ function sanitizeErrorMessage(message: string): string {
     "[path]"
   );
   return sanitized;
+}
+
+/**
+ * Build a dependency graph for a file by searching refs/paths up to `depth` levels.
+ * "uses"   — searches for what this file includes: finds files whose name appears as
+ *            a path in the source (path search for the filename).
+ * "used_by" — searches for files that reference/include this file (refs search).
+ */
+async function buildDependencyGraph(
+  client: OpenGrokClient,
+  project: string,
+  filePath: string,
+  depth: number,
+  direction: "uses" | "used_by" | "both"
+): Promise<DependencyNode[]> {
+  const nodes: DependencyNode[] = [];
+
+  // Track which filenames have been expanded per direction to avoid cycles
+  const expandedUses = new Set<string>();
+  const expandedUsedBy = new Set<string>();
+
+  // Queue: [filename, level]
+  const usesQueue: [string, number][] = [];
+  const usedByQueue: [string, number][] = [];
+
+  const rootName = filePath.split("/").pop()!;
+
+  if (direction === "uses" || direction === "both") {
+    usesQueue.push([rootName, 1]);
+  }
+  if (direction === "used_by" || direction === "both") {
+    usedByQueue.push([rootName, 1]);
+  }
+
+  while (usesQueue.length > 0) {
+    const [filename, level] = usesQueue.shift()!;
+    if (level > depth) continue;
+    if (expandedUses.has(filename)) continue;
+    expandedUses.add(filename);
+
+    const results = await client.search(filename, "path", [project], 20);
+    for (const r of results.results) {
+      const rName = r.path.split("/").pop()!;
+      if (rName === rootName) continue; // skip self
+      nodes.push({ path: r.path, level, direction: "uses" });
+      if (level < depth) {
+        usesQueue.push([rName, level + 1]);
+      }
+    }
+  }
+
+  while (usedByQueue.length > 0) {
+    const [filename, level] = usedByQueue.shift()!;
+    if (level > depth) continue;
+    if (expandedUsedBy.has(filename)) continue;
+    expandedUsedBy.add(filename);
+
+    const results = await client.search(filename, "refs", [project], 20);
+    for (const r of results.results) {
+      const rName = r.path.split("/").pop()!;
+      if (rName === rootName) continue; // skip self
+      nodes.push({ path: r.path, level, direction: "used_by" });
+      if (level < depth) {
+        usedByQueue.push([rName, level + 1]);
+      }
+    }
+  }
+
+  return nodes;
 }
 
 // ---------------------------------------------------------------------------

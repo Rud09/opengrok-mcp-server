@@ -907,3 +907,56 @@ export function formatFileContentText(content: FileContent): string {
 
   return header + lines.join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Dependency map formatter
+// ---------------------------------------------------------------------------
+
+export interface DependencyNode {
+  path: string;
+  level: number;
+  direction: "uses" | "used_by";
+}
+
+export function formatDependencyMap(
+  filePath: string,
+  depth: number,
+  nodes: DependencyNode[]
+): string {
+  const lines: string[] = [`# Dependency map: \`${filePath}\` (depth ${depth})\n`];
+
+  const uses = nodes.filter((n) => n.direction === "uses");
+  const usedBy = nodes.filter((n) => n.direction === "used_by");
+
+  if (uses.length > 0) {
+    lines.push("## Files this file uses (imports/includes)\n");
+    for (let lvl = 1; lvl <= depth; lvl++) {
+      const atLevel = uses.filter((n) => n.level === lvl);
+      if (atLevel.length === 0) continue;
+      lines.push(`### Level ${lvl}\n`);
+      for (const node of atLevel) {
+        lines.push(`- \`${node.path}\``);
+      }
+      lines.push("");
+    }
+  }
+
+  if (usedBy.length > 0) {
+    lines.push("## Files that use this file (reverse deps)\n");
+    for (let lvl = 1; lvl <= depth; lvl++) {
+      const atLevel = usedBy.filter((n) => n.level === lvl);
+      if (atLevel.length === 0) continue;
+      lines.push(`### Level ${lvl}\n`);
+      for (const node of atLevel) {
+        lines.push(`- \`${node.path}\``);
+      }
+      lines.push("");
+    }
+  }
+
+  if (nodes.length === 0) {
+    lines.push("_No dependency relationships found._");
+  }
+
+  return lines.join("\n");
+}

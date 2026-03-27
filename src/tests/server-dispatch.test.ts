@@ -47,6 +47,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 function makeMockClient() {
   return {
     search: vi.fn(),
+    searchPattern: vi.fn(),
     suggest: vi.fn(),
     getFileContent: vi.fn(),
     getFileHistory: vi.fn(),
@@ -110,6 +111,30 @@ describe('dispatchTool — opengrok_find_file', () => {
     const result = await dispatchTool('opengrok_find_file', { path_pattern: 'main.cpp' }, client as any, config, emptyLocal());
     expect(client.search).toHaveBeenCalledWith('main.cpp', 'path', ['release-2.x'], 10, 0);
     expect(result).toBeDefined();
+  });
+});
+
+// -----------------------------------------------------------------------
+// search_pattern
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — opengrok_search_pattern', () => {
+  it('delegates to searchPattern with regexp=true URL semantics', async () => {
+    const client = makeMockClient();
+    client.searchPattern.mockResolvedValue({
+      query: 'void\\s+\\w+',
+      searchType: 'full',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: '/src/main.cpp', matches: [{ lineNumber: 10, lineContent: 'void main()' }] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    const result = await dispatchTool('opengrok_search_pattern', { pattern: 'void\\s+\\w+' }, client as any, config, emptyLocal());
+    expect(client.searchPattern).toHaveBeenCalledWith(
+      expect.objectContaining({ pattern: 'void\\s+\\w+', projects: ['release-2.x'] })
+    );
+    expect(result).toContain('main.cpp');
   });
 });
 
@@ -432,18 +457,65 @@ describe('dispatchTool — opengrok_get_symbol_context', () => {
 // -----------------------------------------------------------------------
 
 describe('dispatchTool — opengrok_index_health', () => {
-  it('reports connected', async () => {
+  it('reports connected with latency and project count', async () => {
     const client = makeMockClient();
     client.testConnection.mockResolvedValue(true);
+    client.listProjects.mockResolvedValue([
+      { name: 'project1', category: 'cat1' },
+      { name: 'project2', category: 'cat1' },
+    ]);
     const result = await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
-    expect(result).toContain('connected');
+    expect(result).toContain('Connected');
+    expect(result).toContain('Latency');
+    expect(result).toContain('Indexed projects');
+    expect(result).toContain('2');
   });
 
   it('reports connection failed', async () => {
     const client = makeMockClient();
     client.testConnection.mockResolvedValue(false);
+    client.listProjects.mockResolvedValue([]);
     const result = await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
-    expect(result).toContain('failed');
+    expect(result).toContain('Connected');
+    expect(result).toContain('false');
+  });
+
+  it('includes warning when project list fetch fails', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(true);
+    client.listProjects.mockRejectedValue(new Error('Network error'));
+    const result = await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
+    expect(result).toContain('Connected');
+    expect(result).toContain('Warnings');
+    expect(result).toContain('Could not retrieve project list');
+  });
+
+  it('returns JSON format when requested', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(true);
+    client.listProjects.mockResolvedValue([{ name: 'project1' }]);
+    const result = await dispatchTool('opengrok_index_health', { response_format: 'json' }, client as any, config, emptyLocal());
+    const parsed = JSON.parse(result as string);
+    expect(parsed.connected).toBe(true);
+    expect(typeof parsed.latencyMs).toBe('number');
+    expect(parsed.indexedProjects).toBe(1);
+    expect(Array.isArray(parsed.warnings)).toBe(true);
+  });
+
+  it('calls warmCache on successful connection', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(true);
+    client.listProjects.mockResolvedValue([]);
+    await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
+    expect(client.warmCache).toHaveBeenCalled();
+  });
+
+  it('does not call warmCache on failed connection', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(false);
+    client.listProjects.mockResolvedValue([]);
+    await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
+    expect(client.warmCache).not.toHaveBeenCalled();
   });
 });
 

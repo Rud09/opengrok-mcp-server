@@ -49,6 +49,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 function makeMockClient() {
   return {
     search: vi.fn(),
+    searchPattern: vi.fn(),
     suggest: vi.fn(),
     getFileContent: vi.fn(),
     getFileHistory: vi.fn(),
@@ -245,6 +246,7 @@ function makeFullConfig(overrides: Partial<Config> = {}): Config {
 function makeSymbolMockClient() {
   const client = {
     search: vi.fn(),
+    searchPattern: vi.fn(),
     suggest: vi.fn(),
     getFileContent: vi.fn(),
     getFileHistory: vi.fn(),
@@ -385,6 +387,109 @@ describe('opengrok_what_changed — tool registration and call', () => {
     const result = await mcpClient.callTool({
       name: 'opengrok_what_changed',
       arguments: { project: 'proj', path: 'file.cpp' },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('Error');
+  });
+});
+
+// -----------------------------------------------------------------------
+// opengrok_search_pattern — registration, search, formatting, errors
+// -----------------------------------------------------------------------
+
+describe('opengrok_search_pattern — tool registration and call', () => {
+  it('is registered as a tool', async () => {
+    const { mcpClient } = await createStandardClient();
+    const { tools } = await mcpClient.listTools();
+    const names = tools.map((t) => t.name);
+    expect(names).toContain('opengrok_search_pattern');
+  });
+
+  it('calls searchPattern with correct arguments and returns formatted results', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    const mockResults = {
+      query: 'void\\s+\\w+\\(',
+      searchType: 'full' as const,
+      totalCount: 1,
+      timeMs: 10,
+      results: [{
+        project: 'proj',
+        path: '/src/foo.cpp',
+        matches: [{ lineNumber: 5, lineContent: 'void myFunc() {' }],
+      }],
+      startIndex: 0,
+      endIndex: 1,
+    };
+    ogClient.searchPattern.mockResolvedValue(mockResults);
+
+    const result = await mcpClient.callTool({
+      name: 'opengrok_search_pattern',
+      arguments: { pattern: 'void\\s+\\w+\\(' },
+    });
+    expect(ogClient.searchPattern).toHaveBeenCalledWith(
+      expect.objectContaining({ pattern: 'void\\s+\\w+\\(' })
+    );
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('foo.cpp');
+    expect(text).toContain('myFunc');
+  });
+
+  it('passes projects and file_type to searchPattern', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.searchPattern.mockResolvedValue({
+      query: 'pattern',
+      searchType: 'full' as const,
+      totalCount: 0,
+      timeMs: 3,
+      results: [],
+      startIndex: 0,
+      endIndex: 0,
+    });
+
+    await mcpClient.callTool({
+      name: 'opengrok_search_pattern',
+      arguments: { pattern: 'pattern', projects: ['proj-a'], file_type: 'java', max_results: 5 },
+    });
+    expect(ogClient.searchPattern).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pattern: 'pattern',
+        projects: expect.arrayContaining(['proj-a']),
+        fileType: 'java',
+        maxResults: 5,
+      })
+    );
+  });
+
+  it('returns tsv format when response_format is tsv', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.searchPattern.mockResolvedValue({
+      query: 'foo',
+      searchType: 'full' as const,
+      totalCount: 1,
+      timeMs: 2,
+      results: [{
+        project: 'p',
+        path: '/a/b.ts',
+        matches: [{ lineNumber: 1, lineContent: 'foo()' }],
+      }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_search_pattern',
+      arguments: { pattern: 'foo', response_format: 'tsv' },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('\t');
+  });
+
+  it('returns error result when searchPattern throws', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.searchPattern.mockRejectedValue(new Error('regex timeout'));
+    const result = await mcpClient.callTool({
+      name: 'opengrok_search_pattern',
+      arguments: { pattern: '.*' },
     });
     expect(result.isError).toBe(true);
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
