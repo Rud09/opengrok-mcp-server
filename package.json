@@ -38,8 +38,13 @@
   },
   "pricing": "Free",
   "activationEvents": [
-    "onStartupFinished",
-    "onExtension:github.copilot-chat"
+    "onExtension:github.copilot-chat",
+    "onCommand:opengrok-mcp.configure",
+    "onCommand:opengrok-mcp.configureUI",
+    "onCommand:opengrok-mcp.test",
+    "onCommand:opengrok-mcp.statusMenu",
+    "onCommand:opengrok-mcp.checkUpdate",
+    "onCommand:opengrok-mcp.showLogs"
   ],
   "main": "./out/extension.js",
   "types": "./out/server/main.d.ts",
@@ -111,13 +116,6 @@
           "default": "",
           "description": "HTTP proxy URL (e.g., http://proxy.company.com:8080)",
           "order": 4
-        },
-        "opengrok-mcp.hasPromptedConfig": {
-          "type": "boolean",
-          "default": false,
-          "description": "Whether the user has been prompted to configure OpenGrok credentials at least once",
-          "order": 5,
-          "scope": "application"
         },
         "opengrok-mcp.contextBudget": {
           "type": "string",

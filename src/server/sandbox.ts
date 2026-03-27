@@ -51,7 +51,7 @@ const SHARED_BUFFER_SIZE = 20 + 1024 * 1024;
  * IMPORTANT notes embedded in the spec:
  * - batchSearch returns an array of result sets (not a single result)
  * - callees direction always returns empty (not yet implemented)
- * - Promise.all does NOT parallelize inside sandbox — use batchSearch instead
+ * - Promise.all does NOT parallelize inside sandbox (Atomics bridge serializes calls) — use batchSearch instead
  */
 export const API_SPEC = {
   intro:
@@ -60,7 +60,7 @@ export const API_SPEC = {
     "ALL env.opengrok calls are synchronous from your perspective (the host bridges async for you).",
 
   important: [
-    "Do NOT use Promise.all — calls are serialized. Use env.opengrok.batchSearch() for parallel searches.",
+    "IMPORTANT: Do NOT write Promise.all(...) in your sandbox JS — the Atomics bridge serializes calls from inside the VM. Use env.opengrok.batchSearch() instead — it runs queries in parallel on the host event loop.",
     "Prefer env.opengrok.getSymbolContext() over separate search+getFileContent.",
     "Prefer env.opengrok.batchSearch() over multiple env.opengrok.search() calls.",
     "Always pass project as a string, not an array.",

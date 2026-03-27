@@ -153,14 +153,15 @@ APPROACH 2: CODE MODE (For complex, multi-step investigations)
 - Use opengrok_api + opengrok_execute for deep investigations (3+ steps) where you can filter/summarize in JS.
 - Call opengrok_api ONCE to get the API spec, then run opengrok_execute with JS code.
 - Your JS code runs synchronously in a sandbox. env.opengrok.* methods are blocking.
-- ALWAYS use env.opengrok.batchSearch() for parallel searches (Promise.all does NOT parallelize here).
+- ALWAYS use env.opengrok.batchSearch() for parallel searches — Promise.all does NOT parallelize inside the sandbox VM (calls are serialized via the Atomics bridge; batchSearch runs queries in parallel on the host event loop).
 - Return a value via \`return\` — only the final return value crosses back (saving massive tokens).
 - Example: \`return env.opengrok.batchSearch([{query:"Foo",searchType:"defs"}])[0].results[0].path\`
 
 SESSION MEMORY (Living Document):
-- On session start: call opengrok_read_memory() for AGENTS.md, then active-context.md.
-- During investigation: append findings to investigation-log.md using opengrok_write_memory().
-- On session end: update symbol-index.md with new symbols, update active-context.md.
+- On session start: call opengrok_memory_status() to check for prior investigation state.
+- If active-task.md has content, read it via opengrok_read_memory() to restore context.
+- During investigation: append findings to investigation-log.md via opengrok_write_memory().
+- Before final answer: update active-task.md with current task state.
 `.trim();
 
 
@@ -1111,13 +1112,7 @@ function registerCodeModeTools(
       try {
         const budget = BUDGET_LIMITS[getActiveBudget()];
         const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
-        const historyHeader = masker.getMaskedHistoryHeader();
-
-        const codeWithHistory = historyHeader
-          ? `// Session context:\n${historyHeader.split("\n").map((l) => `// ${l}`).join("\n")}\n\n${args.code}`
-          : args.code;
-
-        const result = await executeInSandbox(codeWithHistory, sandboxApi, capResponse, budget.maxResponseBytes);
+        const result = await executeInSandbox(args.code, sandboxApi, capResponse, budget.maxResponseBytes);
 
         // Record in masker for future turns
         masker.record(
@@ -1127,7 +1122,12 @@ function registerCodeModeTools(
           result
         );
 
-        return { content: [{ type: "text", text: result }] };
+        const historyHeader = masker.getMaskedHistoryHeader();
+        const finalResult = historyHeader
+          ? `${historyHeader}\n---\n${result}`
+          : result;
+
+        return { content: [{ type: "text", text: finalResult }] };
       } catch (err) {
         return makeToolError("opengrok_execute", err);
       }
