@@ -346,3 +346,14 @@ Start the wrapper directly in a terminal; MCP JSON-RPC traffic goes to stdout, l
 ```sh
 ~/.local/bin/opengrok-mcp-wrapper.sh 2>&1 | less
 ```
+
+---
+
+## Prompt Caching
+
+Claude Code and Claude.ai automatically cache the MCP server's system prompt (SERVER_INSTRUCTIONS), which is ~310 tokens. This means:
+- The first call in a session pays the full token cost for SERVER_INSTRUCTIONS
+- Subsequent calls in the same session reuse the cached version at ~10% of the cost
+- No configuration needed — this is automatic for supported clients
+
+`OPENGROK_ENABLE_CACHE_HINTS=true` is reserved for future explicit cache-control headers (not yet implemented by any client).

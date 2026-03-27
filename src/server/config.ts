@@ -98,6 +98,8 @@ const ConfigSchema = z.object({
   OPENGROK_MEMORY_BANK_DIR: z.string().default(""),
   // Global response format override (empty = auto per-call)
   OPENGROK_RESPONSE_FORMAT_OVERRIDE: z.string().default(""),
+  // Prompt caching hints (reserved for future explicit cache-control headers)
+  OPENGROK_ENABLE_CACHE_HINTS: z.coerce.boolean().default(false),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
