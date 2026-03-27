@@ -2,7 +2,7 @@
   "name": "opengrok-mcp-server",
   "displayName": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases",
-  "version": "5.3.1",
+  "version": "5.3.2",
   "mcpName": "io.github.IcyHot09/opengrok-mcp-server",
   "license": "PolyForm-Noncommercial-1.0.0",
   "publisher": "IcyHot09",
@@ -153,7 +153,11 @@
         },
         "opengrok-mcp.responseFormatOverride": {
           "type": "string",
-          "enum": ["", "markdown", "json"],
+          "enum": [
+            "",
+            "markdown",
+            "json"
+          ],
           "enumDescriptions": [
             "Auto — let each tool choose the best format",
             "Force markdown for all tool responses",
