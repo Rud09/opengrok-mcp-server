@@ -38,8 +38,12 @@
   },
   "pricing": "Free",
   "activationEvents": [
-    "onStartupFinished",
-    "onExtension:github.copilot-chat"
+    "onExtension:github.copilot-chat",
+    "onCommand:opengrok-mcp.configure",
+    "onCommand:opengrok-mcp.configureUI",
+    "onCommand:opengrok-mcp.test",
+    "onCommand:opengrok-mcp.statusMenu",
+    "onCommand:opengrok-mcp.checkUpdate"
   ],
   "main": "./out/extension.js",
   "types": "./out/server/main.d.ts",
