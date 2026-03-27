@@ -84,6 +84,8 @@ When Code Mode is enabled, these 2 tools replace all individual tools above:
 | Autocomplete suggestions for partial queries | `opengrok_search_suggest` |
 | Compiler flags and include paths (requires local `compile_commands.json`) | `opengrok_get_compile_info` |
 | Check session memory state (call at startup) | `opengrok_memory_status` |
+| Read a memory bank file (`active-task.md` or `investigation-log.md`) | `opengrok_read_memory` |
+| Write or append to a memory bank file | `opengrok_update_memory` |
 
 > **`opengrok_find_file` vs `search_type: "path"`:** Use `find_file` for
 > filename/glob patterns (e.g., `config.ts`, `test*.js`). Use `opengrok_search_code`
@@ -251,7 +253,7 @@ Always pass `start_line` and `end_line` to `opengrok_get_file_content`. Never fe
 
 11. **VS Code memory vs OpenGrok memory.** VS Code Copilot's built-in `/memory` command stores general codebase knowledge (architecture, conventions, key directories) and auto-loads every session — free. The OpenGrok memory bank (`active-task.md`, `investigation-log.md`) is for investigation-specific state that needs to persist across multiple OpenGrok sessions. Use VS Code memory for "what is this codebase", OpenGrok memory for "what am I currently investigating".
 
-12. **16 tools = ~2,400 prompt tokens.** In token-constrained environments, enable Code Mode (2 tools = ~200 tokens) via Extension Settings or `OPENGROK_CODE_MODE=true`. When Code Mode is active, individual tools remain available as fallbacks with compact descriptions.
+12. **17 tools = ~2,550 prompt tokens.** In token-constrained environments, enable Code Mode (2 tools = ~200 tokens) via Extension Settings or `OPENGROK_CODE_MODE=true`. When Code Mode is active, individual tools remain available as fallbacks with compact descriptions.
 
 ## Error Recovery
 
