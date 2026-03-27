@@ -138,30 +138,44 @@ const VERSION = (typeof __VERSION__ !== "undefined"
 
 const SERVER_INSTRUCTIONS = `
 OpenGrok MCP — Code intelligence for large, multi-language codebases.
-You have access to two distinct sets of tools. Choose the right approach for the task:
 
-APPROACH 1: INDIVIDUAL TOOLS (For quick, single-step lookups)
-- Use individual tools (opengrok_search_code, opengrok_get_file_symbols, etc.) for quick questions.
-- ALWAYS call opengrok_get_file_symbols BEFORE opengrok_get_file_content to see structure cheaply.
-- ALWAYS call opengrok_get_symbol_context first for any unknown symbol.
-- ALWAYS pass start_line AND end_line to opengrok_get_file_content. NEVER fetch full files.
-- ALWAYS pass file_type to narrow by language (cxx, java, python, etc.).
-- PREFER opengrok_search_and_read instead of search_code + get_file_content.
-- LIMIT max_results to 5 or fewer unless asked.
+## SESSION STARTUP (do this once, in order)
+1. opengrok_memory_status → check for prior investigation state (1 call)
+2. opengrok_read_memory("active-task.md") → if populated, read it (restores last task)
+3. opengrok_read_memory("investigation-log.md") → if populated, read recent entries
+4. opengrok_index_health → verify connectivity
 
-APPROACH 2: CODE MODE (For complex, multi-step investigations)
-- Use opengrok_api + opengrok_execute for deep investigations (3+ steps) where you can filter/summarize in JS.
-- Call opengrok_api ONCE to get the API spec, then run opengrok_execute with JS code.
-- Your JS code runs synchronously in a sandbox. env.opengrok.* methods are blocking.
-- ALWAYS use env.opengrok.batchSearch() for parallel searches — Promise.all does NOT parallelize inside the sandbox VM (calls are serialized via the Atomics bridge; batchSearch runs queries in parallel on the host event loop).
-- Return a value via \`return\` — only the final return value crosses back (saving massive tokens).
-- Example: \`return env.opengrok.batchSearch([{query:"Foo",searchType:"defs"}])[0].results[0].path\`
+Note: For general codebase context (conventions, architecture, AI rules), use VS Code's
+built-in memory tool (/memory command in chat) — it auto-loads at every session.
 
-SESSION MEMORY (Living Document):
-- On session start: call opengrok_memory_status() to check for prior investigation state.
-- If active-task.md has content, read it via opengrok_read_memory() to restore context.
-- During investigation: append findings to investigation-log.md via opengrok_write_memory().
-- Before final answer: update active-task.md with current task state.
+## TOOL SELECTION — DECISION TREE
+Single symbol lookup         → opengrok_get_symbol_context (1 call, replaces 3–5)
+2–5 parallel searches        → opengrok_batch_search (1 call)
+Search + read code           → opengrok_search_and_read (1 call)
+Multi-step (3+ calls needed) → opengrok_execute (1 call, logic runs in sandbox)
+Single search                → opengrok_search_code
+
+NEVER: search_code + get_file_content → use search_and_read
+NEVER: multiple search_code calls → use batch_search
+NEVER: get_file_content on file > 50 lines without start_line + end_line
+
+## LEGACY TOOL RULES
+- ALWAYS call get_file_symbols before get_file_content to find line ranges cheaply
+- ALWAYS pass file_type to narrow results (cxx, java, python, etc.)
+- LIMIT max_results to 5 unless asked for more
+
+## CODE MODE — opengrok_execute
+- Call opengrok_api ONCE at session start for the API spec
+- All env.opengrok.* calls are synchronous from your code's perspective
+- Use env.opengrok.batchSearch([...]) for parallel searches — do NOT write Promise.all()
+- Filter data inside the sandbox — only return what is needed
+
+## MEMORY — MANDATORY BEFORE FINAL ANSWER
+You MUST do both of these before responding to the user:
+  1. opengrok_update_memory("active-task.md", <current state>, "overwrite")
+  2. If a significant finding: opengrok_update_memory("investigation-log.md", <summary>, "append")
+
+Memory files: active-task.md (current task) | investigation-log.md (findings log)
 `.trim();
 
 
@@ -1045,6 +1059,8 @@ function registerMemoryTools(
 // Code Mode tools: opengrok_api + opengrok_execute
 // ---------------------------------------------------------------------------
 
+let executeCallCount = 0;
+
 function registerCodeModeTools(
   server: McpServer,
   client: OpenGrokClient,
@@ -1156,9 +1172,14 @@ function registerCodeModeTools(
         );
 
         const historyHeader = masker.getMaskedHistoryHeader();
-        const finalResult = historyHeader
+        let finalResult = historyHeader
           ? `${historyHeader}\n---\n${result}`
           : result;
+
+        executeCallCount++;
+        if (executeCallCount % 5 === 0 && executeCallCount > 3) {
+          finalResult += "\n\n> Memory: Update active-task.md before answering.";
+        }
 
         return { content: [{ type: "text", text: finalResult }] };
       } catch (err) {
