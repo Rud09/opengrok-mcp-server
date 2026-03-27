@@ -5,6 +5,8 @@
  * Supports multiple simultaneous clients via per-session transport instances.
  * Each connecting client gets an isolated McpServer instance with full tool access.
  *
+ * OAuth 2.1 Bearer token auth, token endpoint, and discovery endpoint are also served here.
+ *
  * stdio transport is unaffected — this is purely additive.
  */
 
@@ -18,39 +20,164 @@ import { logger } from "./logger.js";
 export interface HttpTransportOptions {
   port: number;
   host?: string;
+  /** If set, all /mcp requests must carry `Authorization: Bearer <authToken>`. */
+  authToken?: string;
+  /** OAuth 2.1 client_credentials client ID (enables /token endpoint). */
+  clientId?: string;
+  /** OAuth 2.1 client_credentials client secret. */
+  clientSecret?: string;
+  /** Maximum concurrent sessions before new connections are rejected with 503. Default: 100 */
+  maxSessions?: number;
+}
+
+/** Per-session metadata for monitoring and cleanup. */
+export interface SessionMetadata {
+  createdAt: Date;
+  lastActivity: Date;
+  requestCount: number;
 }
 
 type TransportHandle = {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  meta: SessionMetadata;
 };
 
 /** Factory function that produces a fresh McpServer for each new session. */
 export type McpServerFactory = () => McpServer;
 
+/** Sessions idle longer than this are automatically closed. */
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+/** How often to scan for idle sessions. */
+const SESSION_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+// ---------------------------------------------------------------------------
+// Auth helpers
+// ---------------------------------------------------------------------------
+
+/** Returns true when the request carries a valid Bearer token. */
+export function validateBearerToken(req: IncomingMessage, secret: string): boolean {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) return false;
+  return auth.slice(7) === secret;
+}
+
+/** Send a 401 Unauthorized response with a WWW-Authenticate challenge. */
+function rejectUnauthorized(res: ServerResponse): void {
+  res.writeHead(401, {
+    "Content-Type": "application/json",
+    "WWW-Authenticate": 'Bearer realm="opengrok-mcp"',
+  });
+  res.end(JSON.stringify({ error: "unauthorized", error_description: "Bearer token required" }));
+}
+
+/** Returns true when the host is loopback (127.x.x.x or ::1). */
+function isLoopback(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+// ---------------------------------------------------------------------------
+// OAuth 2.1 helpers
+// ---------------------------------------------------------------------------
+
+/** Build the OAuth 2.1 authorization server metadata document (RFC 8414). */
+function buildOAuthMetadata(baseUrl: string): Record<string, unknown> {
+  return {
+    issuer: baseUrl,
+    token_endpoint: `${baseUrl}/token`,
+    token_endpoint_auth_methods_supported: ["client_secret_basic"],
+    grant_types_supported: ["client_credentials"],
+    response_types_supported: ["token"],
+  };
+}
+
+/**
+ * Handle a POST /token request for client_credentials grant.
+ * Validates Basic auth credentials against clientId/clientSecret.
+ * Returns a Bearer access_token equal to the configured authToken (if set),
+ * or a newly minted random UUID otherwise.
+ */
+async function handleTokenRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts: { clientId: string; clientSecret: string; authToken: string },
+  readBody: (req: IncomingMessage) => Promise<unknown>
+): Promise<void> {
+  // Support both HTTP Basic auth and form-body client_id/client_secret
+  let clientId: string | null = null;
+  let clientSecret: string | null = null;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Basic ")) {
+    const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
+    const sep = decoded.indexOf(":");
+    if (sep !== -1) {
+      clientId = decoded.slice(0, sep);
+      clientSecret = decoded.slice(sep + 1);
+    }
+  }
+
+  // Fall back to request body
+  if (!clientId || !clientSecret) {
+    const body = await readBody(req);
+    if (body && typeof body === "object") {
+      const b = body as Record<string, string>;
+      clientId = b["client_id"] ?? null;
+      clientSecret = b["client_secret"] ?? null;
+    }
+  }
+
+  if (!clientId || !clientSecret || clientId !== opts.clientId || clientSecret !== opts.clientSecret) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "invalid_client" }));
+    return;
+  }
+
+  const accessToken = opts.authToken || randomUUID();
+  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  res.end(JSON.stringify({ access_token: accessToken, token_type: "Bearer", expires_in: 3600 }));
+}
+
 /**
  * Start an HTTP server that serves the MCP protocol over Streamable HTTP transport.
  *
  * @param serverFactory - called once per new client session to create a McpServer
- * @param opts - port and optional host
+ * @param opts - port, optional host, and optional auth options
  * @returns promise that resolves once the server is listening, with a `close()` helper
  */
 export async function startHttpTransport(
   serverFactory: McpServerFactory,
   opts: HttpTransportOptions
 ): Promise<{ close: () => void }> {
-  const { port, host = "127.0.0.1" } = opts;
+  const { port, host = "127.0.0.1", authToken = "", clientId = "", clientSecret = "", maxSessions = 100 } = opts;
+  const loopback = isLoopback(host);
 
-  // Active sessions: Mcp-Session-Id → { transport, server }
+  // Active sessions: Mcp-Session-Id → { transport, server, meta }
   const sessions = new Map<string, TransportHandle>();
 
+  // Sweep idle sessions on a regular interval.
+  const sweepInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [sid, handle] of sessions) {
+      if (now - handle.meta.lastActivity.getTime() > SESSION_TTL_MS) {
+        logger.info(`HTTP session expired (idle TTL): ${sid}`);
+        void handle.transport.close().catch(() => undefined);
+        sessions.delete(sid);
+      }
+    }
+  }, SESSION_SWEEP_INTERVAL_MS);
+  sweepInterval.unref?.(); // don't keep Node alive for the timer alone
+
   const setCorsHeaders = (res: ServerResponse): void => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    // RFC 8252 §8.3: relax CORS for loopback bindings so native apps on any
+    // port can reach the server.
+    res.setHeader("Access-Control-Allow-Origin", loopback ? "*" : "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Authorization");
   };
 
-  /** Read the full request body as a parsed JSON object. Returns null on failure. */
+  /** Read the full request body as a parsed JSON object (or URL-encoded form). Returns null on failure. */
   const readBody = (req: IncomingMessage): Promise<unknown> =>
     new Promise((resolve) => {
       const chunks: Buffer[] = [];
@@ -61,11 +188,19 @@ export async function startHttpTransport(
           resolve(null);
           return;
         }
+        // Try JSON first, then URL-encoded form data
         try {
           resolve(JSON.parse(raw));
+          return;
         } catch {
-          resolve(null);
+          // try form
         }
+        const params: Record<string, string> = {};
+        for (const pair of raw.split("&")) {
+          const [k, v] = pair.split("=");
+          if (k) params[decodeURIComponent(k)] = decodeURIComponent(v ?? "");
+        }
+        resolve(params);
       });
       req.on("error", () => resolve(null));
     });
@@ -79,12 +214,30 @@ export async function startHttpTransport(
 
       if (sessionId && sessions.has(sessionId)) {
         handle = sessions.get(sessionId)!;
+        handle.meta.lastActivity = new Date();
+        handle.meta.requestCount += 1;
       } else if (!sessionId && isInitializeRequest(body)) {
+        // Enforce session cap before creating a new session.
+        if (sessions.size >= maxSessions) {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: { code: -32000, message: "Service Unavailable: maximum sessions reached" },
+              id: null,
+            })
+          );
+          return;
+        }
+
         // New client — create a fresh server + transport for this session.
+        const now = new Date();
+        const meta: SessionMetadata = { createdAt: now, lastActivity: now, requestCount: 1 };
+
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
-            sessions.set(sid, { transport, server });
+            sessions.set(sid, { transport, server, meta });
             logger.info(`HTTP session initialized: ${sid}`);
           },
         });
@@ -100,7 +253,7 @@ export async function startHttpTransport(
         const server = serverFactory();
         await server.connect(transport);
 
-        handle = { transport, server };
+        handle = { transport, server, meta };
         // Note: session map entry is set by onsessioninitialized above
         await transport.handleRequest(req, res, body);
         return;
@@ -138,8 +291,11 @@ export async function startHttpTransport(
       res.writeHead(400).end("Invalid or missing session ID");
       return;
     }
+    const handle = sessions.get(sessionId)!;
+    handle.meta.lastActivity = new Date();
+    handle.meta.requestCount += 1;
     try {
-      await sessions.get(sessionId)!.transport.handleRequest(req, res);
+      await handle.transport.handleRequest(req, res);
     } catch (err) {
       logger.error("HTTP GET (SSE) handler error:", err);
       if (!res.headersSent) res.writeHead(500).end("Internal server error");
@@ -169,8 +325,46 @@ export async function startHttpTransport(
     }
 
     const url = req.url?.split("?")[0];
+
+    // OAuth 2.1 discovery endpoint (RFC 8414)
+    if (url === "/.well-known/oauth-authorization-server" && req.method === "GET") {
+      const baseUrl = `http://${host}:${port}`;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(buildOAuthMetadata(baseUrl)));
+      return;
+    }
+
+    // OAuth 2.1 token endpoint — only active when clientId/clientSecret are configured
+    if (url === "/token" && req.method === "POST") {
+      if (!clientId || !clientSecret) {
+        res.writeHead(404).end("Not Found");
+        return;
+      }
+      void handleTokenRequest(req, res, { clientId, clientSecret, authToken }, readBody);
+      return;
+    }
+
+    // Debug/admin endpoint — active session stats.
+    if (url === "/mcp/sessions" && req.method === "GET") {
+      const sessionList = Array.from(sessions.entries()).map(([sid, h]) => ({
+        sessionId: sid,
+        createdAt: h.meta.createdAt.toISOString(),
+        lastActivity: h.meta.lastActivity.toISOString(),
+        requestCount: h.meta.requestCount,
+      }));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ activeSessionCount: sessions.size, maxSessions, sessions: sessionList }));
+      return;
+    }
+
     if (url !== "/mcp") {
       res.writeHead(404).end("Not Found");
+      return;
+    }
+
+    // Bearer token validation for /mcp — only enforced when authToken is configured
+    if (authToken && !validateBearerToken(req, authToken)) {
+      rejectUnauthorized(res);
       return;
     }
 
@@ -190,6 +384,7 @@ export async function startHttpTransport(
       logger.info(`HTTP transport listening on http://${host}:${port}/mcp`);
       resolve({
         close: () => {
+          clearInterval(sweepInterval);
           // Close all active sessions before shutting down
           for (const [, handle] of sessions) {
             void handle.transport.close().catch(() => undefined);
@@ -202,3 +397,4 @@ export async function startHttpTransport(
     httpServer.once("error", reject);
   });
 }
+

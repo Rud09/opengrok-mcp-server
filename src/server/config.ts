@@ -116,6 +116,14 @@ const ConfigSchema = z.object({
   // Sampling — token budget and model preference (Task 5.5)
   OPENGROK_SAMPLING_MAX_TOKENS: z.coerce.number().int().min(64).max(4096).default(256),
   OPENGROK_SAMPLING_MODEL: z.string().default(""),
+  // HTTP transport OAuth 2.1 (Task 5.3)
+  // Shared-secret Bearer token for HTTP transport auth (empty = no auth required)
+  OPENGROK_HTTP_AUTH_TOKEN: z.string().default(""),
+  // client_credentials OAuth 2.1 client ID and secret (empty = no OAuth token endpoint)
+  OPENGROK_HTTP_CLIENT_ID: z.string().default(""),
+  OPENGROK_HTTP_CLIENT_SECRET: z.string().default(""),
+  // HTTP transport — max concurrent sessions (Task 5.2)
+  OPENGROK_HTTP_MAX_SESSIONS: zIntString("100"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
