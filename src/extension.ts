@@ -10,6 +10,9 @@ import { execSync } from 'child_process';
 // Credential files older than this are considered stale and will be cleaned up
 const CREDENTIAL_FILE_MAX_AGE_MS = 60000; // 60 seconds
 
+// Global state keys
+const SETUP_PROMPTED_KEY = 'opengrok.setupPrompted.v2';
+
 // Auto-update check
 const GITHUB_REPO_OWNER = 'IcyHot09';
 const GITHUB_REPO_NAME = 'opengrok-mcp-server';
@@ -335,10 +338,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         );
         if (action === 'Configure Now') {
             openConfigurationPanel(context);
-        } else if (!context.globalState.get<boolean>('hasPromptedConfig')) {
+        } else if (!context.globalState.get<boolean>(SETUP_PROMPTED_KEY)) {
             // First time setup: open configuration automatically
             openConfigurationPanel(context);
-            await context.globalState.update('hasPromptedConfig', true);
+            await context.globalState.update(SETUP_PROMPTED_KEY, true);
         }
     }
 

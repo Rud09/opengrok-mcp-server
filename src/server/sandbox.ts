@@ -27,6 +27,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Worker } from "worker_threads";
+import type { WorkerHandle } from "./worker-pool.js";
 import type { OpenGrokClient } from "./client.js";
 import type { MemoryBank } from "./memory-bank.js";
 import type { HealthAPIResult } from "./api-types.js";
@@ -391,7 +392,8 @@ export async function executeInSandbox(
   code: string,
   api: SandboxAPI,
   capFn: (text: string) => string,
-  _budgetBytes: number
+  _budgetBytes: number,
+  pooledWorker?: WorkerHandle
 ): Promise<string> {
   // Create shared communication buffer (layout pinned — must match sandbox-worker.ts)
   const sharedBuffer = new SharedArrayBuffer(SHARED_BUFFER_SIZE);
@@ -475,7 +477,15 @@ export async function executeInSandbox(
   const localWorkerPath = path.join(__dirname, "sandbox-worker.js");
   const devWorkerPath = path.join(__dirname, "..", "..", "out", "server", "sandbox-worker.js");
   const workerPath = fs.existsSync(localWorkerPath) ? localWorkerPath : devWorkerPath;
-  const worker = new Worker(workerPath, { workerData: { sharedBuffer, code } });
+
+  let worker: Worker;
+  if (pooledWorker) {
+    // Use the pre-warmed worker from the pool; send job via message
+    worker = pooledWorker.worker;
+    worker.postMessage({ sharedBuffer, code });
+  } else {
+    worker = new Worker(workerPath, { workerData: { sharedBuffer, code } });
+  }
 
   return new Promise<string>((resolve) => {
     _resolve = resolve;
@@ -483,13 +493,22 @@ export async function executeInSandbox(
     // Hard timeout — terminates worker unconditionally at 10 s
     // (covers cases where worker is blocked in Atomics.wait during a slow API call)
     const hardTimeoutId = setTimeout(() => {
-      void worker.terminate();
+      void (pooledWorker ? pooledWorker.terminate() : worker.terminate());
       safeResolve(
         "Error: Sandbox execution timed out (10s limit). Simplify your code or reduce the number of API calls."
       );
     }, 10_000);
 
-    worker.on("message", (result: { ok: boolean; data?: unknown; error?: { name: string; message: string } }) => {
+    // Cleanup removes all three listeners to prevent accumulation on reused pool workers
+    function cleanup(): void {
+      worker.removeListener("message", onMessage);
+      worker.removeListener("error", onError);
+      worker.removeListener("exit", onExit);
+    }
+
+    function onMessage(result: { ok: boolean; data?: unknown; error?: { name: string; message: string }; type?: string }): void {
+      if (result.type === "ready") return;  // pool startup ack — ignore
+      cleanup();
       clearTimeout(hardTimeoutId);
 
       if (!result.ok) {
@@ -520,20 +539,26 @@ export async function executeInSandbox(
       const serialized =
         typeof data === "string" ? data : JSON.stringify(data, null, 2);
       safeResolve(capFn(serialized));
-    });
+    }
 
-    worker.on("error", (err) => {
+    function onError(err: Error): void {
+      cleanup();
       clearTimeout(hardTimeoutId);
       logger.error("Sandbox worker error:", err);
       safeResolve(`Error: ${err.message ?? "Worker error"}`);
-    });
+    }
 
-    worker.on("exit", (code) => {
-      clearTimeout(hardTimeoutId);
+    function onExit(code: number): void {
       if (!stopped) {
+        cleanup();
+        clearTimeout(hardTimeoutId);
         safeResolve(`Error: Sandbox worker exited unexpectedly (code ${code})`);
       }
-    });
+    }
+
+    worker.on("message", onMessage);
+    worker.on("error", onError);
+    worker.on("exit", onExit);
 
     // Start the poll loop
     handleWorkerCall().catch((err) => {

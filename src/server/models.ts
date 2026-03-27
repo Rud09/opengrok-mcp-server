@@ -48,6 +48,15 @@ export const SearchCodeArgs = z.object({
   response_format: RESPONSE_FORMAT,
 });
 
+export const SearchPatternArgs = z.object({
+  pattern: z.string().min(1).describe("Regular expression pattern to search for"),
+  projects: z.array(z.string()).optional().describe("Limit to specific projects"),
+  file_type: z.string().optional().describe(FILE_TYPE_DESC),
+  max_results: z.number().int().min(1).max(100).default(20).describe("Maximum results to return"),
+  response_format: RESPONSE_FORMAT,
+});
+export type SearchPatternArgs = z.infer<typeof SearchPatternArgs>;
+
 export const FindFileArgs = z.object({
   path_pattern: z.string().min(1, "path_pattern must not be empty").describe("Path pattern (e.g., config.ts, test*.js)"),
   projects: z.array(z.string()).optional(),
@@ -96,6 +105,23 @@ export const SearchSuggestArgs = z.object({
   field: z.enum(["full", "defs", "refs", "path"]).default("full"),
   response_format: RESPONSE_FORMAT,
 });
+
+export const WhatChangedArgs = z.object({
+  project: z.string().min(1).describe("Project name"),
+  path: z.string().min(1).describe("File path relative to project root"),
+  since_days: z.number().int().min(1).max(90).default(7).describe("How many days of history to include (1–90, default 7)"),
+  response_format: RESPONSE_FORMAT,
+});
+export type WhatChangedArgs = z.infer<typeof WhatChangedArgs>;
+
+export const DependencyMapArgs = z.object({
+  project: z.string().min(1).describe("Project name"),
+  path: z.string().min(1).describe("File path relative to project root"),
+  depth: z.number().int().min(1).max(3).default(2).describe("How many levels deep to trace (1–3, default 2)"),
+  direction: z.enum(["uses", "used_by", "both"]).default("both").describe("Trace what this file uses, what uses it, or both"),
+  response_format: RESPONSE_FORMAT,
+});
+export type DependencyMapArgs = z.infer<typeof DependencyMapArgs>;
 
 // ---------------------------------------------------------------------------
 // Compound tool argument schemas

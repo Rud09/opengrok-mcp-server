@@ -340,7 +340,14 @@ export class OpenGrokClient {
       : /* v8 ignore next -- tested in client-extended L294 with no trailing slash */ config.OPENGROK_BASE_URL + "/";
     this.baseUrl = new URL(raw);
     this.verifySsl = config.OPENGROK_VERIFY_SSL;
-    this.agent = this.verifySsl ? undefined : new Agent({ connect: { rejectUnauthorized: false } });
+    const agentOptions = {
+      connections: 20,
+      keepAliveTimeout: 60_000,
+      keepAliveMaxTimeout: 300_000,
+    };
+    this.agent = this.verifySsl
+      ? new Agent(agentOptions)
+      : new Agent({ ...agentOptions, connect: { rejectUnauthorized: false } });
 
     if (config.OPENGROK_USERNAME && config.OPENGROK_PASSWORD) {
       const b64 = Buffer.from(
@@ -544,6 +551,29 @@ export class OpenGrokClient {
     const response = await this.request(url, TIMEOUTS.search, "text/html, */*");
     const html = await response.text();
     return parseWebSearchResults(html, searchType, query);
+  }
+
+  async searchPattern(opts: {
+    pattern: string;
+    projects?: string[];
+    fileType?: string;
+    maxResults?: number;
+  }): Promise<SearchResults> {
+    const { pattern, projects, fileType, maxResults = 20 } = opts;
+    const url = buildSafeUrl(this.baseUrl, "api/v1/search");
+    url.searchParams.set("full", pattern);
+    url.searchParams.set("regexp", "true");
+    url.searchParams.set("maxresults", String(maxResults));
+    if (projects?.length) {
+      url.searchParams.set("projects", [...projects].sort().join(","));
+    }
+    if (fileType) {
+      url.searchParams.set("type", fileType);
+    }
+
+    const response = await this.request(url, TIMEOUTS.search, "application/json");
+    const data = (await response.json()) as Record<string, unknown>;
+    return parseSearchResponse(data, "full", pattern);
   }
 
   async suggest(
@@ -783,6 +813,16 @@ export class OpenGrokClient {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Fire-and-forget cache pre-warming. Called after successful health check.
+   * Warms up the TTL cache with project list + one minimal defs search.
+   * Best-effort only; errors are silently ignored.
+   */
+  warmCache(): void {
+    void this.listProjects().catch(() => undefined);
+    void this.search("main", "defs", undefined, 1).catch(() => undefined);
   }
 
   async close(): Promise<void> {

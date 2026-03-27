@@ -567,3 +567,53 @@ describe('OpenGrokClient search with cache', () => {
     await client.close();
   });
 });
+
+// -----------------------------------------------------------------------
+// RateLimiter — load tests (fake timers)
+// -----------------------------------------------------------------------
+
+describe('RateLimiter load test', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('allows burst up to token limit then throttles remaining requests', async () => {
+    // RPM=3: starts with 3 tokens, refill rate = 3/60 = 0.05 tokens/s (20s per token)
+    const rl = new RateLimiter(3);
+    const completed: number[] = [];
+
+    const promises = Array.from({ length: 5 }, (_, i) =>
+      rl.acquire().then(() => { completed.push(i); })
+    );
+
+    // Let the first 3 burst through (tokens already available)
+    await vi.advanceTimersByTimeAsync(0);
+    expect(completed).toHaveLength(3);
+
+    // Advance ~20s per token to allow the remaining 2 through
+    await vi.advanceTimersByTimeAsync(40_100);
+    await Promise.all(promises);
+    expect(completed).toHaveLength(5);
+  });
+
+  it('recovers tokens over time and resumes queued requests', async () => {
+    // RPM=60: 60 tokens pre-filled, rate=1 token/s
+    const rl = new RateLimiter(60);
+
+    // Exhaust all 60 tokens
+    const burst = Array.from({ length: 60 }, () => rl.acquire());
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.all(burst);
+
+    let recovered = false;
+    const waitingRequest = rl.acquire().then(() => { recovered = true; });
+
+    // Not resolved yet — no tokens available
+    await vi.advanceTimersByTimeAsync(0);
+    expect(recovered).toBe(false);
+
+    // Advance 1+ seconds to accumulate 1 token
+    await vi.advanceTimersByTimeAsync(1100);
+    await waitingRequest;
+    expect(recovered).toBe(true);
+  });
+});

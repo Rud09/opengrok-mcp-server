@@ -47,6 +47,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 function makeMockClient() {
   return {
     search: vi.fn(),
+    searchPattern: vi.fn(),
     suggest: vi.fn(),
     getFileContent: vi.fn(),
     getFileHistory: vi.fn(),
@@ -55,6 +56,7 @@ function makeMockClient() {
     getAnnotate: vi.fn(),
     getFileSymbols: vi.fn(),
     testConnection: vi.fn(),
+    warmCache: vi.fn(),
     close: vi.fn(),
   };
 }
@@ -109,6 +111,30 @@ describe('dispatchTool — opengrok_find_file', () => {
     const result = await dispatchTool('opengrok_find_file', { path_pattern: 'main.cpp' }, client as any, config, emptyLocal());
     expect(client.search).toHaveBeenCalledWith('main.cpp', 'path', ['release-2.x'], 10, 0);
     expect(result).toBeDefined();
+  });
+});
+
+// -----------------------------------------------------------------------
+// search_pattern
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — opengrok_search_pattern', () => {
+  it('delegates to searchPattern with regexp=true URL semantics', async () => {
+    const client = makeMockClient();
+    client.searchPattern.mockResolvedValue({
+      query: 'void\\s+\\w+',
+      searchType: 'full',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: '/src/main.cpp', matches: [{ lineNumber: 10, lineContent: 'void main()' }] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    const result = await dispatchTool('opengrok_search_pattern', { pattern: 'void\\s+\\w+' }, client as any, config, emptyLocal());
+    expect(client.searchPattern).toHaveBeenCalledWith(
+      expect.objectContaining({ pattern: 'void\\s+\\w+', projects: ['release-2.x'] })
+    );
+    expect(result).toContain('main.cpp');
   });
 });
 
@@ -431,18 +457,65 @@ describe('dispatchTool — opengrok_get_symbol_context', () => {
 // -----------------------------------------------------------------------
 
 describe('dispatchTool — opengrok_index_health', () => {
-  it('reports connected', async () => {
+  it('reports connected with latency and project count', async () => {
     const client = makeMockClient();
     client.testConnection.mockResolvedValue(true);
+    client.listProjects.mockResolvedValue([
+      { name: 'project1', category: 'cat1' },
+      { name: 'project2', category: 'cat1' },
+    ]);
     const result = await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
-    expect(result).toContain('connected');
+    expect(result).toContain('Connected');
+    expect(result).toContain('Latency');
+    expect(result).toContain('Indexed projects');
+    expect(result).toContain('2');
   });
 
   it('reports connection failed', async () => {
     const client = makeMockClient();
     client.testConnection.mockResolvedValue(false);
+    client.listProjects.mockResolvedValue([]);
     const result = await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
-    expect(result).toContain('failed');
+    expect(result).toContain('Connected');
+    expect(result).toContain('false');
+  });
+
+  it('includes warning when project list fetch fails', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(true);
+    client.listProjects.mockRejectedValue(new Error('Network error'));
+    const result = await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
+    expect(result).toContain('Connected');
+    expect(result).toContain('Warnings');
+    expect(result).toContain('Could not retrieve project list');
+  });
+
+  it('returns JSON format when requested', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(true);
+    client.listProjects.mockResolvedValue([{ name: 'project1' }]);
+    const result = await dispatchTool('opengrok_index_health', { response_format: 'json' }, client as any, config, emptyLocal());
+    const parsed = JSON.parse(result as string);
+    expect(parsed.connected).toBe(true);
+    expect(typeof parsed.latencyMs).toBe('number');
+    expect(parsed.indexedProjects).toBe(1);
+    expect(Array.isArray(parsed.warnings)).toBe(true);
+  });
+
+  it('calls warmCache on successful connection', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(true);
+    client.listProjects.mockResolvedValue([]);
+    await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
+    expect(client.warmCache).toHaveBeenCalled();
+  });
+
+  it('does not call warmCache on failed connection', async () => {
+    const client = makeMockClient();
+    client.testConnection.mockResolvedValue(false);
+    client.listProjects.mockResolvedValue([]);
+    await dispatchTool('opengrok_index_health', {}, client as any, config, emptyLocal());
+    expect(client.warmCache).not.toHaveBeenCalled();
   });
 });
 
@@ -511,6 +584,61 @@ describe('dispatchTool — opengrok_get_file_symbols', () => {
 // unknown tool
 // -----------------------------------------------------------------------
 
+describe('dispatchTool — opengrok_what_changed', () => {
+  const recentDate = new Date();
+  recentDate.setDate(recentDate.getDate() - 2); // 2 days ago — within default 7-day window
+  const recentDateStr = recentDate.toISOString().slice(0, 10);
+
+  it('returns formatted output grouped by commit', async () => {
+    const client = makeMockClient();
+    client.getFileHistory.mockResolvedValue({
+      project: 'proj', path: 'src/EventLoop.cpp',
+      entries: [
+        { revision: 'abc12345', author: 'John Doe', date: recentDateStr, message: 'fix event loop' },
+      ],
+    });
+    client.getAnnotate.mockResolvedValue({
+      project: 'proj', path: 'src/EventLoop.cpp',
+      lines: [
+        { lineNumber: 42, revision: 'abc12345', author: 'John Doe', date: recentDateStr, content: 'line content' },
+        { lineNumber: 43, revision: 'abc12345', author: 'John Doe', date: recentDateStr, content: 'next line' },
+      ],
+    });
+    const result = await dispatchTool('opengrok_what_changed', { project: 'proj', path: 'src/EventLoop.cpp' }, client as any, config, emptyLocal());
+    expect(result).toContain('Recent changes');
+    expect(result).toContain('abc1234');
+    expect(result).toContain('John Doe');
+    expect(result).toContain('42');
+  });
+
+  it('reports no changes when no commits fall within since_days', async () => {
+    const client = makeMockClient();
+    client.getFileHistory.mockResolvedValue({
+      project: 'proj', path: 'file.cpp',
+      entries: [
+        { revision: 'old00001', author: 'Dev', date: '2000-01-01', message: 'ancient commit' },
+      ],
+    });
+    client.getAnnotate.mockResolvedValue({
+      project: 'proj', path: 'file.cpp',
+      lines: [
+        { lineNumber: 1, revision: 'old00001', author: 'Dev', date: '2000-01-01', content: 'old line' },
+      ],
+    });
+    const result = await dispatchTool('opengrok_what_changed', { project: 'proj', path: 'file.cpp', since_days: 7 }, client as any, config, emptyLocal());
+    expect(result).toContain('No lines changed');
+  });
+
+  it('calls getFileHistory and getAnnotate in parallel', async () => {
+    const client = makeMockClient();
+    client.getFileHistory.mockResolvedValue({ project: 'proj', path: 'file.cpp', entries: [] });
+    client.getAnnotate.mockResolvedValue({ project: 'proj', path: 'file.cpp', lines: [] });
+    await dispatchTool('opengrok_what_changed', { project: 'proj', path: 'file.cpp' }, client as any, config, emptyLocal());
+    expect(client.getFileHistory).toHaveBeenCalledWith('proj', 'file.cpp');
+    expect(client.getAnnotate).toHaveBeenCalledWith('proj', 'file.cpp');
+  });
+});
+
 describe('dispatchTool — unknown', () => {
   it('returns error for unknown tool name', async () => {
     const client = makeMockClient();
@@ -571,4 +699,168 @@ describe('readFileAtAbsPath', () => {
     const result = await readFileAtAbsPath('/nonexistent/file/path.cpp');
     expect(result).toBeNull();
   });
+});
+
+// -----------------------------------------------------------------------
+// dispatchTool — opengrok_dependency_map
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — opengrok_dependency_map', () => {
+  it('returns dependency map for direction=both', async () => {
+    const client = makeMockClient();
+    // First call: refs search for "uses" (both directions use refs)
+    client.search.mockResolvedValueOnce({
+      query: 'EventLoop.cpp',
+      searchType: 'refs',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/Timer.cpp', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    // Second call: refs search for "used_by"
+    client.search.mockResolvedValueOnce({
+      query: 'EventLoop.cpp',
+      searchType: 'refs',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/main.cpp', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    const result = await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/EventLoop.cpp', depth: 1, direction: 'both' },
+      client as any, config, emptyLocal()
+    );
+    expect(result).toContain('Dependency map');
+    expect(result).toContain('EventLoop.cpp');
+    expect(result).toContain('Timer.cpp');
+    expect(result).toContain('main.cpp');
+  });
+
+  it('only runs refs search for direction=uses', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'foo.h',
+      searchType: 'refs',
+      totalCount: 0,
+      timeMs: 5,
+      results: [],
+      startIndex: 0,
+      endIndex: 0,
+    });
+    await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/foo.h', depth: 1, direction: 'uses' },
+      client as any, config, emptyLocal()
+    );
+    // Should only call search once (refs search, no additional searches)
+    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.search).toHaveBeenCalledWith('foo.h', 'refs', ['proj'], 20);
+  });
+
+  it('only runs refs search for direction=used_by', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'foo.h',
+      searchType: 'refs',
+      totalCount: 0,
+      timeMs: 5,
+      results: [],
+      startIndex: 0,
+      endIndex: 0,
+    });
+    await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/foo.h', depth: 1, direction: 'used_by' },
+      client as any, config, emptyLocal()
+    );
+    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.search).toHaveBeenCalledWith('foo.h', 'refs', ['proj'], 20);
+  });
+
+  it('recurses to depth=2 for uses', async () => {
+    const client = makeMockClient();
+    // Level 1: foo.h -> bar.h
+    client.search.mockResolvedValueOnce({
+      query: 'foo.h',
+      searchType: 'path',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/bar.h', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    // Level 2: bar.h -> baz.h
+    client.search.mockResolvedValueOnce({
+      query: 'bar.h',
+      searchType: 'path',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/baz.h', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    const result = await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/foo.h', depth: 2, direction: 'uses' },
+      client as any, config, emptyLocal()
+    );
+    expect(client.search).toHaveBeenCalledTimes(2);
+    expect(result).toContain('bar.h');
+    expect(result).toContain('baz.h');
+    expect(result).toContain('Level 1');
+    expect(result).toContain('Level 2');
+  });
+
+  it('returns no-dep message when results are empty', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'lone.cpp',
+      searchType: 'path',
+      totalCount: 0,
+      timeMs: 5,
+      results: [],
+      startIndex: 0,
+      endIndex: 0,
+    });
+    const result = await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/lone.cpp', depth: 1, direction: 'both' },
+      client as any, config, emptyLocal()
+    );
+    expect(result).toContain('No dependency');
+  });
+});
+
+// -----------------------------------------------------------------------
+// Zod input schema rejection — CI gate
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — Zod input schema rejection', () => {
+  const client = makeMockClient();
+  const localLayer = emptyLocal();
+
+  const invalidInputCases: Array<{ tool: string; input: Record<string, unknown>; expectedField: string }> = [
+    { tool: 'opengrok_search_code',     input: {},                                  expectedField: 'query' },
+    { tool: 'opengrok_search_pattern',  input: {},                                  expectedField: 'pattern' },
+    { tool: 'opengrok_dependency_map',  input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_what_changed',    input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_get_file_content',input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_get_file_history',input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_browse_directory',input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_get_file_annotate',input: {},                                 expectedField: 'project' },
+    { tool: 'opengrok_search_suggest',  input: {},                                  expectedField: 'query' },
+    { tool: 'opengrok_get_file_symbols',input: {},                                  expectedField: 'project' },
+  ];
+
+  it.each(invalidInputCases)(
+    '$tool rejects missing required field: $expectedField',
+    async ({ tool, input, expectedField }) => {
+      await expect(
+        dispatchTool(tool, input, client as any, config, localLayer)
+      ).rejects.toThrow(expectedField);
+    }
+  );
 });

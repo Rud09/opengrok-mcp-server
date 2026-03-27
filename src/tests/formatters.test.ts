@@ -7,6 +7,7 @@ import {
   formatProjectsList,
   formatAnnotate,
   formatBatchSearchResults,
+  formatBatchSearchResultsTSV,
   formatSearchAndRead,
   formatSymbolContext,
   formatFileSymbols,
@@ -332,6 +333,160 @@ describe('formatBatchSearchResults', () => {
   it('handles empty batch', () => {
     const output = formatBatchSearchResults([]);
     expect(output).toContain('0');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatBatchSearchResultsTSV
+// ---------------------------------------------------------------------------
+
+describe('formatBatchSearchResultsTSV', () => {
+  const mockSearchResults = {
+    query: 'EventLoop',
+    searchType: 'defs',
+    results: {
+      query: 'EventLoop',
+      searchType: 'defs',
+      totalCount: 2,
+      timeMs: 10,
+      startIndex: 0,
+      endIndex: 2,
+      results: [
+        {
+          project: 'myproject',
+          path: 'src/EventLoop.cpp',
+          matches: [{ lineNumber: 45, lineContent: 'class EventLoop {' }],
+        },
+        {
+          project: 'myproject',
+          path: 'src/EventLoop.h',
+          matches: [{ lineNumber: 12, lineContent: 'class EventLoop;' }],
+        },
+      ],
+    },
+  };
+
+  it('produces TSV header with correct columns', () => {
+    const output = formatBatchSearchResultsTSV([mockSearchResults]);
+    const lines = output.split('\n');
+    expect(lines[1]).toBe('query\tsearch_type\tpath\tproject\tline\tcontent');
+  });
+
+  it('includes comment line with batch summary', () => {
+    const output = formatBatchSearchResultsTSV([mockSearchResults]);
+    const lines = output.split('\n');
+    expect(lines[0]).toMatch(/^# Batch: 1 queries, 2 total matches$/);
+  });
+
+  it('produces tab-separated data rows', () => {
+    const output = formatBatchSearchResultsTSV([mockSearchResults]);
+    const lines = output.split('\n');
+    // Check first data row (should be EventLoop.cpp)
+    const dataRow = lines[2];
+    const cols = dataRow.split('\t');
+    expect(cols.length).toBe(6);
+    expect(cols[0]).toBe('EventLoop');
+    expect(cols[1]).toBe('defs');
+    expect(cols[2]).toBe('src/EventLoop.cpp');
+    expect(cols[3]).toBe('myproject');
+    expect(cols[4]).toBe('45');
+    expect(cols[5]).toContain('EventLoop');
+  });
+
+  it('replaces tabs in content with spaces', () => {
+    const results = {
+      query: 'test',
+      searchType: 'full',
+      results: {
+        query: 'test',
+        searchType: 'full',
+        totalCount: 1,
+        timeMs: 5,
+        startIndex: 0,
+        endIndex: 1,
+        results: [{
+          project: 'p',
+          path: 'a.cpp',
+          matches: [{ lineNumber: 1, lineContent: 'foo\tbar\tbaz' }],
+        }],
+      },
+    };
+    const output = formatBatchSearchResultsTSV([results]);
+    const lines = output.split('\n');
+    const dataRow = lines.find(l => l.startsWith('test\tfull\ta.cpp'));
+    expect(dataRow).toBeDefined();
+    // Should have exactly 5 tabs (6 columns)
+    expect((dataRow!.match(/\t/g) ?? []).length).toBe(5);
+    expect(dataRow).toContain('foo  bar  baz');
+  });
+
+  it('handles empty results with (no results) row', () => {
+    const results = {
+      query: 'NotFound',
+      searchType: 'defs',
+      results: {
+        query: 'NotFound',
+        searchType: 'defs',
+        totalCount: 0,
+        timeMs: 5,
+        startIndex: 0,
+        endIndex: 0,
+        results: [],
+      },
+    };
+    const output = formatBatchSearchResultsTSV([results]);
+    expect(output).toContain('NotFound\tdefs\t(no results)\t\t\t');
+  });
+
+  it('handles multiple queries', () => {
+    const result1 = {
+      query: 'EventLoop',
+      searchType: 'defs',
+      results: {
+        query: 'EventLoop',
+        searchType: 'defs',
+        totalCount: 1,
+        timeMs: 10,
+        startIndex: 0,
+        endIndex: 1,
+        results: [{
+          project: 'p1',
+          path: 'src/EventLoop.h',
+          matches: [{ lineNumber: 12, lineContent: 'class EventLoop;' }],
+        }],
+      },
+    };
+    const result2 = {
+      query: 'Timer',
+      searchType: 'refs',
+      results: {
+        query: 'Timer',
+        searchType: 'refs',
+        totalCount: 2,
+        timeMs: 15,
+        startIndex: 0,
+        endIndex: 2,
+        results: [{
+          project: 'p2',
+          path: 'src/timer.cpp',
+          matches: [
+            { lineNumber: 20, lineContent: 'Timer t;' },
+            { lineNumber: 25, lineContent: 't.start();' },
+          ],
+        }],
+      },
+    };
+
+    const output = formatBatchSearchResultsTSV([result1, result2]);
+    const lines = output.split('\n');
+    expect(lines[0]).toMatch(/# Batch: 2 queries, 3 total matches/);
+    expect(output).toContain('EventLoop\tdefs');
+    expect(output).toContain('Timer\trefs');
+  });
+
+  it('does not contain markdown code fences', () => {
+    const output = formatBatchSearchResultsTSV([mockSearchResults]);
+    expect(output).not.toContain('```');
   });
 });
 

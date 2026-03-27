@@ -17,6 +17,7 @@ import type { Config } from "./config.js";
 import {
   formatAnnotate,
   formatBatchSearchResults,
+  formatBatchSearchResultsTSV,
   formatCompileInfo,
   formatDirectoryListing,
   formatFileContent,
@@ -29,11 +30,14 @@ import {
   formatSearchResultsTSV,
   formatSymbolContext,
   formatSymbolContextYAML,
+  formatWhatChanged,
+  formatDependencyMap,
   selectFormat,
 } from "./formatters.js";
 import type {
   SearchAndReadEntry,
   SymbolContextResult,
+  DependencyNode,
 } from "./formatters.js";
 import type { CompileInfo } from "./local/compile-info.js";
 import {
@@ -55,8 +59,11 @@ import {
   ListProjectsArgs,
   SearchAndReadArgs,
   SearchCodeArgs,
+  SearchPatternArgs,
   SearchSuggestArgs,
   FindFileArgs,
+  WhatChangedArgs,
+  DependencyMapArgs,
   SearchResultsOutput,
   FileContentOutput,
   ProjectsListOutput,
@@ -74,6 +81,7 @@ import type { ResponseFormat } from "./formatters.js";
 import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
 import { ObservationMasker } from "./observation-masker.js";
 import { createSandboxAPI, executeInSandbox, API_SPEC } from "./sandbox.js";
+import { SandboxWorkerPool } from "./worker-pool.js";
 import yaml from "js-yaml";
 
 import { logger } from "./logger.js";
@@ -118,6 +126,38 @@ function capResponse(text: string, maxBytes?: number): string {
     safeText +
     `\n[Response truncated at ${Math.round(limit / 1024)} KB. Use line ranges or narrow query.]`
   );
+}
+
+function capCodeModeResult(result: string, maxBytes: number): string {
+  const bytes = Buffer.byteLength(result, "utf8");
+  if (bytes <= maxBytes) return result;
+
+  // Try to truncate at a JSON array element boundary
+  const trimmed = result.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown[];
+      // Binary search for max elements that fit
+      let lo = 0, hi = parsed.length;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (Buffer.byteLength(JSON.stringify(parsed.slice(0, mid)), "utf8") <= maxBytes) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      if (lo > 0) {
+        const truncated = JSON.stringify(parsed.slice(0, lo));
+        return truncated + `\n// [truncated: ${parsed.length - lo} more elements]`;
+      }
+    } catch {
+      // Not valid JSON array, fall through to byte truncation
+    }
+  }
+
+  // Fallback: byte truncation (existing behavior)
+  return capResponse(result, maxBytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +548,37 @@ async function executeListProjects(
   };
 }
 
+function deduplicateAcrossQueries(
+  results: Array<{
+    query: string;
+    searchType: string;
+    results: SearchResults;
+  }>
+): Array<{
+  query: string;
+  searchType: string;
+  results: SearchResults;
+}> {
+  const seen = new Set<string>();
+  return results.map((queryResult) => ({
+    ...queryResult,
+    results: {
+      ...queryResult.results,
+      results: queryResult.results.results
+        .map((hit) => ({
+          ...hit,
+          matches: hit.matches.filter((match) => {
+            const key = `${hit.path}:${match.lineNumber}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          }),
+        }))
+        .filter((hit) => hit.matches.length > 0),
+    },
+  }));
+}
+
 async function executeBatchSearch(
   args: {
     queries: Array<{
@@ -549,9 +620,18 @@ async function executeBatchSearch(
     searchType: q.search_type,
     results: searchResults[i],
   }));
+
+  const deduped = deduplicateAcrossQueries(queryResults);
+
+  const fmt = selectFormat("search", args.response_format);
+  const text =
+    fmt === "tsv"
+      ? formatBatchSearchResultsTSV(deduped)
+      : formatBatchSearchResults(deduped);
+
   return {
-    text: formatBatchSearchResults(queryResults),
-    structured: { queryResults },
+    text,
+    structured: { queryResults: deduped },
   };
 }
 
@@ -845,6 +925,18 @@ async function dispatchTool(
       return formatSearchResults(results);
     }
 
+    case "opengrok_search_pattern": {
+      const args = SearchPatternArgs.parse(rawArgs);
+      const results = await client.searchPattern({
+        pattern: args.pattern,
+        projects: applyDefaultProject(args.projects, config),
+        fileType: args.file_type,
+        maxResults: args.max_results,
+      });
+      const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
+      return fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+    }
+
     case "opengrok_get_file_content": {
       const args = GetFileContentArgs.parse(rawArgs);
       const { text } = await executeGetFileContent(args, client, local);
@@ -906,13 +998,63 @@ async function dispatchTool(
     }
 
     case "opengrok_index_health": {
-      IndexHealthArgs.parse(rawArgs);
+      const args = IndexHealthArgs.parse(rawArgs);
+      const format = selectFormat("generic", args.response_format);
+      
       const start = Date.now();
       const ok = await client.testConnection();
       const latencyMs = Date.now() - start;
-      return ok
-        ? `OpenGrok: connected (${latencyMs}ms latency)`
-        : "OpenGrok: connection failed";
+      
+      // Collect project count and any warnings
+      let indexedProjects = 0;
+      const warnings: string[] = [];
+      
+      try {
+        const projects = await client.listProjects();
+        indexedProjects = projects.length;
+      } catch (err) {
+        warnings.push("Could not retrieve project list");
+      }
+      
+      // Construct the result object
+      const health = {
+        connected: ok,
+        latencyMs,
+        indexedProjects,
+        warnings,
+      };
+      
+      if (ok) {
+        client.warmCache();
+      }
+      
+      // Format the response
+      if (format === "json") {
+        return JSON.stringify(health, null, 2);
+      } else if (format === "yaml") {
+        const yamlLines = [
+          `connected: ${health.connected}`,
+          `latencyMs: ${health.latencyMs}`,
+          `indexedProjects: ${health.indexedProjects}`,
+          ...(health.warnings.length > 0
+            ? [`warnings:\n${health.warnings.map((w) => `  - ${w}`).join("\n")}`]
+            : []),
+        ];
+        return yamlLines.join("\n");
+      } else {
+        // markdown or text (default)
+        const markdown = [
+          "# OpenGrok Health",
+          "",
+          `- **Connected:** ${health.connected}`,
+          `- **Latency:** ${health.latencyMs}ms`,
+          `- **Indexed projects:** ${health.indexedProjects}`,
+          ...(health.warnings.length > 0
+            ? [`- **Warnings:** ${health.warnings.join(", ")}`]
+            : []),
+        ].join("\n");
+        return markdown;
+      }
     }
 
     case "opengrok_get_compile_info":
@@ -925,6 +1067,21 @@ async function dispatchTool(
         return `No symbols found for ${args.path} in project ${args.project}. The file may not be indexed or the OpenGrok instance does not support the /api/v1/file/defs endpoint.`;
       }
       return formatFileSymbols(result);
+    }
+
+    case "opengrok_what_changed": {
+      const args = WhatChangedArgs.parse(rawArgs);
+      const [history, annotation] = await Promise.all([
+        client.getFileHistory(args.project, args.path),
+        client.getAnnotate(args.project, args.path),
+      ]);
+      return formatWhatChanged(history, annotation, args.since_days);
+    }
+
+    case "opengrok_dependency_map": {
+      const args = DependencyMapArgs.parse(rawArgs);
+      const nodes = await buildDependencyGraph(client, args.project, args.path, args.depth, args.direction);
+      return formatDependencyMap(args.path, args.depth, nodes);
     }
 
     default:
@@ -1062,6 +1219,8 @@ function registerMemoryTools(
 
 let executeCallCount = 0;
 
+const workerPool = new SandboxWorkerPool();
+
 function registerCodeModeTools(
   server: McpServer,
   client: OpenGrokClient,
@@ -1162,7 +1321,19 @@ function registerCodeModeTools(
       try {
         const budget = BUDGET_LIMITS[getActiveBudget()];
         const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
-        const result = await executeInSandbox(args.code, sandboxApi, capResponse, budget.maxResponseBytes);
+        const workerHandle = await workerPool.acquire();
+        let result: string;
+        try {
+          result = await executeInSandbox(
+            args.code,
+            sandboxApi,
+            (r) => capCodeModeResult(r, budget.maxResponseBytes),
+            budget.maxResponseBytes,
+            workerHandle
+          );
+        } finally {
+          workerPool.release(workerHandle);
+        }
 
         // Record in masker for future turns
         masker.record(
@@ -1255,6 +1426,35 @@ function registerLegacyTools(
         return { content: [{ type: "text", text: capResponse(text) }] };
       } catch (err) {
         return makeToolError("opengrok_find_file", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_search_pattern",
+    {
+      title: "Search Pattern",
+      description: desc(
+        "Search the codebase using a regular expression pattern. More powerful than keyword search for matching code patterns.",
+        "(fallback) regex pattern search"
+      ),
+      inputSchema: SearchPatternArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const parsed = SearchPatternArgs.parse(args);
+        const results = await client.searchPattern({
+          pattern: parsed.pattern,
+          projects: applyDefaultProject(parsed.projects, config),
+          fileType: parsed.file_type,
+          maxResults: parsed.max_results,
+        });
+        const fmt = selectFormat("search", parsed.response_format as ResponseFormat | undefined);
+        const text = fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_search_pattern", err);
       }
     }
   );
@@ -1596,6 +1796,61 @@ function registerLegacyTools(
     }
   );
 
+  server.registerTool(
+    "opengrok_what_changed",
+    {
+      title: "What Changed",
+      description: desc(
+        "Show which lines changed recently in a file, grouped by commit. Combines file history + blame in one call.\n\n" +
+        "**When to use**: To understand what recently changed in a file and who changed it.\n\n" +
+        "**Args**: `project`, `path` (required), `since_days` (1–90, default 7).\n\n" +
+        "**Example**: Use to audit recent changes to a critical source file before code review.",
+        "(fallback) recent line changes grouped by commit"
+      ),
+      inputSchema: WhatChangedArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const parsed = WhatChangedArgs.parse(args);
+        const [history, annotation] = await Promise.all([
+          client.getFileHistory(parsed.project, parsed.path),
+          client.getAnnotate(parsed.project, parsed.path),
+        ]);
+        const text = formatWhatChanged(history, annotation, parsed.since_days);
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_what_changed", err);
+      }
+    }
+  );
+
+  server.registerTool(
+    "opengrok_dependency_map",
+    {
+      title: "Dependency Map",
+      description: desc(
+        "Trace #include/import dependency graph for a file. Returns files this file uses and/or files that use it, up to N levels deep.\n\n" +
+        "**When to use**: To understand a file's dependencies or find all callers/includers across a project.\n\n" +
+        "**Args**: `project`, `path` (required); `depth` (1–3, default 2); `direction` (uses|used_by|both, default both).\n\n" +
+        "**Example**: Use on a header file to find all translation units that include it.",
+        "(fallback) #include/import dependency graph, configurable depth"
+      ),
+      inputSchema: DependencyMapArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      try {
+        const parsed = DependencyMapArgs.parse(args);
+        const nodes = await buildDependencyGraph(client, parsed.project, parsed.path, parsed.depth, parsed.direction);
+        const text = formatDependencyMap(parsed.path, parsed.depth, nodes);
+        return { content: [{ type: "text", text: capResponse(text) }] };
+      } catch (err) {
+        return makeToolError("opengrok_dependency_map", err);
+      }
+    }
+  );
+
   // Memory bank tools — available when a MemoryBank is provided
   if (memoryBank) {
     registerMemoryTools(server, memoryBank);
@@ -1665,6 +1920,85 @@ function sanitizeErrorMessage(message: string): string {
   return sanitized;
 }
 
+/**
+ * Build a dependency graph for a file by searching refs up to `depth` levels.
+ * "uses"    — finds files that reference/call symbols from this file (refs search).
+ *             Note: true include-graph traversal requires content parsing; this is a
+ *             best-effort approximation using OpenGrok's refs index.
+ * "used_by" — same semantics; both directions use refs search on the filename.
+ */
+async function buildDependencyGraph(
+  client: OpenGrokClient,
+  project: string,
+  filePath: string,
+  depth: number,
+  direction: "uses" | "used_by" | "both"
+): Promise<DependencyNode[]> {
+  const nodes: DependencyNode[] = [];
+
+  // Track which filenames have been expanded per direction to avoid cycles
+  const expandedUses = new Set<string>();
+  const expandedUsedBy = new Set<string>();
+  // Track full paths already added to nodes to prevent diamond-dependency duplicates
+  const seenUsesPaths = new Set<string>();
+  const seenUsedByPaths = new Set<string>();
+
+  // Queue: [filename, level]
+  const usesQueue: [string, number][] = [];
+  const usedByQueue: [string, number][] = [];
+
+  const rootName = filePath.split("/").pop()!;
+
+  if (direction === "uses" || direction === "both") {
+    usesQueue.push([rootName, 1]);
+  }
+  if (direction === "used_by" || direction === "both") {
+    usedByQueue.push([rootName, 1]);
+  }
+
+  while (usesQueue.length > 0) {
+    const [filename, level] = usesQueue.shift()!;
+    if (level > depth) continue;
+    if (expandedUses.has(filename)) continue;
+    expandedUses.add(filename);
+
+    const results = await client.search(filename, "refs", [project], 20);
+    for (const r of results.results) {
+      if (r.path === filePath) continue; // skip exact self
+      const rName = r.path.split("/").pop()!;
+      if (!seenUsesPaths.has(r.path)) {
+        seenUsesPaths.add(r.path);
+        nodes.push({ path: r.path, level, direction: "uses" });
+      }
+      if (level < depth) {
+        usesQueue.push([rName, level + 1]);
+      }
+    }
+  }
+
+  while (usedByQueue.length > 0) {
+    const [filename, level] = usedByQueue.shift()!;
+    if (level > depth) continue;
+    if (expandedUsedBy.has(filename)) continue;
+    expandedUsedBy.add(filename);
+
+    const results = await client.search(filename, "refs", [project], 20);
+    for (const r of results.results) {
+      if (r.path === filePath) continue; // skip exact self
+      const rName = r.path.split("/").pop()!;
+      if (!seenUsedByPaths.has(r.path)) {
+        seenUsedByPaths.add(r.path);
+        nodes.push({ path: r.path, level, direction: "used_by" });
+      }
+      if (level < depth) {
+        usedByQueue.push([rName, level + 1]);
+      }
+    }
+  }
+
+  return nodes;
+}
+
 // ---------------------------------------------------------------------------
 // Exports for testing
 // ---------------------------------------------------------------------------
@@ -1679,5 +2013,7 @@ export {
   applyDefaultProject as _applyDefaultProject,
   dispatchTool as _dispatchTool,
   SERVER_INSTRUCTIONS as _SERVER_INSTRUCTIONS,
+  capCodeModeResult as _capCodeModeResult,
+  deduplicateAcrossQueries as _deduplicateAcrossQueries,
 };
 export type { LocalLayer as _LocalLayer };
