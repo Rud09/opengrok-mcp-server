@@ -510,6 +510,37 @@ async function executeListProjects(
   };
 }
 
+function deduplicateAcrossQueries(
+  results: Array<{
+    query: string;
+    searchType: string;
+    results: SearchResults;
+  }>
+): Array<{
+  query: string;
+  searchType: string;
+  results: SearchResults;
+}> {
+  const seen = new Set<string>();
+  return results.map((queryResult) => ({
+    ...queryResult,
+    results: {
+      ...queryResult.results,
+      results: queryResult.results.results
+        .map((hit) => ({
+          ...hit,
+          matches: hit.matches.filter((match) => {
+            const key = `${hit.path}:${match.lineNumber}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          }),
+        }))
+        .filter((hit) => hit.matches.length > 0),
+    },
+  }));
+}
+
 async function executeBatchSearch(
   args: {
     queries: Array<{
@@ -552,15 +583,17 @@ async function executeBatchSearch(
     results: searchResults[i],
   }));
 
+  const deduped = deduplicateAcrossQueries(queryResults);
+
   const format = args.response_format ?? "markdown";
   const text =
     format === "tsv"
-      ? formatBatchSearchResultsTSV(queryResults)
-      : formatBatchSearchResults(queryResults);
+      ? formatBatchSearchResultsTSV(deduped)
+      : formatBatchSearchResults(deduped);
 
   return {
     text,
-    structured: { queryResults },
+    structured: { queryResults: deduped },
   };
 }
 
