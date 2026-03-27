@@ -11,7 +11,9 @@ export type AuditEventType =
   | "rate_limited"
   | "sandbox_exec"
   | "auth_used"
-  | "config_load";
+  | "config_load"
+  | "elicitation_request"
+  | "elicitation_unsupported";
 
 export interface AuditEvent {
   type: AuditEventType;

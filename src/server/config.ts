@@ -102,6 +102,8 @@ const ConfigSchema = z.object({
   OPENGROK_RESPONSE_FORMAT_OVERRIDE: z.string().default(""),
   // Prompt caching hints (reserved for future explicit cache-control headers)
   OPENGROK_ENABLE_CACHE_HINTS: z.coerce.boolean().default(false),
+  // MCP Elicitation — ask user for input during tool execution (e.g., pick project)
+  OPENGROK_ENABLE_ELICITATION: z.coerce.boolean().default(false),
   // Per-tool rate limiting (comma-separated tool=rpm pairs, e.g. "opengrok_batch_search=5,opengrok_execute=10")
   OPENGROK_PER_TOOL_RATELIMIT: z.string().default(""),
   // Allowed client IDs for request origin validation (comma-separated, empty = no restriction)
