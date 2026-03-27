@@ -3,6 +3,7 @@
  * v5.0: MemoryBank initialization for Living Document / Code Mode support.
  */
 
+import * as os from "os";
 import * as path from "path";
 import { OpenGrokClient } from "./client.js";
 import { loadConfig } from "./config.js";
@@ -26,14 +27,13 @@ async function main(): Promise<void> {
 
   // Resolve memory bank directory:
   // 1. Prefer OPENGROK_MEMORY_BANK_DIR env var (user-configured)
-  // 2. Fall back to <workspaceRoot>/.opengrok/memory-bank/
-  //    VS Code launches the MCP subprocess with the workspace folder as cwd,
-  //    so process.cwd() gives the correct workspace root. For CLI usage,
-  //    it gives the user's current directory — both are the right workspace root.
-  //    NOTE: __dirname is NOT used here — it would give the extension install dir.
+  // 2. If in VS Code (VSCODE_IPC_HOOK_CLI set): <workspaceRoot>/.opengrok/memory-bank
+  // 3. Standalone CLI: ~/.config/opengrok-mcp/memory-bank
   const memoryBankDir =
     config.OPENGROK_MEMORY_BANK_DIR ||
-    path.join(process.cwd(), ".opengrok", "memory-bank");
+    (process.env.VSCODE_IPC_HOOK_CLI
+      ? path.join(process.cwd(), ".opengrok", "memory-bank")
+      : path.join(os.homedir(), ".config", "opengrok-mcp", "memory-bank"));
 
   const memoryBank = new MemoryBank(memoryBankDir);
   await memoryBank.ensureDir();
