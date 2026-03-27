@@ -112,13 +112,6 @@
           "description": "HTTP proxy URL (e.g., http://proxy.company.com:8080)",
           "order": 4
         },
-        "opengrok-mcp.hasPromptedConfig": {
-          "type": "boolean",
-          "default": false,
-          "description": "Whether the user has been prompted to configure OpenGrok credentials at least once",
-          "order": 5,
-          "scope": "application"
-        },
         "opengrok-mcp.contextBudget": {
           "type": "string",
           "enum": [
