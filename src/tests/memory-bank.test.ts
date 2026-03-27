@@ -34,9 +34,9 @@ describe('MemoryBank.ensureDir', () => {
 
   it('does not overwrite existing files', async () => {
     await bank.ensureDir();
-    await bank.write('active-context.md', 'real content');
+    await bank.write('active-task.md', 'real content');
     await bank.ensureDir(); // call again
-    const content = await fsp.readFile(path.join(tmpDir, 'active-context.md'), 'utf8');
+    const content = await fsp.readFile(path.join(tmpDir, 'active-task.md'), 'utf8');
     expect(content).toBe('real content');
   });
 });
@@ -56,13 +56,13 @@ describe('MemoryBank.read', () => {
   });
 
   it('returns content for real (non-stub) files', async () => {
-    await fsp.writeFile(path.join(tmpDir, 'active-context.md'), 'Real content here');
-    const result = await bank.read('active-context.md');
+    await fsp.writeFile(path.join(tmpDir, 'active-task.md'), 'Real content here');
+    const result = await bank.read('active-task.md');
     expect(result).toBe('Real content here');
   });
 
   it('returns undefined when file does not exist', async () => {
-    const result = await bank.read('active-context.md');
+    const result = await bank.read('active-task.md');
     expect(result).toBeUndefined();
   });
 
@@ -78,24 +78,24 @@ describe('MemoryBank.read', () => {
 
 describe('MemoryBank.write', () => {
   it('overwrites file in overwrite mode', async () => {
-    await bank.write('active-context.md', 'initial');
-    await bank.write('active-context.md', 'updated');
-    const content = await fsp.readFile(path.join(tmpDir, 'active-context.md'), 'utf8');
+    await bank.write('active-task.md', 'initial');
+    await bank.write('active-task.md', 'updated');
+    const content = await fsp.readFile(path.join(tmpDir, 'active-task.md'), 'utf8');
     expect(content).toBe('updated');
   });
 
   it('appends to file in append mode', async () => {
-    await bank.write('active-context.md', 'line1');
-    await bank.write('active-context.md', 'line2', 'append');
-    const content = await fsp.readFile(path.join(tmpDir, 'active-context.md'), 'utf8');
+    await bank.write('active-task.md', 'line1');
+    await bank.write('active-task.md', 'line2', 'append');
+    const content = await fsp.readFile(path.join(tmpDir, 'active-task.md'), 'utf8');
     expect(content).toContain('line1');
     expect(content).toContain('line2');
   });
 
   it('strips stub sentinel when appending', async () => {
     await bank.ensureDir();
-    await bank.write('active-context.md', 'new content', 'append');
-    const result = await bank.read('active-context.md');
+    await bank.write('active-task.md', 'new content', 'append');
+    const result = await bank.read('active-task.md');
     expect(result).not.toBeUndefined();
     expect(result).not.toContain('<!-- OPENGROK_STUB');
     expect(result).toContain('new content');
@@ -108,8 +108,8 @@ describe('MemoryBank.write', () => {
   it('creates directory if it does not exist', async () => {
     const deepDir = path.join(tmpDir, 'deep', 'bank');
     const deepBank = new MemoryBank(deepDir);
-    await deepBank.write('active-context.md', 'hello');
-    expect(fs.existsSync(path.join(deepDir, 'active-context.md'))).toBe(true);
+    await deepBank.write('active-task.md', 'hello');
+    expect(fs.existsSync(path.join(deepDir, 'active-task.md'))).toBe(true);
   });
 });
 
@@ -119,10 +119,10 @@ describe('MemoryBank.write', () => {
 
 describe('MemoryBank.write — size truncation', () => {
   it('hard-truncates non-log files at limit', async () => {
-    // active-context.md limit is 4096 bytes — write > 4096
+    // active-task.md limit is 4096 bytes — write > 4096
     const bigContent = 'x'.repeat(6000);
-    await bank.write('active-context.md', bigContent);
-    const content = await fsp.readFile(path.join(tmpDir, 'active-context.md'), 'utf8');
+    await bank.write('active-task.md', bigContent);
+    const content = await fsp.readFile(path.join(tmpDir, 'active-task.md'), 'utf8');
     expect(Buffer.byteLength(content, 'utf8')).toBeLessThanOrEqual(4096 + 200);
     expect(content).toContain('Truncated');
   });
@@ -165,5 +165,163 @@ describe('MemoryBank — investigation-log.md trimming', () => {
     const content = await fsp.readFile(path.join(tmpDir, 'investigation-log.md'), 'utf8');
     expect(Buffer.byteLength(content, 'utf8')).toBeLessThanOrEqual(32768 + 200);
     expect(content).toContain('Older entries trimmed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Migration tests — 6-file → 2-file
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank migration — 6-file → 2-file', () => {
+  it('ALLOWED_FILES contains exactly 2 entries', () => {
+    expect(ALLOWED_FILES).toHaveLength(2);
+    expect(ALLOWED_FILES).toContain('active-task.md');
+    expect(ALLOWED_FILES).toContain('investigation-log.md');
+  });
+
+  it('renames active-context.md to active-task.md when it has real content', async () => {
+    await fsp.writeFile(path.join(tmpDir, 'active-context.md'), 'task: fix EventLoop\nstatus: in-progress');
+    await bank.ensureDir();
+    expect(fs.existsSync(path.join(tmpDir, 'active-task.md'))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, 'active-context.md'))).toBe(false);
+    const content = await fsp.readFile(path.join(tmpDir, 'active-task.md'), 'utf8');
+    expect(content).toContain('fix EventLoop');
+  });
+
+  it('deletes active-context.md stub without renaming', async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, 'active-context.md'),
+      '<!-- OPENGROK_STUB:active-context.md -->\ntask: (none)\n'
+    );
+    await bank.ensureDir();
+    expect(fs.existsSync(path.join(tmpDir, 'active-context.md'))).toBe(false);
+    // active-task.md should be created as new stub
+    expect(fs.existsSync(path.join(tmpDir, 'active-task.md'))).toBe(true);
+  });
+
+  it('deletes legacy files (AGENTS.md, symbol-index.md, etc.)', async () => {
+    const legacyFiles = ['AGENTS.md', 'codebase-map.md', 'symbol-index.md', 'known-patterns.md', 'project-context.md'];
+    for (const f of legacyFiles) {
+      await fsp.writeFile(path.join(tmpDir, f), '<!-- OPENGROK_STUB:' + f + ' -->\n');
+    }
+    await bank.ensureDir();
+    for (const f of legacyFiles) {
+      expect(fs.existsSync(path.join(tmpDir, f))).toBe(false);
+    }
+  });
+
+  it('migration is idempotent (safe to run twice)', async () => {
+    await bank.ensureDir();
+    await bank.ensureDir(); // second call
+    // Should still have exactly the 2 allowed files as stubs
+    for (const file of ALLOWED_FILES) {
+      expect(fs.existsSync(path.join(tmpDir, file))).toBe(true);
+    }
+    // active-task content should be stub (undefined)
+    const content = await bank.read('active-task.md');
+    expect(content).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readWithDelta tests
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank readWithDelta', () => {
+  it('first read returns full content', async () => {
+    await bank.write('active-task.md', 'task: investigate EventLoop');
+    const result = await bank.readWithDelta('active-task.md');
+    expect(result).toBe('task: investigate EventLoop');
+  });
+
+  it('second read with same content returns [unchanged]', async () => {
+    await bank.write('active-task.md', 'task: investigate EventLoop');
+    await bank.readWithDelta('active-task.md'); // first read
+    const result = await bank.readWithDelta('active-task.md'); // second read
+    expect(result).toBe('[unchanged]');
+  });
+
+  it('returns full content after write invalidates hash', async () => {
+    await bank.write('active-task.md', 'task: investigate EventLoop');
+    await bank.readWithDelta('active-task.md'); // first read
+    await bank.write('active-task.md', 'task: fixed EventLoop'); // write new content
+    const result = await bank.readWithDelta('active-task.md'); // should get full content
+    expect(result).toBe('task: fixed EventLoop');
+    expect(result).not.toBe('[unchanged]');
+  });
+
+  it('returns undefined for empty/stub file', async () => {
+    await bank.ensureDir();
+    // Stub files return undefined from read(), so readWithDelta should also return undefined
+    const result = await bank.readWithDelta('active-task.md');
+    expect(result).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-timestamp tests
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank auto-timestamp on append', () => {
+  it('adds a ## heading when appending to investigation-log.md without one', async () => {
+    await bank.ensureDir();
+    await bank.write('investigation-log.md', 'Found the bug!', 'append');
+    const content = await bank.read('investigation-log.md');
+    expect(content).toMatch(/^## \d{4}-\d{2}-\d{2} \d{2}:\d{2}: Session Update/m);
+    expect(content).toContain('Found the bug!');
+  });
+
+  it('preserves existing ## heading when one is provided', async () => {
+    await bank.ensureDir();
+    await bank.write('investigation-log.md', '## 2026-01-01 10:00: Custom\nMy finding', 'append');
+    const content = await bank.read('investigation-log.md');
+    // Should not add another heading
+    const headings = (content ?? '').match(/^## /gm);
+    expect(headings).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Richness scoring tests
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank richness scoring', () => {
+  it('entry with conclusion markers scores higher than dead-end entry', () => {
+    const localBank = new MemoryBank(tmpDir);
+    const conclusionEntry = '## 2026-01-01\nfound the root cause — EventLoop was null';
+    const deadEndEntry = '## 2026-01-02\ndead end — no results for this approach';
+    const conclusionScore = (localBank as any).scoreLogEntry(conclusionEntry);
+    const deadEndScore = (localBank as any).scoreLogEntry(deadEndEntry);
+    expect(conclusionScore).toBeGreaterThan(deadEndScore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readCompressed tests
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank readCompressed', () => {
+  it('returns full content when under threshold', async () => {
+    const smallContent = '## 2026-01-01 10:00: Entry\nShort content.';
+    await bank.write('investigation-log.md', smallContent);
+    const result = await bank.readCompressed('investigation-log.md');
+    expect(result).toBe(smallContent);
+  });
+
+  it('returns last 3 sections with omitted count when over 8KB', async () => {
+    // Build 6 sections, each ~2KB, totalling ~12KB
+    const sections: string[] = [];
+    for (let i = 1; i <= 6; i++) {
+      sections.push(`## 2026-01-0${i} 10:00: Entry ${i}\n${'x'.repeat(1800)}`);
+    }
+    const bigContent = sections.join('\n');
+    await bank.write('investigation-log.md', bigContent);
+    const result = await bank.readCompressed('investigation-log.md');
+    expect(result).toMatch(/^\[\d+ older entries omitted\]/);
+    expect(result).toContain('Entry 4');
+    expect(result).toContain('Entry 5');
+    expect(result).toContain('Entry 6');
+    // Earliest entries should be omitted
+    expect(result).not.toContain('Entry 1');
   });
 });
