@@ -616,6 +616,8 @@
                 case 'success':
                     showToast('success', message.message);
                     currentConfig.hasPassword = true;
+                    // Sync codeMode so repeated saves don't spuriously detect a "toggle"
+                    currentConfig.codeMode = document.getElementById('codeMode').checked;
                     updateStatusDisplay(true);
                     setLoading('saveBtn', false, 'Save', SAVE_ICON);
                     setTimeout(() => testConnection(), 600);
