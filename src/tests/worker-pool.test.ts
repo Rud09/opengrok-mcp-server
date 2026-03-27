@@ -139,4 +139,41 @@ describe("SandboxWorkerPool", () => {
     expect(MockWorker).toHaveBeenCalledTimes(1);
     await h3.terminate();
   });
+
+  it("7. drain() is a no-op when the pool is already empty", async () => {
+    const pool = new SandboxWorkerPool();
+    // Acquire and DO NOT release — pool is empty of idle workers
+    const handle = await pool.acquire();
+    MockWorker.mockClear();
+
+    // drain with no idle workers should complete without error
+    await pool.drain();
+
+    // Manually terminate acquired handle
+    await handle.terminate();
+  });
+
+  it("8. pool limits idle capacity to maxIdle=2 and terminates overflow", async () => {
+    const pool = new SandboxWorkerPool();
+
+    const handles = await Promise.all([
+      pool.acquire(),
+      pool.acquire(),
+      pool.acquire(),
+    ]);
+    expect(MockWorker).toHaveBeenCalledTimes(3);
+
+    const spies = handles.map((h) => vi.spyOn(h, "terminate"));
+
+    // Release all three: first two go to idle pool, third is terminated
+    pool.release(handles[0]);
+    pool.release(handles[1]);
+    pool.release(handles[2]); // pool already at maxIdle=2 → terminate
+
+    expect(spies[2]).toHaveBeenCalled();
+    expect(spies[0]).not.toHaveBeenCalled();
+    expect(spies[1]).not.toHaveBeenCalled();
+
+    await pool.drain();
+  });
 });

@@ -2013,5 +2013,7 @@ export {
   applyDefaultProject as _applyDefaultProject,
   dispatchTool as _dispatchTool,
   SERVER_INSTRUCTIONS as _SERVER_INSTRUCTIONS,
+  capCodeModeResult as _capCodeModeResult,
+  deduplicateAcrossQueries as _deduplicateAcrossQueries,
 };
 export type { LocalLayer as _LocalLayer };

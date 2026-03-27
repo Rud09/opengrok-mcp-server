@@ -833,3 +833,34 @@ describe('dispatchTool — opengrok_dependency_map', () => {
     expect(result).toContain('No dependency');
   });
 });
+
+// -----------------------------------------------------------------------
+// Zod input schema rejection — CI gate
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — Zod input schema rejection', () => {
+  const client = makeMockClient();
+  const localLayer = emptyLocal();
+
+  const invalidInputCases: Array<{ tool: string; input: Record<string, unknown>; expectedField: string }> = [
+    { tool: 'opengrok_search_code',     input: {},                                  expectedField: 'query' },
+    { tool: 'opengrok_search_pattern',  input: {},                                  expectedField: 'pattern' },
+    { tool: 'opengrok_dependency_map',  input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_what_changed',    input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_get_file_content',input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_get_file_history',input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_browse_directory',input: {},                                  expectedField: 'project' },
+    { tool: 'opengrok_get_file_annotate',input: {},                                 expectedField: 'project' },
+    { tool: 'opengrok_search_suggest',  input: {},                                  expectedField: 'query' },
+    { tool: 'opengrok_get_file_symbols',input: {},                                  expectedField: 'project' },
+  ];
+
+  it.each(invalidInputCases)(
+    '$tool rejects missing required field: $expectedField',
+    async ({ tool, input, expectedField }) => {
+      await expect(
+        dispatchTool(tool, input, client as any, config, localLayer)
+      ).rejects.toThrow(expectedField);
+    }
+  );
+});
