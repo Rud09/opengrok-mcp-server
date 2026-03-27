@@ -358,26 +358,17 @@ function updateStatusBar(state: 'ready' | 'error' | 'unconfigured'): void {
             statusBarItem.text = '$(search) OpenGrok';
             statusBarItem.tooltip = 'OpenGrok MCP: Ready - Click for options';
             statusBarItem.backgroundColor = undefined;
-            if ('badge' in statusBarItem) {
-                (statusBarItem as any).badge = undefined;
-            }
             statusBarItem.command = 'opengrok-mcp.statusMenu';
             break;
         case 'error':
             statusBarItem.text = '$(warning) OpenGrok';
             statusBarItem.tooltip = 'OpenGrok MCP: Error - Click for options';
             statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-            if ('badge' in statusBarItem) {
-                (statusBarItem as any).badge = undefined;
-            }
             statusBarItem.command = 'opengrok-mcp.statusMenu';
             break;
         case 'unconfigured':
             statusBarItem.text = '$(gear) OpenGrok';
             statusBarItem.tooltip = 'OpenGrok MCP: Not configured - Click to setup';
-            if ('badge' in statusBarItem) {
-                (statusBarItem as any).badge = { value: 1, tooltip: 'OpenGrok: configuration required' };
-            }
             statusBarItem.command = 'opengrok-mcp.configureUI';
             break;
     }

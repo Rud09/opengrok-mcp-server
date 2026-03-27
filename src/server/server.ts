@@ -17,6 +17,7 @@ import type { Config } from "./config.js";
 import {
   formatAnnotate,
   formatBatchSearchResults,
+  formatBatchSearchResultsTSV,
   formatCompileInfo,
   formatDirectoryListing,
   formatFileContent,
@@ -550,8 +551,15 @@ async function executeBatchSearch(
     searchType: q.search_type,
     results: searchResults[i],
   }));
+
+  const format = args.response_format ?? "markdown";
+  const text =
+    format === "tsv"
+      ? formatBatchSearchResultsTSV(queryResults)
+      : formatBatchSearchResults(queryResults);
+
   return {
-    text: formatBatchSearchResults(queryResults),
+    text,
     structured: { queryResults },
   };
 }

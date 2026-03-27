@@ -68,7 +68,6 @@ Search for references to a base class method to find all overrides:
   "tool": "opengrok_get_symbol_context",
   "arguments": {
     "symbol": "baseMethod",
-    "search_type": "refs",
     "file_type": "cxx",
     "max_refs": 25
   }
@@ -160,15 +159,14 @@ Look for includes of common TMP headers:
 
 ### Find macro definition
 
-Use `opengrok_get_symbol_context` with `search_type: "defs"` to locate where a macro
-is defined:
+Use `opengrok_get_symbol_context` to locate where a macro
+is defined (it always returns both definitions and references):
 
 ```json
 {
   "tool": "opengrok_get_symbol_context",
   "arguments": {
     "symbol": "MACRO_NAME",
-    "search_type": "defs",
     "file_type": "cxx",
     "include_header": true
   }
@@ -184,7 +182,6 @@ Search for all references to the macro:
   "tool": "opengrok_get_symbol_context",
   "arguments": {
     "symbol": "MACRO_NAME",
-    "search_type": "refs",
     "file_type": "cxx",
     "max_refs": 30
   }
@@ -289,7 +286,6 @@ Find the symbol definition that's missing by searching the definition index:
   "tool": "opengrok_get_symbol_context",
   "arguments": {
     "symbol": "missingSymbol",
-    "search_type": "defs",
     "file_type": "cxx"
   }
 }
@@ -318,7 +314,6 @@ Find the template definition and check for constraint violations:
   "tool": "opengrok_get_symbol_context",
   "arguments": {
     "symbol": "TemplateClass",
-    "search_type": "defs",
     "file_type": "cxx",
     "include_header": true,
     "context_lines": 30
@@ -364,7 +359,6 @@ Or search for a method in the base class to find all where it should be overridd
   "tool": "opengrok_get_symbol_context",
   "arguments": {
     "symbol": "virtualMethod",
-    "search_type": "refs",
     "file_type": "cxx",
     "max_refs": 20
   }
@@ -394,7 +388,6 @@ Find a specific symbol within a namespace:
   "tool": "opengrok_get_symbol_context",
   "arguments": {
     "symbol": "namespace::ClassName",
-    "search_type": "defs",
     "file_type": "cxx",
     "include_header": true
   }
@@ -491,6 +484,6 @@ broaden the full-text search to include the namespace scope.
 ### 5. Preprocessor macros
 
 `opengrok_get_file_symbols` will not list macro values or expansions — the indexer
-only stores macro *names*. Use `opengrok_get_symbol_context` with `search_type: "defs"`
-to find macro definitions, and `search_type: "refs"` for uses. For macro expansion
+only stores macro *names*. Use `opengrok_get_symbol_context` to find both macro
+definitions and references in one call. For macro expansion
 analysis, use full-text search or Code Mode to parse the preprocessed output.
