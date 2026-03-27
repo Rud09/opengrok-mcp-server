@@ -700,3 +700,136 @@ describe('readFileAtAbsPath', () => {
     expect(result).toBeNull();
   });
 });
+
+// -----------------------------------------------------------------------
+// dispatchTool — opengrok_dependency_map
+// -----------------------------------------------------------------------
+
+describe('dispatchTool — opengrok_dependency_map', () => {
+  it('returns dependency map for direction=both', async () => {
+    const client = makeMockClient();
+    // First call: path search for "uses"
+    client.search.mockResolvedValueOnce({
+      query: 'EventLoop.cpp',
+      searchType: 'path',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/Timer.cpp', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    // Second call: refs search for "used_by"
+    client.search.mockResolvedValueOnce({
+      query: 'EventLoop.cpp',
+      searchType: 'refs',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/main.cpp', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    const result = await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/EventLoop.cpp', depth: 1, direction: 'both' },
+      client as any, config, emptyLocal()
+    );
+    expect(result).toContain('Dependency map');
+    expect(result).toContain('EventLoop.cpp');
+    expect(result).toContain('Timer.cpp');
+    expect(result).toContain('main.cpp');
+  });
+
+  it('only runs path search for direction=uses', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'foo.h',
+      searchType: 'path',
+      totalCount: 0,
+      timeMs: 5,
+      results: [],
+      startIndex: 0,
+      endIndex: 0,
+    });
+    await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/foo.h', depth: 1, direction: 'uses' },
+      client as any, config, emptyLocal()
+    );
+    // Should only call search once (path search, no refs search)
+    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.search).toHaveBeenCalledWith('foo.h', 'path', ['proj'], 20);
+  });
+
+  it('only runs refs search for direction=used_by', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'foo.h',
+      searchType: 'refs',
+      totalCount: 0,
+      timeMs: 5,
+      results: [],
+      startIndex: 0,
+      endIndex: 0,
+    });
+    await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/foo.h', depth: 1, direction: 'used_by' },
+      client as any, config, emptyLocal()
+    );
+    expect(client.search).toHaveBeenCalledTimes(1);
+    expect(client.search).toHaveBeenCalledWith('foo.h', 'refs', ['proj'], 20);
+  });
+
+  it('recurses to depth=2 for uses', async () => {
+    const client = makeMockClient();
+    // Level 1: foo.h -> bar.h
+    client.search.mockResolvedValueOnce({
+      query: 'foo.h',
+      searchType: 'path',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/bar.h', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    // Level 2: bar.h -> baz.h
+    client.search.mockResolvedValueOnce({
+      query: 'bar.h',
+      searchType: 'path',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/baz.h', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    const result = await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/foo.h', depth: 2, direction: 'uses' },
+      client as any, config, emptyLocal()
+    );
+    expect(client.search).toHaveBeenCalledTimes(2);
+    expect(result).toContain('bar.h');
+    expect(result).toContain('baz.h');
+    expect(result).toContain('Level 1');
+    expect(result).toContain('Level 2');
+  });
+
+  it('returns no-dep message when results are empty', async () => {
+    const client = makeMockClient();
+    client.search.mockResolvedValue({
+      query: 'lone.cpp',
+      searchType: 'path',
+      totalCount: 0,
+      timeMs: 5,
+      results: [],
+      startIndex: 0,
+      endIndex: 0,
+    });
+    const result = await dispatchTool(
+      'opengrok_dependency_map',
+      { project: 'proj', path: 'src/lone.cpp', depth: 1, direction: 'both' },
+      client as any, config, emptyLocal()
+    );
+    expect(result).toContain('No dependency');
+  });
+});

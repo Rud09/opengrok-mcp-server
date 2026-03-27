@@ -496,3 +496,73 @@ describe('opengrok_search_pattern — tool registration and call', () => {
     expect(text).toContain('Error');
   });
 });
+
+// -----------------------------------------------------------------------
+// opengrok_dependency_map — registered tool + call via MCP protocol
+// -----------------------------------------------------------------------
+
+describe('opengrok_dependency_map — tool registration and call', () => {
+  it('is registered as a tool', async () => {
+    const { mcpClient } = await createStandardClient();
+    const { tools } = await mcpClient.listTools();
+    const names = tools.map((t) => t.name);
+    expect(names).toContain('opengrok_dependency_map');
+  });
+
+  it('returns dependency map with uses direction', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    // Reset mocks from symbol context setup and configure for dependency map
+    ogClient.search.mockReset();
+    ogClient.search.mockResolvedValue({
+      query: 'EventLoop.cpp',
+      searchType: 'path',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/Timer.cpp', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_dependency_map',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', direction: 'uses', depth: 1 },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('Dependency map');
+    expect(text).toContain('EventLoop.cpp');
+    expect(text).toContain('Timer.cpp');
+  });
+
+  it('returns dependency map with used_by direction', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.search.mockReset();
+    ogClient.search.mockResolvedValue({
+      query: 'EventLoop.h',
+      searchType: 'refs',
+      totalCount: 1,
+      timeMs: 5,
+      results: [{ project: 'proj', path: 'src/main.cpp', matches: [] }],
+      startIndex: 0,
+      endIndex: 1,
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_dependency_map',
+      arguments: { project: 'proj', path: 'src/EventLoop.h', direction: 'used_by', depth: 1 },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('main.cpp');
+    expect(text).toContain('reverse deps');
+  });
+
+  it('returns error result when client throws', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.search.mockReset();
+    ogClient.search.mockRejectedValue(new Error('network error'));
+    const result = await mcpClient.callTool({
+      name: 'opengrok_dependency_map',
+      arguments: { project: 'proj', path: 'src/file.cpp' },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
+    expect(text).toContain('Error');
+  });
+});
