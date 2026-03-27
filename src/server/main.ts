@@ -5,11 +5,13 @@
 
 import * as os from "os";
 import * as path from "path";
+import * as fs from "fs";
 import { OpenGrokClient } from "./client.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./logger.js";
 import { runServer } from "./server.js";
 import { MemoryBank } from "./memory-bank.js";
+import { configureAuditLog, exportAuditLogAsCSV, exportAuditLogAsJSON } from "./audit.js";
 
 declare const __VERSION__: string;
 
@@ -21,9 +23,53 @@ if (process.argv.includes("--version") || process.argv.includes("-v")) {
 }
 
 /* v8 ignore start -- entry point; integration-level, not unit-testable */
+// Handle CLI commands like export-audit
+const firstArg = process.argv[2];
+if (firstArg === "export-audit") {
+  const args = process.argv.slice(3);
+  let format = "json";
+  let output: string | null = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--format" && args[i + 1]) {
+      format = args[++i];
+    } else if (args[i] === "--output" && args[i + 1]) {
+      output = args[++i];
+    }
+  }
+
+  const config = loadConfig();
+  const auditFile = config.OPENGROK_AUDIT_LOG_FILE;
+
+  if (!auditFile) {
+    console.error("Error: OPENGROK_AUDIT_LOG_FILE not configured");
+    process.exit(1);
+  }
+
+  try {
+    const result = format === "csv" ? exportAuditLogAsCSV(auditFile) : exportAuditLogAsJSON(auditFile);
+
+    if (output) {
+      fs.writeFileSync(output, result);
+      console.log(`Audit log exported to ${output}`);
+    } else {
+      console.log(result);
+    }
+    process.exit(0);
+  } catch (err) {
+    console.error(`Export failed: ${err}`);
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const client = new OpenGrokClient(config);
+
+  // Configure audit log file if set
+  if (config.OPENGROK_AUDIT_LOG_FILE) {
+    configureAuditLog(config.OPENGROK_AUDIT_LOG_FILE);
+  }
 
   // Resolve memory bank directory:
   // 1. OPENGROK_MEMORY_BANK_DIR env var — always set by the VS Code extension, highest priority

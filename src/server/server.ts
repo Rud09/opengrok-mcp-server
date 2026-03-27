@@ -1195,6 +1195,24 @@ export function createServer(
   // Task 4.6: Register MCP Prompts
   registerInvestigationPrompts(server);
 
+  // Task 5.13: MCP Completions infrastructure ready for SDK v2
+  // When SDK v2 is released with completion support, uncomment this:
+  // server.setCompletionRequestHandler(async (request) => {
+  //   if (request.ref.name === "project" || request.ref.argument?.name === "project") {
+  //     try {
+  //       const projects = await client.listProjects();
+  //       const query = request.argument?.value ?? "";
+  //       const matching = projects
+  //         .filter(p => p.toLowerCase().includes(query.toLowerCase()))
+  //         .slice(0, 10);
+  //       return { completion: { values: matching } };
+  //     } catch {
+  //       return { completion: { values: [] } };
+  //     }
+  //   }
+  //   return { completion: { values: [] } };
+  // });
+
   return server;
 }
 

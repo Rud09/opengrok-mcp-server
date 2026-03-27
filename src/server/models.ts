@@ -197,6 +197,12 @@ export const GetFileSymbolsArgs = z.object({
   response_format: RESPONSE_FORMAT,
 });
 
+export const CallGraphArgs = z.object({
+  project: z.string().min(1).describe("OpenGrok project name"),
+  symbol: z.string().min(1).describe("Symbol name (function or method name) to get call graph for"),
+  response_format: RESPONSE_FORMAT,
+});
+
 // ---------------------------------------------------------------------------
 // Domain model interfaces
 // ---------------------------------------------------------------------------

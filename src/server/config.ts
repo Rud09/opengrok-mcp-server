@@ -100,6 +100,8 @@ const ConfigSchema = z.object({
   OPENGROK_MEMORY_BANK_DIR: z.string().default(""),
   // Global response format override (empty = auto per-call)
   OPENGROK_RESPONSE_FORMAT_OVERRIDE: z.string().default(""),
+  // Audit log file path (appended to, in addition to stderr)
+  OPENGROK_AUDIT_LOG_FILE: z.string().default(""),
   // Prompt caching hints (reserved for future explicit cache-control headers)
   OPENGROK_ENABLE_CACHE_HINTS: z.coerce.boolean().default(false),
   // MCP Elicitation — ask user for input during tool execution (e.g., pick project)

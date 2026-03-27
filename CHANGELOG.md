@@ -31,6 +31,29 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [Unreleased — v6.0.0]
+
+### Added
+- HTTP Streamable transport (OPENGROK_HTTP_PORT)
+- OpenGrok API v2 support (OPENGROK_API_VERSION=v2)
+- AI-powered index health prediction
+- Audit trail compliance export (OPENGROK_AUDIT_LOG_FILE + `export-audit` CLI command with CSV/JSON support)
+- Production MCP Sampling with retry/timeout
+- Interleaved thinking annotation for Code Mode
+- MCP Completions API support (infrastructure ready for project autocomplete when SDK v2 releases)
+
+### Notes
+- **MCP SDK v2 Readiness**: We track v2 development but remain on v1.28.0 until stable.
+  When v2 is released, migration will involve:
+  1. Updating tool argument schemas to use `Completable` fields
+  2. Proper SDK method names (currently using experimental APIs)
+  3. Enhanced completions for all project-scoped parameters
+  4. Resource template URI variables with completion callbacks
+  
+  Migration guide will be added at release time.
+
+---
+
 ## [5.3.1] - 2026-03-21
 
 ### ✨ New Features & UX Improvements
