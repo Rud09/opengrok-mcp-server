@@ -127,7 +127,7 @@ return { definition: content?.content, callers: refs.results.map(r => r.path) };
 ```
 
 ### Code Mode Notes
-- `Promise.all` does **not** parallelize — use `env.opengrok.batchSearch()` instead
+- `Promise.all` does **not** parallelize inside the sandbox VM (calls are serialized via the Atomics bridge) — use `env.opengrok.batchSearch()` instead, which runs queries in parallel on the host event loop
 - All `env.opengrok.*` calls are synchronous from your code's perspective
 - `env.opengrok.readMemory(filename)` / `writeMemory(filename, content)` for Living Document access
 

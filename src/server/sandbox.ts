@@ -60,7 +60,7 @@ export const API_SPEC = {
     "ALL env.opengrok calls are synchronous from your perspective (the host bridges async for you).",
 
   important: [
-    "Do NOT use Promise.all — calls are serialized. Use env.opengrok.batchSearch() for parallel searches.",
+    "IMPORTANT: Do NOT write Promise.all(...) in your sandbox JS — the Atomics bridge serializes calls from inside the VM. Use env.opengrok.batchSearch() instead — it runs queries in parallel on the host event loop.",
     "Prefer env.opengrok.getSymbolContext() over separate search+getFileContent.",
     "Prefer env.opengrok.batchSearch() over multiple env.opengrok.search() calls.",
     "Always pass project as a string, not an array.",
