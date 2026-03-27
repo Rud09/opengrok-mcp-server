@@ -979,9 +979,10 @@ async function handleSaveConfiguration(
         responseFormatOverride?: string;
         codeMode?: boolean;
         memoryBankDir?: string;
+        codeModeChanged?: boolean;
     }
 ): Promise<void> {
-    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir } = data;
+    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, codeModeChanged } = data;
 
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const oldUsername = config.get<string>('username');
@@ -1016,8 +1017,11 @@ async function handleSaveConfiguration(
     updateStatusBar('ready');
     notifyMcpServerChanged();
 
-    postMessage({ type: 'success', message: 'Configuration saved! Tools are refreshing.' });
-    void testConnection();
+    const saveMsg = codeModeChanged
+        ? 'Configuration saved! Code Mode is toggling — tools will refresh in 5–10 sec.'
+        : 'Configuration saved! Tools are refreshing.';
+    postMessage({ type: 'success', message: saveMsg });
+    setTimeout(() => { void testConnection(true); }, 1000);
 }
 
 function getConfigManagerHtml(context: vscode.ExtensionContext): string {

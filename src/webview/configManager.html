@@ -561,10 +561,11 @@
             if (!password && !currentConfig.hasPassword) { showToast('error', 'Password required for new connection'); return; }
             try { new URL(baseUrl); } catch { showToast('error', 'Please enter a valid URL'); return; }
 
+            const codeModeChanged = (currentConfig.codeMode !== false) !== codeMode;
             setLoading('saveBtn', true, 'Save', SAVE_ICON);
             vscode.postMessage({
                 type: 'saveConfiguration',
-                data: { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir }
+                data: { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, codeModeChanged }
             });
         }
 
