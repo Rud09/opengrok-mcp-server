@@ -212,9 +212,10 @@ export function formatFileContent(
   lines.push(`\`\`\`${lang}`);
   if (showLineNumbers) {
     const firstLineNum = content.startLine ?? 1;
+    const width = String(firstLineNum + displayLines.length - 1).length;
     for (const [i, line] of displayLines.entries()) {
       const lineNum = firstLineNum + i;
-      lines.push(`${filename}:${lineNum}: ${line}`);
+      lines.push(`${String(lineNum).padStart(width)} | ${line}`);
     }
   } else {
     lines.push(displayLines.join("\n"));
@@ -464,6 +465,50 @@ export function formatBatchSearchResults(
   }
 
   return lines.join("\n");
+}
+
+export function formatBatchSearchResultsTSV(
+  queryResults: Array<{
+    query: string;
+    searchType: string;
+    results: SearchResults;
+  }>
+): string {
+  const rows: string[] = [];
+  const totalMatches = queryResults.reduce(
+    (s, r) => s + r.results.totalCount,
+    0
+  );
+  rows.push(
+    `# Batch: ${queryResults.length} queries, ${totalMatches.toLocaleString()} total matches`
+  );
+  rows.push("query\tsearch_type\tpath\tproject\tline\tcontent");
+
+  for (const { query, searchType, results } of queryResults) {
+    if (!results.results.length) {
+      rows.push(`${query}\t${searchType}\t(no results)\t\t\t`);
+      continue;
+    }
+
+    for (const result of results.results) {
+      for (const match of result.matches.slice(0, 5)) {
+        const content = stripHtmlTags(match.lineContent)
+          .trim()
+          .replace(/\t/g, "  ")
+          .replace(/\n/g, " ");
+        rows.push(
+          `${query}\t${searchType}\t${result.path}\t${result.project}\t${match.lineNumber}\t${content}`
+        );
+      }
+      if (result.matches.length > 5) {
+        rows.push(
+          `${query}\t${searchType}\t# ... +${result.matches.length - 5} more in ${result.path}\t\t\t`
+        );
+      }
+    }
+  }
+
+  return rows.join("\n");
 }
 
 // ---------------------------------------------------------------------------
