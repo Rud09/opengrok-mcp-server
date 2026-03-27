@@ -698,7 +698,7 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
 
         const defaultProject = config.get<string>('defaultProject') ?? '';
         const responseFormatOverride = config.get<string>('responseFormatOverride') ?? '';
-        const compileDbPaths = config.get<string>('compileDbPaths') ?? '';
+        const compileDbPaths = (config.get<string>('compileDbPaths') ?? '').trim();
         if (defaultProject) env.OPENGROK_DEFAULT_PROJECT = defaultProject;
         if (responseFormatOverride) env.OPENGROK_RESPONSE_FORMAT_OVERRIDE = responseFormatOverride;
 
