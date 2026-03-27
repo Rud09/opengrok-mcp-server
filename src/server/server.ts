@@ -14,7 +14,7 @@ import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
 import type { Config } from "./config.js";
-import { parsePerToolLimits, parseAllowedClientIds, getConfigDirectory, checkCredentialAge } from "./config.js";
+import { parsePerToolLimits, parseAllowedClientIds, getConfigDirectory, checkCredentialAge, loadConfig } from "./config.js";
 import {
   formatAnnotate,
   formatBatchSearchResults,
@@ -94,6 +94,8 @@ import yaml from "js-yaml";
 
 import { logger } from "./logger.js";
 import { auditLog } from "./audit.js";
+import { elicitOrFallback } from "./elicitation.js";
+import { sampleOrNull } from "./sampling.js";
 
 // ---------------------------------------------------------------------------
 // Response size caps
@@ -1388,6 +1390,23 @@ function registerCodeModeTools(
           workerPool.release(workerHandle);
         }
 
+        // When execution fails, use MCP Sampling to get an LLM-generated explanation
+        if (result.startsWith("Error:")) {
+          const suggestion = await sampleOrNull(server, [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: `The following JavaScript code failed in a sandbox:\n\`\`\`js\n${args.code}\n\`\`\`\n${result}\n\nBriefly explain what went wrong and suggest a fix.`,
+              },
+            },
+          ], { maxTokens: 256, systemPrompt: "You are a helpful code debugger. Be concise." });
+          if (suggestion) {
+            return { content: [{ type: "text", text: `${result}\n\nSuggestion: ${suggestion}` }] };
+          }
+          return { content: [{ type: "text", text: result }] };
+        }
+
         // Record in masker for future turns
         masker.record(
           currentTurn,
@@ -1492,7 +1511,37 @@ function registerLegacyTools(
       if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_search_code");
       try {
         const format = args.response_format ?? "auto";
-        const { text, structured } = await executeSearchCode(args, client, config);
+        // Elicit project from user when none specified and elicitation is enabled
+        let effectiveArgs = args;
+        if (
+          config.OPENGROK_ENABLE_ELICITATION &&
+          !args.projects?.length &&
+          !config.OPENGROK_DEFAULT_PROJECT?.trim()
+        ) {
+          const projects = await client.listProjects();
+          if (projects.length > 0) {
+            const projectNames = projects.map((p) => p.name).slice(0, 20);
+            const result = await elicitOrFallback(
+              server.server,
+              "Which project should I search?",
+              {
+                type: "object",
+                properties: {
+                  project: {
+                    type: "string",
+                    description: "Project name",
+                    enum: projectNames,
+                  },
+                },
+                required: ["project"],
+              }
+            );
+            if (result.action === "accept" && result.content?.project) {
+              effectiveArgs = { ...args, projects: [String(result.content.project)] };
+            }
+          }
+        }
+        const { text, structured } = await executeSearchCode(effectiveArgs, client, config);
         const hasMore = structured.endIndex < structured.totalCount;
         const nextOffset = hasMore ? structured.endIndex : undefined;
         return formatResponse(
@@ -2101,8 +2150,27 @@ function registerLegacyTools(
             direction: n.direction,
           })),
         };
+
+        // For large graphs, use MCP Sampling to generate an intelligent summary
+        let summarySection = "";
+        if (nodes.length > 10) {
+          const nodeList = nodes.slice(0, 30).map((n) => `  ${n.direction} ${n.path} (level ${n.level})`).join("\n");
+          const summary = await sampleOrNull(server, [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: `This dependency graph for \`${parsed.path}\` has ${nodes.length} nodes:\n${nodeList}${nodes.length > 30 ? `\n  ... and ${nodes.length - 30} more` : ""}\n\nIn 2-3 sentences, summarize the key dependency structure and any notable patterns.`,
+              },
+            },
+          ], { maxTokens: 200, systemPrompt: "You are a code architecture analyst. Be concise and precise." });
+          if (summary) {
+            summarySection = `\n\n**Summary**: ${summary}`;
+          }
+        }
+
         return {
-          content: [{ type: "text" as const, text: capResponse(text) }],
+          content: [{ type: "text" as const, text: capResponse(text) + summarySection }],
           structuredContent: structured as unknown as Record<string, unknown>,
         };
       } catch (err) {
@@ -2322,6 +2390,64 @@ class ToolRateLimiter {
   }
 }
 
+/**
+ * Task 4.9: Setup handlers for notifications/tools/list_changed.
+ * Monitors for config changes (SIGHUP) and connectivity status changes.
+ */
+function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, config: Config): void {
+  // On SIGHUP, reload config and notify if code mode changed
+  process.on("SIGHUP", async () => {
+    try {
+      auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
+      logger.info("Received SIGHUP, reloading config...");
+      
+      // Re-read config from environment
+      const newConfig = loadConfig();
+      
+      // Check if code mode changed
+      if (newConfig.OPENGROK_CODE_MODE !== config.OPENGROK_CODE_MODE) {
+        logger.info(
+          `Code Mode changed: ${config.OPENGROK_CODE_MODE} → ${newConfig.OPENGROK_CODE_MODE}`,
+          { detail: "Notifying clients of tool list change" }
+        );
+        server.sendToolListChanged();
+        auditLog({ 
+          type: "config_load", 
+          detail: `SIGHUP: Code Mode toggled to ${newConfig.OPENGROK_CODE_MODE}` 
+        });
+      }
+    } catch (err) {
+      logger.error("SIGHUP reload failed", { error: String(err) });
+    }
+  });
+}
+
+/**
+ * Task 4.9: Start health check polling after server connects.
+ * Every 5 minutes, tests connectivity and sends notification if status changes.
+ * Returns the interval ID so it can be cleaned up if needed.
+ */
+export function startHealthCheckPolling(server: McpServer, client: OpenGrokClient): NodeJS.Timeout {
+  let lastConnected = false;
+
+  return setInterval(async () => {
+    try {
+      const ok = await client.testConnection();
+      if (ok !== lastConnected) {
+        lastConnected = ok;
+        logger.info(`Connectivity status changed: ${ok ? "connected" : "disconnected"}`);
+        server.sendToolListChanged();
+        auditLog({
+          type: "config_load",
+          detail: `Connectivity status changed to ${ok ? "connected" : "disconnected"}`
+        });
+      }
+    } catch {
+      // Silently ignore health check errors
+    }
+  }, 5 * 60 * 1000);
+}
+
 /* v8 ignore start -- runServer connects to stdio transport; integration-level */
 export async function runServer(
   client: OpenGrokClient,
@@ -2365,7 +2491,13 @@ export async function runServer(
     auditLog({ type: "config_load", detail: credentialAgeWarning });
   }
 
+  // Task 4.9: Monitor config changes and connectivity for tool list changes
+  setupNotificationHandlers(server, client, config);
+
   await server.connect(transport);
+
+  // Start health check polling after server connects
+  startHealthCheckPolling(server, client);
 }
 /* v8 ignore stop */
 
