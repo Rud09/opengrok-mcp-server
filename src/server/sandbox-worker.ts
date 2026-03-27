@@ -32,15 +32,16 @@ import variant from "@jitl/quickjs-ng-wasmfile-release-sync";
 // SHARED_BUFFER_SIZE = 20 + 1024 * 1024  (documented in file header; not used at runtime here)
 
 // ---------------------------------------------------------------------------
-// Main IIFE — required for CJS compatibility (no top-level await)
+// runJob — execute one unit of LLM code inside QuickJS with the given buffer
 // ---------------------------------------------------------------------------
 
-void (async () => {
-  const { sharedBuffer, code } = workerData as {
-    sharedBuffer: SharedArrayBuffer;
-    code: string;
-  };
+type RunSandboxed = Awaited<ReturnType<typeof loadQuickJs>>["runSandboxed"];
 
+async function runJob(
+  runSandboxed: RunSandboxed,
+  sharedBuffer: SharedArrayBuffer,
+  code: string
+): Promise<void> {
   // Typed views into the shared buffer (layout pinned — must match sandbox.ts)
   const statusArray = new Int32Array(sharedBuffer, 0, 4);  // bytes 0–15
   const lengthArray = new Uint32Array(sharedBuffer, 16, 1); // bytes 16–19
@@ -91,22 +92,22 @@ void (async () => {
 
   const env = {
     opengrok: {
-      search:          makeMethod("search"),
-      batchSearch:     makeMethod("batchSearch"),
-      getFileContent:  makeMethod("getFileContent"),
+      search:           makeMethod("search"),
+      batchSearch:      makeMethod("batchSearch"),
+      getFileContent:   makeMethod("getFileContent"),
       getSymbolContext: makeMethod("getSymbolContext"),
-      getFileSymbols:  makeMethod("getFileSymbols"),
-      getFileHistory:  makeMethod("getFileHistory"),
-      getFileAnnotate: makeMethod("getFileAnnotate"),
-      browseDir:       makeMethod("browseDir"),
-      findFile:        makeMethod("findFile"),
-      getFileOverview: makeMethod("getFileOverview"),
-      traceCallChain:  makeMethod("traceCallChain"),
-      searchSuggest:   makeMethod("searchSuggest"),
-      getCompileInfo:  makeMethod("getCompileInfo"),
-      indexHealth:     makeMethod("indexHealth"),
-      readMemory:      makeMethod("readMemory"),
-      writeMemory:     makeMethod("writeMemory"),
+      getFileSymbols:   makeMethod("getFileSymbols"),
+      getFileHistory:   makeMethod("getFileHistory"),
+      getFileAnnotate:  makeMethod("getFileAnnotate"),
+      browseDir:        makeMethod("browseDir"),
+      findFile:         makeMethod("findFile"),
+      getFileOverview:  makeMethod("getFileOverview"),
+      traceCallChain:   makeMethod("traceCallChain"),
+      searchSuggest:    makeMethod("searchSuggest"),
+      getCompileInfo:   makeMethod("getCompileInfo"),
+      indexHealth:      makeMethod("indexHealth"),
+      readMemory:       makeMethod("readMemory"),
+      writeMemory:      makeMethod("writeMemory"),
     },
   };
 
@@ -127,9 +128,9 @@ void (async () => {
   // Execute
   // ---------------------------------------------------------------------------
 
-  try {
-    const { runSandboxed } = await loadQuickJs(variant);
+  if (!parentPort) throw new Error("parentPort is null — worker must run inside worker_threads");
 
+  try {
     // Wrap LLM code: inner IIFE captures `return`, outer exports via `export default`
     const wrappedCode = `const __result = (() => { ${code} })();\nexport default __result;`;
 
@@ -138,11 +139,9 @@ void (async () => {
       options
     );
 
-    if (!parentPort) throw new Error("parentPort is null — worker must run inside worker_threads");
     parentPort.postMessage(result);
   } catch (err) {
     const error = err as Error;
-    if (!parentPort) throw new Error("parentPort is null — worker must run inside worker_threads");
     parentPort.postMessage({
       ok: false,
       error: {
@@ -151,4 +150,29 @@ void (async () => {
       },
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Main IIFE — required for CJS compatibility (no top-level await)
+// ---------------------------------------------------------------------------
+
+void (async () => {
+  if (!parentPort) throw new Error("parentPort is null — worker must run inside worker_threads");
+
+  const data = workerData as { sharedBuffer?: SharedArrayBuffer; code?: string } | null;
+
+  if (data?.code !== undefined) {
+    // Immediate mode (existing behavior): workerData supplies sharedBuffer + code
+    const { runSandboxed } = await loadQuickJs(variant);
+    await runJob(runSandboxed, data.sharedBuffer!, data.code);
+    return;
+  }
+
+  // Pool mode: preload QuickJS WASM (warm-up), then wait for jobs via postMessage
+  const { runSandboxed } = await loadQuickJs(variant);
+  parentPort.postMessage({ type: "ready" });
+
+  parentPort.on("message", (msg: { sharedBuffer: SharedArrayBuffer; code: string }) => {
+    void runJob(runSandboxed, msg.sharedBuffer, msg.code);
+  });
 })();

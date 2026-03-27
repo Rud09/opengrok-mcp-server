@@ -140,8 +140,8 @@ describe('formatFileContent', () => {
 
   it('includes line numbers when showLineNumbers=true', () => {
     const output = formatFileContent(mockContent, true);
-    expect(output).toContain('1 | line1');
-    expect(output).toContain('2 | line2');
+    expect(output).toContain('file.cpp:1: line1');
+    expect(output).toContain('file.cpp:2: line2');
   });
 });
 

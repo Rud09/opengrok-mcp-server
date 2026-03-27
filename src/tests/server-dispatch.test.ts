@@ -55,6 +55,7 @@ function makeMockClient() {
     getAnnotate: vi.fn(),
     getFileSymbols: vi.fn(),
     testConnection: vi.fn(),
+    warmCache: vi.fn(),
     close: vi.fn(),
   };
 }

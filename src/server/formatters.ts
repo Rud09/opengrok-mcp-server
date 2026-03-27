@@ -212,10 +212,9 @@ export function formatFileContent(
   lines.push(`\`\`\`${lang}`);
   if (showLineNumbers) {
     const firstLineNum = content.startLine ?? 1;
-    const lastLineNum = firstLineNum + displayLines.length - 1;
-    const width = String(Math.max(content.lineCount, lastLineNum)).length;
     for (const [i, line] of displayLines.entries()) {
-      lines.push(`${String(firstLineNum + i).padStart(width)} | ${line}`);
+      const lineNum = firstLineNum + i;
+      lines.push(`${filename}:${lineNum}: ${line}`);
     }
   } else {
     lines.push(displayLines.join("\n"));
@@ -774,5 +773,11 @@ export function formatFileContentText(content: FileContent): string {
     displayLines = contentLines.slice(0, MAX_INLINE_LINES);
   }
 
-  return header + displayLines.join("\n");
+  const lines: string[] = [];
+  for (const [i, line] of displayLines.entries()) {
+    const lineNum = startL + i;
+    lines.push(`${filename}:${lineNum}: ${line}`);
+  }
+
+  return header + lines.join("\n");
 }

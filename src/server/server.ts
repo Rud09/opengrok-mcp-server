@@ -74,6 +74,7 @@ import type { ResponseFormat } from "./formatters.js";
 import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
 import { ObservationMasker } from "./observation-masker.js";
 import { createSandboxAPI, executeInSandbox, API_SPEC } from "./sandbox.js";
+import { SandboxWorkerPool } from "./worker-pool.js";
 import yaml from "js-yaml";
 
 import { logger } from "./logger.js";
@@ -910,6 +911,9 @@ async function dispatchTool(
       const start = Date.now();
       const ok = await client.testConnection();
       const latencyMs = Date.now() - start;
+      if (ok) {
+        client.warmCache();
+      }
       return ok
         ? `OpenGrok: connected (${latencyMs}ms latency)`
         : "OpenGrok: connection failed";
@@ -1062,6 +1066,8 @@ function registerMemoryTools(
 
 let executeCallCount = 0;
 
+const workerPool = new SandboxWorkerPool();
+
 function registerCodeModeTools(
   server: McpServer,
   client: OpenGrokClient,
@@ -1162,7 +1168,13 @@ function registerCodeModeTools(
       try {
         const budget = BUDGET_LIMITS[getActiveBudget()];
         const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
-        const result = await executeInSandbox(args.code, sandboxApi, capResponse, budget.maxResponseBytes);
+        const workerHandle = await workerPool.acquire();
+        let result: string;
+        try {
+          result = await executeInSandbox(args.code, sandboxApi, capResponse, budget.maxResponseBytes, workerHandle);
+        } finally {
+          workerPool.release(workerHandle);
+        }
 
         // Record in masker for future turns
         masker.record(

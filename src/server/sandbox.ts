@@ -27,6 +27,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Worker } from "worker_threads";
+import type { WorkerHandle } from "./worker-pool.js";
 import type { OpenGrokClient } from "./client.js";
 import type { MemoryBank } from "./memory-bank.js";
 import type { HealthAPIResult } from "./api-types.js";
@@ -391,7 +392,8 @@ export async function executeInSandbox(
   code: string,
   api: SandboxAPI,
   capFn: (text: string) => string,
-  _budgetBytes: number
+  _budgetBytes: number,
+  pooledWorker?: WorkerHandle
 ): Promise<string> {
   // Create shared communication buffer (layout pinned — must match sandbox-worker.ts)
   const sharedBuffer = new SharedArrayBuffer(SHARED_BUFFER_SIZE);
@@ -475,7 +477,15 @@ export async function executeInSandbox(
   const localWorkerPath = path.join(__dirname, "sandbox-worker.js");
   const devWorkerPath = path.join(__dirname, "..", "..", "out", "server", "sandbox-worker.js");
   const workerPath = fs.existsSync(localWorkerPath) ? localWorkerPath : devWorkerPath;
-  const worker = new Worker(workerPath, { workerData: { sharedBuffer, code } });
+
+  let worker: Worker;
+  if (pooledWorker) {
+    // Use the pre-warmed worker from the pool; send job via message
+    worker = pooledWorker.worker;
+    worker.postMessage({ sharedBuffer, code });
+  } else {
+    worker = new Worker(workerPath, { workerData: { sharedBuffer, code } });
+  }
 
   return new Promise<string>((resolve) => {
     _resolve = resolve;

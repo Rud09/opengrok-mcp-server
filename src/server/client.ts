@@ -792,6 +792,16 @@ export class OpenGrokClient {
     }
   }
 
+  /**
+   * Fire-and-forget cache pre-warming. Called after successful health check.
+   * Warms up the TTL cache with project list + one minimal defs search.
+   * Best-effort only; errors are silently ignored.
+   */
+  warmCache(): void {
+    void this.listProjects().catch(() => undefined);
+    void this.search("main", "defs", undefined, 1).catch(() => undefined);
+  }
+
   async close(): Promise<void> {
     // Close shared agent and clear caches on shutdown
     try {
