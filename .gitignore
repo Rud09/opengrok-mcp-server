@@ -32,3 +32,5 @@ test-output.txt
 
 # Plans
 plans/
+# Git worktrees
+.worktrees/
