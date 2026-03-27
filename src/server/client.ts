@@ -340,7 +340,14 @@ export class OpenGrokClient {
       : /* v8 ignore next -- tested in client-extended L294 with no trailing slash */ config.OPENGROK_BASE_URL + "/";
     this.baseUrl = new URL(raw);
     this.verifySsl = config.OPENGROK_VERIFY_SSL;
-    this.agent = this.verifySsl ? undefined : new Agent({ connect: { rejectUnauthorized: false } });
+    const agentOptions = {
+      connections: 20,
+      keepAliveTimeout: 60_000,
+      keepAliveMaxTimeout: 300_000,
+    };
+    this.agent = this.verifySsl
+      ? new Agent(agentOptions)
+      : new Agent({ ...agentOptions, connect: { rejectUnauthorized: false } });
 
     if (config.OPENGROK_USERNAME && config.OPENGROK_PASSWORD) {
       const b64 = Buffer.from(
