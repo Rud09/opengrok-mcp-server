@@ -122,6 +122,38 @@ function capResponse(text: string, maxBytes?: number): string {
   );
 }
 
+function capCodeModeResult(result: string, maxBytes: number): string {
+  const bytes = Buffer.byteLength(result, "utf8");
+  if (bytes <= maxBytes) return result;
+
+  // Try to truncate at a JSON array element boundary
+  const trimmed = result.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown[];
+      // Binary search for max elements that fit
+      let lo = 0, hi = parsed.length;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (Buffer.byteLength(JSON.stringify(parsed.slice(0, mid)), "utf8") <= maxBytes) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      if (lo > 0) {
+        const truncated = JSON.stringify(parsed.slice(0, lo));
+        return truncated + `\n// [truncated: ${parsed.length - lo} more elements]`;
+      }
+    } catch {
+      // Not valid JSON array, fall through to byte truncation
+    }
+  }
+
+  // Fallback: byte truncation (existing behavior)
+  return capResponse(result, maxBytes);
+}
+
 // ---------------------------------------------------------------------------
 // Server version
 // ---------------------------------------------------------------------------
@@ -1212,7 +1244,13 @@ function registerCodeModeTools(
         const workerHandle = await workerPool.acquire();
         let result: string;
         try {
-          result = await executeInSandbox(args.code, sandboxApi, capResponse, budget.maxResponseBytes, workerHandle);
+          result = await executeInSandbox(
+            args.code,
+            sandboxApi,
+            (r) => capCodeModeResult(r, budget.maxResponseBytes),
+            budget.maxResponseBytes,
+            workerHandle
+          );
         } finally {
           workerPool.release(workerHandle);
         }
