@@ -962,9 +962,9 @@ function registerMemoryTools(
       title: "Read Memory Bank",
       description:
         "Read a Living Document file. Call at session start to restore context. " +
-        "Files: AGENTS.md, codebase-map.md, symbol-index.md, known-patterns.md, investigation-log.md, active-context.md",
+        "Files: active-task.md (current task state), investigation-log.md (findings history)",
       inputSchema: {
-        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"]
+        filename: z.enum(["active-task.md", "investigation-log.md"]
         ).describe("File to read from the memory bank"),
       },
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
@@ -987,10 +987,10 @@ function registerMemoryTools(
     {
       title: "Update Memory Bank",
       description:
-        "Write findings to a Living Document file. Call at session end to persist knowledge. " +
-        "Use mode=append for investigation-log.md to add a new entry.",
+        "Write findings to a Living Document file. Use mode=append for investigation-log.md. " +
+        "MANDATORY: Update active-task.md before every final answer.",
       inputSchema: {
-        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"])
+        filename: z.enum(["active-task.md", "investigation-log.md"])
           .describe("File to update"),
         content: z.string().min(1).describe("Content to write"),
         mode: z.enum(["overwrite", "append"]).default("overwrite").describe("append adds to end (use for investigation-log)"),
