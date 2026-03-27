@@ -71,7 +71,7 @@ import type {
 import { BUDGET_LIMITS } from "./config.js";
 import type { ContextBudget } from "./config.js";
 import type { ResponseFormat } from "./formatters.js";
-import { MemoryBank } from "./memory-bank.js";
+import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
 import { ObservationMasker } from "./observation-masker.js";
 import { createSandboxAPI, executeInSandbox, API_SPEC } from "./sandbox.js";
 import yaml from "js-yaml";
@@ -956,6 +956,39 @@ function registerMemoryTools(
   server: McpServer,
   memoryBank: MemoryBank
 ): void {
+  server.registerTool(
+    "opengrok_memory_status",
+    {
+      title: "Memory Bank Status",
+      description:
+        "Returns status of all OpenGrok memory files. Call once at session start " +
+        "to check whether there is prior investigation state to restore.",
+      inputSchema: { _: z.string().optional().describe("(no input required)") },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
+    },
+    async () => {
+      try {
+        const lines: string[] = ["# OpenGrok Memory Status"];
+        for (const filename of ALLOWED_FILES) {
+          const content = await memoryBank.read(filename).catch(() => undefined);
+          if (!content) {
+            lines.push(`- ${filename}: empty`);
+          } else {
+            const bytes = Buffer.byteLength(content, "utf8");
+            const preview = content.split("\n")[0]?.trim().slice(0, 60) ?? "";
+            lines.push(`- ${filename}: ${bytes}B — "${preview}"`);
+          }
+        }
+        lines.push("");
+        lines.push("Note: For general codebase context (conventions, architecture), use VS Code's");
+        lines.push("built-in memory tool (/memory command) — it auto-loads at every session.");
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      } catch (err) {
+        return makeToolError("opengrok_memory_status", err);
+      }
+    }
+  );
+
   server.registerTool(
     "opengrok_read_memory",
     {
