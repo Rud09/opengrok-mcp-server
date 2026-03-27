@@ -231,6 +231,8 @@ You MUST do both of these before responding to the user:
   2. If a significant finding: opengrok_update_memory("investigation-log.md", <summary>, "append")
 
 Memory files: active-task.md (current task) | investigation-log.md (findings log)
+Note: When OPENGROK_ENABLE_FILES_API=true, investigation-log.md is cached by content hash;
+      opengrok_read_memory returns "[unchanged]" when no new entries have been appended.
 `.trim();
 
 // ---------------------------------------------------------------------------
@@ -1222,7 +1224,8 @@ export function createServer(
 
 function registerMemoryTools(
   server: McpServer,
-  memoryBank: MemoryBank
+  memoryBank: MemoryBank,
+  config: Config
 ): void {
   server.registerTool(
     "opengrok_memory_status",
@@ -1275,6 +1278,17 @@ function registerMemoryTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_read_memory" });
       try {
+        if (config.OPENGROK_ENABLE_FILES_API && args.filename === "investigation-log.md") {
+          const ref = await memoryBank.getFileReference(args.filename);
+          if (ref === null) {
+            return { content: [{ type: "text", text: "[unchanged]" }] };
+          }
+          const content = await memoryBank.read(args.filename);
+          if (!content) {
+            return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
+          }
+          return { content: [{ type: "text", text: capResponse(content) }] };
+        }
         const content = await memoryBank.read(args.filename);
         if (!content) {
           return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
@@ -2320,7 +2334,7 @@ function registerLegacyTools(
 
   // Memory bank tools — available when a MemoryBank is provided
   if (memoryBank) {
-    registerMemoryTools(server, memoryBank);
+    registerMemoryTools(server, memoryBank, config);
   }
   // registerLegacyTools intentionally returns void — server is mutated in place
 }

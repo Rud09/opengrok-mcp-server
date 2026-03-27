@@ -106,6 +106,9 @@ const ConfigSchema = z.object({
   OPENGROK_ENABLE_CACHE_HINTS: z.coerce.boolean().default(false),
   // MCP Elicitation — ask user for input during tool execution (e.g., pick project)
   OPENGROK_ENABLE_ELICITATION: z.coerce.boolean().default(false),
+  // Files API cache layer — tracks investigation-log.md uploads to avoid re-sending unchanged content
+  OPENGROK_ENABLE_FILES_API: z.coerce.boolean().default(false)
+    .describe("Use Files API cache for investigation-log.md (when supported by SDK)"),
   // Per-tool rate limiting (comma-separated tool=rpm pairs, e.g. "opengrok_batch_search=5,opengrok_execute=10")
   OPENGROK_PER_TOOL_RATELIMIT: z.string().default(""),
   // Allowed client IDs for request origin validation (comma-separated, empty = no restriction)
@@ -124,6 +127,9 @@ const ConfigSchema = z.object({
   OPENGROK_HTTP_CLIENT_SECRET: z.string().default(""),
   // HTTP transport — max concurrent sessions (Task 5.2)
   OPENGROK_HTTP_MAX_SESSIONS: zIntString("100"),
+  // RBAC for multi-user HTTP deployments (Task 5.10)
+  OPENGROK_RBAC_TOKENS: z.string().default("")
+    .describe("RBAC token config: 'token1:admin,token2:readonly' format"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

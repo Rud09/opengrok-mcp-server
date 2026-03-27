@@ -325,3 +325,82 @@ describe('MemoryBank readCompressed', () => {
     expect(result).not.toContain('Entry 1');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FileReferenceCache
+// ---------------------------------------------------------------------------
+
+import { FileReferenceCache } from '../server/file-cache.js';
+
+describe('FileReferenceCache', () => {
+  let cache: FileReferenceCache;
+
+  beforeEach(() => {
+    cache = new FileReferenceCache();
+  });
+
+  it('isUnchanged returns false on first call (not yet registered)', () => {
+    expect(cache.isUnchanged('investigation-log.md', 'some content')).toBe(false);
+  });
+
+  it('isUnchanged returns true after register with same content', () => {
+    cache.register('investigation-log.md', 'some content');
+    expect(cache.isUnchanged('investigation-log.md', 'some content')).toBe(true);
+  });
+
+  it('isUnchanged returns false when content changes after register', () => {
+    cache.register('investigation-log.md', 'original content');
+    expect(cache.isUnchanged('investigation-log.md', 'updated content')).toBe(false);
+  });
+
+  it('clear resets cache so isUnchanged returns false again', () => {
+    cache.register('investigation-log.md', 'some content');
+    cache.clear();
+    expect(cache.isUnchanged('investigation-log.md', 'some content')).toBe(false);
+  });
+
+  it('register returns a consistent hash for the same content', () => {
+    const h1 = cache.register('a.md', 'hello');
+    cache.clear();
+    const h2 = cache.register('a.md', 'hello');
+    expect(h1).toBe(h2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MemoryBank.getFileReference
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank.getFileReference', () => {
+  it('returns null for a stub file (not yet populated)', async () => {
+    await bank.ensureDir();
+    const ref = await bank.getFileReference('investigation-log.md');
+    expect(ref).toBeNull();
+  });
+
+  it('returns a hash string on first call with real content', async () => {
+    await bank.ensureDir();
+    await bank.write('investigation-log.md', '## 2026-01-01 10:00: Test\nsome finding');
+    const ref = await bank.getFileReference('investigation-log.md');
+    expect(typeof ref).toBe('string');
+    expect(ref).not.toBeNull();
+  });
+
+  it('returns null on second call with unchanged content (cached)', async () => {
+    await bank.ensureDir();
+    await bank.write('investigation-log.md', '## 2026-01-01 10:00: Test\nsome finding');
+    await bank.getFileReference('investigation-log.md'); // first call registers
+    const ref2 = await bank.getFileReference('investigation-log.md');
+    expect(ref2).toBeNull();
+  });
+
+  it('returns a new hash after content changes', async () => {
+    await bank.ensureDir();
+    await bank.write('investigation-log.md', '## 2026-01-01 10:00: Test\noriginal');
+    const ref1 = await bank.getFileReference('investigation-log.md');
+    await bank.write('investigation-log.md', '## 2026-01-01 10:00: Test\noriginal\n## 2026-01-02 12:00: Update\nnew entry', 'append');
+    const ref2 = await bank.getFileReference('investigation-log.md');
+    expect(ref2).not.toBeNull();
+    expect(ref2).not.toBe(ref1);
+  });
+});
