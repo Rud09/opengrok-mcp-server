@@ -1438,10 +1438,12 @@ function registerLegacyTools(
     "opengrok_search_and_read",
     {
       title: "Search and Read",
-      description:
+      description: desc(
         "Search and return matching code with surrounding context in one call.\n\n" +
         "**When to use**: Instead of opengrok_search_code + opengrok_get_file_content. Never fetches full files.\n\n" +
         "**When not to use**: When you need the full file or deep symbol analysis — use opengrok_get_symbol_context instead.",
+        "(fallback) search + surrounding code in 1 call"
+      ),
       inputSchema: SearchAndReadArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1463,12 +1465,14 @@ function registerLegacyTools(
     "opengrok_get_symbol_context",
     {
       title: "Get Symbol Context",
-      description:
+      description: desc(
         "Complete symbol investigation in one call: definition with context + corresponding header + references.\n\n" +
         "**When to use**: First choice for any unknown C++ symbol or function. Replaces search_code + get_file_content combination.\n\n" +
         "**When not to use**: For simple file reads or when you already have the exact line number.\n\n" +
         "**Args**: `symbol` (required); `projects`, `context_lines`, `max_refs`, `include_header`, `file_type` (optional).\n\n" +
         "**Example**: Use for any CamelCase/PascalCase identifier to get definition + header + callers in one call.",
+        "(fallback) symbol definition + header + refs in 1 call"
+      ),
       inputSchema: GetSymbolContextArgs.shape,
       outputSchema: SymbolContextOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1506,8 +1510,10 @@ function registerLegacyTools(
     "opengrok_index_health",
     {
       title: "Index Health",
-      description:
+      description: desc(
         "OpenGrok server connection status and diagnostics. Call if results seem stale or incomplete.",
+        "(fallback) server connectivity and index status"
+      ),
       inputSchema: IndexHealthArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1530,12 +1536,14 @@ function registerLegacyTools(
     "opengrok_get_compile_info",
     {
       title: "Get Compile Info",
-      description:
+      description: desc(
         "Get compilation details for a source file: compiler, include paths, preprocessor defines, and language standard.\n\n" +
         "**When to use**: When you need compiler flags or include paths for precise analysis of C/C++ files.\n\n" +
         "**When not to use**: For non-C/C++ files or when compile_commands.json is not present.\n\n" +
         "**Args**: `path` — absolute or OpenGrok-relative path (e.g., GridNode/EventLoop.cpp).\n\n" +
         "**Example**: Use before asking about preprocessor macros or platform-specific includes.",
+        "(fallback) compiler flags for a file (requires local compile_commands.json)"
+      ),
       inputSchema: GetCompileInfoArgs.shape,
       annotations: READ_ONLY_LOCAL,
     },
@@ -1557,12 +1565,14 @@ function registerLegacyTools(
     "opengrok_get_file_symbols",
     {
       title: "Get File Symbols",
-      description:
+      description: desc(
         "List all symbols defined in a file: functions, classes, structs, macros with line numbers and signatures.\n\n" +
         "**When to use**: To understand a file's structure before reading it with opengrok_get_file_content.\n\n" +
         "**When not to use**: When you already know exactly which lines to read.\n\n" +
         "**Args**: `project` and `path` (required).\n\n" +
         "**Example**: Use before opengrok_get_file_content to identify which function/class starts at which line.",
+        "(fallback) file symbols list — call before get_file_content"
+      ),
       inputSchema: GetFileSymbolsArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
