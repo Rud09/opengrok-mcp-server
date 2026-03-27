@@ -493,13 +493,22 @@ export async function executeInSandbox(
     // Hard timeout — terminates worker unconditionally at 10 s
     // (covers cases where worker is blocked in Atomics.wait during a slow API call)
     const hardTimeoutId = setTimeout(() => {
-      void worker.terminate();
+      void (pooledWorker ? pooledWorker.terminate() : worker.terminate());
       safeResolve(
         "Error: Sandbox execution timed out (10s limit). Simplify your code or reduce the number of API calls."
       );
     }, 10_000);
 
-    worker.on("message", (result: { ok: boolean; data?: unknown; error?: { name: string; message: string } }) => {
+    // Cleanup removes all three listeners to prevent accumulation on reused pool workers
+    function cleanup(): void {
+      worker.removeListener("message", onMessage);
+      worker.removeListener("error", onError);
+      worker.removeListener("exit", onExit);
+    }
+
+    function onMessage(result: { ok: boolean; data?: unknown; error?: { name: string; message: string }; type?: string }): void {
+      if (result.type === "ready") return;  // pool startup ack — ignore
+      cleanup();
       clearTimeout(hardTimeoutId);
 
       if (!result.ok) {
@@ -530,20 +539,26 @@ export async function executeInSandbox(
       const serialized =
         typeof data === "string" ? data : JSON.stringify(data, null, 2);
       safeResolve(capFn(serialized));
-    });
+    }
 
-    worker.on("error", (err) => {
+    function onError(err: Error): void {
+      cleanup();
       clearTimeout(hardTimeoutId);
       logger.error("Sandbox worker error:", err);
       safeResolve(`Error: ${err.message ?? "Worker error"}`);
-    });
+    }
 
-    worker.on("exit", (code) => {
-      clearTimeout(hardTimeoutId);
+    function onExit(code: number): void {
       if (!stopped) {
+        cleanup();
+        clearTimeout(hardTimeoutId);
         safeResolve(`Error: Sandbox worker exited unexpectedly (code ${code})`);
       }
-    });
+    }
+
+    worker.on("message", onMessage);
+    worker.on("error", onError);
+    worker.on("exit", onExit);
 
     // Start the poll loop
     handleWorkerCall().catch((err) => {

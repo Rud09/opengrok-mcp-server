@@ -617,9 +617,9 @@ async function executeBatchSearch(
 
   const deduped = deduplicateAcrossQueries(queryResults);
 
-  const format = args.response_format ?? "markdown";
+  const fmt = selectFormat("search", args.response_format);
   const text =
-    format === "tsv"
+    fmt === "tsv"
       ? formatBatchSearchResultsTSV(deduped)
       : formatBatchSearchResults(deduped);
 

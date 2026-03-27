@@ -7,6 +7,7 @@ declare const __dirname: string;
 
 export interface WorkerHandle {
   worker: Worker;
+  isAlive: boolean;
   terminate(): Promise<void>;
 }
 
@@ -35,6 +36,7 @@ export class SandboxWorkerPool {
   }
 
   release(handle: WorkerHandle): void {
+    if (!handle.isAlive) return;  // don't pool terminated workers
     if (this.idle.length < this.maxIdle) {
       this.idle.push(handle);
       const timer = setTimeout(() => {
@@ -66,9 +68,14 @@ export class SandboxWorkerPool {
     const devWorkerPath = path.join(__dirname, "..", "..", "out", "server", "sandbox-worker.js");
     const workerPath = fs.existsSync(localWorkerPath) ? localWorkerPath : devWorkerPath;
     const worker = new Worker(workerPath);
+    let alive = true;
     const handle: WorkerHandle = {
       worker,
-      terminate: () => worker.terminate().then(() => undefined),
+      get isAlive() { return alive; },
+      terminate: async () => {
+        alive = false;
+        await worker.terminate();
+      },
     };
     return handle;
   }
