@@ -131,4 +131,9 @@ describe('executeInSandbox', () => {
     // capFn truncates to 5 chars
     expect(result.length).toBeLessThanOrEqual(5);
   }, 15_000);
+
+  it('11. return 42 produces string "42"', async () => {
+    const result = await executeInSandbox('return 42;', makeMockApi(), identity, BUDGET);
+    expect(result).toBe('42');
+  }, 15_000);
 });

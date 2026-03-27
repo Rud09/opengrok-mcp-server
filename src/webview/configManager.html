@@ -452,6 +452,12 @@
                     <input type="text" id="memoryBankDir" placeholder="<workspace>/.opengrok/memory-bank/">
                     <div class="hint">Absolute path to store Living Document files. Leave blank for default.</div>
                 </div>
+
+                <div class="field" style="margin-top: 12px;">
+                    <label for="compileDbPaths">Compile Commands Path(s)</label>
+                    <input type="text" id="compileDbPaths" placeholder="Auto-detected from workspace">
+                    <div class="hint">Comma-separated paths to compile_commands.json files. Leave blank for workspace auto-discovery (C/C++ only).</div>
+                </div>
             </div>
         </details>
 
@@ -556,6 +562,7 @@
             const responseFormatOverride = document.getElementById('responseFormatOverride').value;
             const codeMode = document.getElementById('codeMode').checked;
             const memoryBankDir = document.getElementById('memoryBankDir').value.trim();
+            const compileDbPaths = document.getElementById('compileDbPaths').value.trim();
 
             if (!baseUrl || !username) { showToast('error', 'URL and Username are required'); return; }
             if (!password && !currentConfig.hasPassword) { showToast('error', 'Password required for new connection'); return; }
@@ -565,7 +572,7 @@
             setLoading('saveBtn', true, 'Save', SAVE_ICON);
             vscode.postMessage({
                 type: 'saveConfiguration',
-                data: { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, codeModeChanged }
+                data: { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged }
             });
         }
 
@@ -583,6 +590,7 @@
                     document.getElementById('responseFormatOverride').value = currentConfig.responseFormatOverride || '';
                     document.getElementById('codeMode').checked = currentConfig.codeMode !== false;
                     document.getElementById('memoryBankDir').value = currentConfig.memoryBankDir || '';
+                    document.getElementById('compileDbPaths').value = currentConfig.compileDbPaths || '';
                     document.getElementById('password').value = '';
 
                     const pInput = document.getElementById('password');
@@ -600,7 +608,8 @@
                         (currentConfig.contextBudget && currentConfig.contextBudget !== 'minimal') ||
                         currentConfig.responseFormatOverride ||
                         currentConfig.codeMode === false || 
-                        currentConfig.memoryBankDir);
+                        currentConfig.memoryBankDir ||
+                        currentConfig.compileDbPaths);
                     if (hasAdvanced) {
                         document.getElementById('advancedSection').open = true;
                     }

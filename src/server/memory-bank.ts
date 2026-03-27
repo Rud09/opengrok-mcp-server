@@ -22,12 +22,8 @@ import { logger } from "./logger.js";
 
 /** Files the LLM is allowed to read/write. */
 export const ALLOWED_FILES = [
-  "AGENTS.md",
-  "codebase-map.md",
-  "symbol-index.md",
-  "known-patterns.md",
+  "active-task.md",
   "investigation-log.md",
-  "active-context.md",
 ] as const;
 
 export type AllowedFile = typeof ALLOWED_FILES[number];
@@ -37,54 +33,25 @@ const STUB_SENTINEL_PREFIX = "<!-- OPENGROK_STUB:";
 
 /** Maximum bytes for any individual file. */
 const MAX_FILE_BYTES: Record<AllowedFile, number> = {
-  "AGENTS.md":             8_192,
-  "codebase-map.md":       16_384,
-  "symbol-index.md":       16_384,
-  "known-patterns.md":     8_192,
+  "active-task.md":        4_096,
   "investigation-log.md":  32_768,
-  "active-context.md":     4_096,
 };
 
 /** Stub templates for first-time initialization. */
 const STUB_TEMPLATES: Record<AllowedFile, string> = {
-  "AGENTS.md": `<!-- OPENGROK_STUB:AGENTS.md -->
-# OpenGrok Investigation Guide
-
-Populate this file with project-specific guidance after the first investigation session.
-Include: default project name, key directories, naming conventions, known hotspots.
-`,
-  "codebase-map.md": `<!-- OPENGROK_STUB:codebase-map.md -->
-# Codebase Map
-
-Populate after first exploration:
-- Key directories and their purpose
-- Entry points and main modules
-- Build system structure
-- Platform/configuration variants
-`,
-  "symbol-index.md": `<!-- OPENGROK_STUB:symbol-index.md -->
-# Symbol Index
-
-Format: \`SymbolName\` | file:path | L{line} | description
-`,
-  "known-patterns.md": `<!-- OPENGROK_STUB:known-patterns.md -->
-# Known Patterns & Gotchas
-
-Populate with recurring patterns discovered during investigations:
-- Common error patterns
-- Unusual conventions
-- Known problematic areas
+  "active-task.md": `<!-- OPENGROK_STUB:active-task.md -->
+task: (none)
+started: (none)
+last_symbol: (none)
+last_file: (none)
+next_step: (none)
+open_questions: []
+status: idle
 `,
   "investigation-log.md": `<!-- OPENGROK_STUB:investigation-log.md -->
 # Investigation Log
-
-Each session's findings go here under a dated heading.
-Format: ## YYYY-MM-DD: Brief description
-`,
-  "active-context.md": `<!-- OPENGROK_STUB:active-context.md -->
-# Active Context
-
-Current investigation state. Overwrite at session start.
+> Append-only. Format: ## YYYY-MM-DD HH:MM: Topic
+> Include what you searched, what you found, and why it matters.
 `,
 };
 
@@ -94,6 +61,7 @@ Current investigation state. Overwrite at session start.
 
 export class MemoryBank {
   private readonly dir: string;
+  private lastReadHash = new Map<string, string>();
 
   /**
    * @param dir — absolute path to the memory-bank directory.
@@ -112,6 +80,8 @@ export class MemoryBank {
       logger.warn("MemoryBank: failed to create directory:", err);
       return;
     }
+
+    await this.migrate();
 
     for (const filename of ALLOWED_FILES) {
       const filePath = path.join(this.dir, filename);
@@ -176,6 +146,15 @@ export class MemoryBank {
       } catch {
         existing = "";
       }
+
+      if (mode === "append" && filename === "investigation-log.md") {
+        const now = new Date();
+        const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+        if (!content.trimStart().startsWith("## ")) {
+          content = `## ${timestamp}: Session Update\n${content}`;
+        }
+      }
+
       newContent = existing + "\n" + content;
     } else {
       newContent = content;
@@ -201,40 +180,161 @@ export class MemoryBank {
       logger.warn(`MemoryBank: failed to write ${filename}:`, err);
       throw new Error(`Failed to write memory bank file: ${filename}`);
     }
+
+    this.lastReadHash.delete(filename);
   }
 
   /**
-   * Trim investigation-log.md from the top, discarding oldest entries.
-   * Splits on level-2 headings (## ) to preserve entry boundaries.
+   * Read with delta encoding — returns "[unchanged]" if content hasn't changed
+   * since last read. Saves tokens when LLM reads the same file repeatedly.
+   */
+  async readWithDelta(filename: string): Promise<string | undefined> {
+    const content = await this.read(filename);
+    if (content === undefined) return undefined;
+
+    const hash = this.simpleHash(content);
+    if (this.lastReadHash.get(filename) === hash) {
+      return "[unchanged]";
+    }
+    this.lastReadHash.set(filename, hash);
+    return content;
+  }
+
+  /**
+   * Read investigation-log.md with compression for large files.
+   * When file exceeds 8KB, returns last 3 sections + count of omitted sections.
+   */
+  async readCompressed(filename: string): Promise<string | undefined> {
+    const content = await this.read(filename);
+    if (content === undefined) return undefined;
+
+    const COMPRESS_THRESHOLD = 8_192;
+    if (filename !== "investigation-log.md" || Buffer.byteLength(content, "utf8") <= COMPRESS_THRESHOLD) {
+      return content;
+    }
+
+    const sections = content.split(/(?=^## )/m).filter(Boolean);
+    if (sections.length <= 3) return content;
+
+    const omitted = sections.length - 3;
+    const recent = sections.slice(-3);
+    return `[${omitted} older entries omitted]\n\n` + recent.join("");
+  }
+
+  private scoreLogEntry(section: string): number {
+    let score = 0;
+    const symbolMatches = section.match(/[A-Z][A-Za-z0-9]{2,}(::[A-Za-z0-9]+)*/g);
+    score += (symbolMatches?.length ?? 0) * 2;
+    if (/found|root cause|conclusion|fixed|resolved/i.test(section)) score += 10;
+    if (/dead end|no results|0 matches|nothing found/i.test(section)) score -= 5;
+    return score;
+  }
+
+  /**
+   * Trim investigation-log.md from the top, discarding oldest/lowest-value entries.
+   * Uses richness scoring to prefer keeping high-signal entries.
    */
   private trimLogFromTop(content: string, maxBytes: number): string {
-    // Split on markdown H2 headings, keeping the delimiter
     const sections = content.split(/(?=^## )/m).filter(Boolean);
 
     if (sections.length <= 1) {
-      // Can't split further — just truncate by bytes
       return (
         Buffer.from(content, "utf8").subarray(0, maxBytes).toString("utf8") +
         "\n<!-- Older entries trimmed -->"
       );
     }
 
-    // Drop oldest (earliest) entries until it fits
     const trimNote = "<!-- Older entries trimmed -->\n\n";
-    let trimmed = sections;
-    while (trimmed.length > 1) {
-      const candidate = trimNote + trimmed.join("");
+
+    if (sections.length <= 2) {
+      const candidate = trimNote + sections.join("");
+      if (Buffer.byteLength(candidate, "utf8") <= maxBytes) return candidate;
+    }
+
+    // Always keep the 2 most recent entries; score older ones
+    const recent = sections.slice(-2);
+    const older = sections.slice(0, -2);
+    const scored = older.map((s, i) => ({ s, i, score: this.scoreLogEntry(s) }));
+    // Sort ascending so we drop lowest-score entries first
+    scored.sort((a, b) => a.score - b.score);
+
+    let kept = [...older];
+    for (const { i } of scored) {
+      const candidate = trimNote + kept.join("") + recent.join("");
       if (Buffer.byteLength(candidate, "utf8") <= maxBytes) {
         return candidate;
       }
-      trimmed = trimmed.slice(1);
+      const idx = kept.indexOf(older[i]);
+      if (idx !== -1) kept.splice(idx, 1);
     }
 
-    // Only one entry left — truncate by bytes
+    // Only recent entries left
+    const final = trimNote + recent.join("");
+    if (Buffer.byteLength(final, "utf8") <= maxBytes) return final;
+
+    // Last resort: byte truncate
     return (
       trimNote +
-      Buffer.from(trimmed[0] ?? "", "utf8").subarray(0, maxBytes).toString("utf8")
+      Buffer.from(recent.join(""), "utf8").subarray(0, maxBytes).toString("utf8")
     );
+  }
+
+  private simpleHash(s: string): string {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+    }
+    return h.toString(36);
+  }
+
+  /** Migrate from 6-file layout to 2-file layout. Idempotent. */
+  private async migrate(): Promise<void> {
+    const legacyFiles = [
+      "AGENTS.md",
+      "known-patterns.md",
+      "symbol-index.md",
+      "project-context.md",
+      "codebase-map.md",
+    ];
+
+    // Rename active-context.md → active-task.md (preserve real content)
+    const oldActive = path.join(this.dir, "active-context.md");
+    const newActive = path.join(this.dir, "active-task.md");
+    if (fs.existsSync(oldActive) && !fs.existsSync(newActive)) {
+      try {
+        const content = await fsp.readFile(oldActive, "utf8");
+        const isStub = content.startsWith(STUB_SENTINEL_PREFIX);
+        if (!isStub) {
+          await fsp.rename(oldActive, newActive);
+          logger.info("MemoryBank: renamed active-context.md → active-task.md");
+        } else {
+          await fsp.unlink(oldActive);
+          logger.info("MemoryBank: removed active-context.md stub");
+        }
+      } catch (err) {
+        logger.warn("MemoryBank: migration error for active-context.md:", err);
+      }
+    }
+
+    // Delete deprecated files (warn if they have real content)
+    for (const filename of legacyFiles) {
+      const filePath = path.join(this.dir, filename);
+      if (!fs.existsSync(filePath)) continue;
+      try {
+        const content = await fsp.readFile(filePath, "utf8");
+        const isStub = content.startsWith(STUB_SENTINEL_PREFIX);
+        if (!isStub) {
+          logger.warn(
+            `MemoryBank: deleting "${filename}" which has real content. ` +
+            `For general codebase context, use VS Code's built-in /memory command.`
+          );
+        }
+        await fsp.unlink(filePath);
+        logger.info(`MemoryBank: removed legacy file ${filename}`);
+      } catch (err) {
+        logger.warn(`MemoryBank: migration error for ${filename}:`, err);
+      }
+    }
   }
 
   private assertAllowed(filename: string): void {

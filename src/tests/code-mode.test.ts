@@ -208,16 +208,16 @@ describe('Code Mode — memory bank tools', () => {
 
   it('opengrok_read_memory returns stub message for uninitialized file', async () => {
     const { client } = await createCodeModeClient(bank);
-    const result = await client.callTool({ name: 'opengrok_read_memory', arguments: { filename: 'active-context.md' } });
+    const result = await client.callTool({ name: 'opengrok_read_memory', arguments: { filename: 'active-task.md' } });
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
     expect(text).toContain('not yet populated');
     await client.close();
   });
 
   it('opengrok_read_memory returns content for populated file', async () => {
-    await bank.write('active-context.md', 'Investigating EventLoop crash');
+    await bank.write('active-task.md', 'Investigating EventLoop crash');
     const { client } = await createCodeModeClient(bank);
-    const result = await client.callTool({ name: 'opengrok_read_memory', arguments: { filename: 'active-context.md' } });
+    const result = await client.callTool({ name: 'opengrok_read_memory', arguments: { filename: 'active-task.md' } });
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
     expect(text).toContain('EventLoop crash');
     await client.close();
@@ -225,8 +225,8 @@ describe('Code Mode — memory bank tools', () => {
 
   it('opengrok_update_memory writes content to bank', async () => {
     const { client } = await createCodeModeClient(bank);
-    await client.callTool({ name: 'opengrok_update_memory', arguments: { filename: 'active-context.md', content: 'New context', mode: 'overwrite' } });
-    const content = await bank.read('active-context.md');
+    await client.callTool({ name: 'opengrok_update_memory', arguments: { filename: 'active-task.md', content: 'New context', mode: 'overwrite' } });
+    const content = await bank.read('active-task.md');
     expect(content).toContain('New context');
     await client.close();
   });

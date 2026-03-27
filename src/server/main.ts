@@ -3,6 +3,7 @@
  * v5.0: MemoryBank initialization for Living Document / Code Mode support.
  */
 
+import * as os from "os";
 import * as path from "path";
 import { OpenGrokClient } from "./client.js";
 import { loadConfig } from "./config.js";
@@ -25,15 +26,18 @@ async function main(): Promise<void> {
   const client = new OpenGrokClient(config);
 
   // Resolve memory bank directory:
-  // 1. Prefer OPENGROK_MEMORY_BANK_DIR env var (user-configured)
-  // 2. Fall back to <workspaceRoot>/.opengrok/memory-bank/
-  //    VS Code launches the MCP subprocess with the workspace folder as cwd,
-  //    so process.cwd() gives the correct workspace root. For CLI usage,
-  //    it gives the user's current directory — both are the right workspace root.
-  //    NOTE: __dirname is NOT used here — it would give the extension install dir.
+  // 1. OPENGROK_MEMORY_BANK_DIR env var — always set by the VS Code extension, highest priority
+  // 2. VSCODE_IPC_HOOK_CLI set — server is running in a VS Code integrated terminal (dev-time),
+  //    use cwd-local path for convenience. NOTE: this branch is NOT hit by the VS Code extension
+  //    because it always sets OPENGROK_MEMORY_BANK_DIR (step 1).
+  // 3. All production standalone clients (Claude Desktop, Claude Code, Cursor, npx) → XDG-aware
+  //    config dir: $XDG_CONFIG_HOME/opengrok-mcp/memory-bank (defaults to ~/.config/...)
+  const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
   const memoryBankDir =
     config.OPENGROK_MEMORY_BANK_DIR ||
-    path.join(process.cwd(), ".opengrok", "memory-bank");
+    (process.env.VSCODE_IPC_HOOK_CLI
+      ? path.join(process.cwd(), ".opengrok", "memory-bank")
+      : path.join(xdgConfig, "opengrok-mcp", "memory-bank"));
 
   const memoryBank = new MemoryBank(memoryBankDir);
   await memoryBank.ensureDir();

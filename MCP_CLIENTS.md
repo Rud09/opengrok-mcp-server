@@ -8,6 +8,25 @@ The **wrapper script** is the recommended approach — it handles credentials se
 
 ---
 
+## OpenGrok Memory Bank vs VS Code Memory
+
+| Capability | VS Code Built-in Memory (`/memory`) | OpenGrok Memory Bank |
+|-----------|-------------------------------------|---------------------|
+| Scope | General codebase knowledge | Investigation-specific state |
+| Files | Managed by VS Code | `active-task.md`, `investigation-log.md` |
+| Auto-loaded | ✅ Every Copilot session | ❌ Requires `opengrok_memory_status` call |
+| Token cost | Free (injected by VS Code) | Counts as tool calls |
+| Best for | Architecture, conventions, directories | Bug investigations, multi-session research |
+
+**Rule of thumb:** Use VS Code `/memory` for "what is this codebase". Use OpenGrok memory for "what am I currently investigating".
+
+For non-VS Code clients:
+- **Claude Code:** Put general context in `.claude.md` at project root
+- **Cursor:** Put conventions in `.cursorrules`  
+- **Standalone CLI:** OpenGrok memory bank at `~/.config/opengrok-mcp/memory-bank/`
+
+---
+
 ## Quick Start
 
 ### 1 — Install
@@ -346,3 +365,14 @@ Start the wrapper directly in a terminal; MCP JSON-RPC traffic goes to stdout, l
 ```sh
 ~/.local/bin/opengrok-mcp-wrapper.sh 2>&1 | less
 ```
+
+---
+
+## Prompt Caching
+
+Claude Code and Claude.ai automatically cache the MCP server's system prompt (SERVER_INSTRUCTIONS), which is ~310 tokens. This means:
+- The first call in a session pays the full token cost for SERVER_INSTRUCTIONS
+- Subsequent calls in the same session reuse the cached version at ~10% of the cost
+- No configuration needed — this is automatic for supported clients
+
+`OPENGROK_ENABLE_CACHE_HINTS=true` is reserved for future explicit cache-control headers (not yet implemented by any client).

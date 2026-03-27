@@ -71,7 +71,7 @@ import type {
 import { BUDGET_LIMITS } from "./config.js";
 import type { ContextBudget } from "./config.js";
 import type { ResponseFormat } from "./formatters.js";
-import { MemoryBank } from "./memory-bank.js";
+import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
 import { ObservationMasker } from "./observation-masker.js";
 import { createSandboxAPI, executeInSandbox, API_SPEC } from "./sandbox.js";
 import yaml from "js-yaml";
@@ -138,30 +138,44 @@ const VERSION = (typeof __VERSION__ !== "undefined"
 
 const SERVER_INSTRUCTIONS = `
 OpenGrok MCP — Code intelligence for large, multi-language codebases.
-You have access to two distinct sets of tools. Choose the right approach for the task:
 
-APPROACH 1: INDIVIDUAL TOOLS (For quick, single-step lookups)
-- Use individual tools (opengrok_search_code, opengrok_get_file_symbols, etc.) for quick questions.
-- ALWAYS call opengrok_get_file_symbols BEFORE opengrok_get_file_content to see structure cheaply.
-- ALWAYS call opengrok_get_symbol_context first for any unknown symbol.
-- ALWAYS pass start_line AND end_line to opengrok_get_file_content. NEVER fetch full files.
-- ALWAYS pass file_type to narrow by language (cxx, java, python, etc.).
-- PREFER opengrok_search_and_read instead of search_code + get_file_content.
-- LIMIT max_results to 5 or fewer unless asked.
+## SESSION STARTUP (do this once, in order)
+1. opengrok_memory_status → check for prior investigation state (1 call)
+2. opengrok_read_memory("active-task.md") → if populated, read it (restores last task)
+3. opengrok_read_memory("investigation-log.md") → if populated, read recent entries
+4. opengrok_index_health → verify connectivity
 
-APPROACH 2: CODE MODE (For complex, multi-step investigations)
-- Use opengrok_api + opengrok_execute for deep investigations (3+ steps) where you can filter/summarize in JS.
-- Call opengrok_api ONCE to get the API spec, then run opengrok_execute with JS code.
-- Your JS code runs synchronously in a sandbox. env.opengrok.* methods are blocking.
-- ALWAYS use env.opengrok.batchSearch() for parallel searches — Promise.all does NOT parallelize inside the sandbox VM (calls are serialized via the Atomics bridge; batchSearch runs queries in parallel on the host event loop).
-- Return a value via \`return\` — only the final return value crosses back (saving massive tokens).
-- Example: \`return env.opengrok.batchSearch([{query:"Foo",searchType:"defs"}])[0].results[0].path\`
+Note: For general codebase context (conventions, architecture, AI rules), use VS Code's
+built-in memory tool (/memory command in chat) — it auto-loads at every session.
 
-SESSION MEMORY (Living Document):
-- On session start: call opengrok_memory_status() to check for prior investigation state.
-- If active-task.md has content, read it via opengrok_read_memory() to restore context.
-- During investigation: append findings to investigation-log.md via opengrok_write_memory().
-- Before final answer: update active-task.md with current task state.
+## TOOL SELECTION — DECISION TREE
+Single symbol lookup         → opengrok_get_symbol_context (1 call, replaces 3–5)
+2–5 parallel searches        → opengrok_batch_search (1 call)
+Search + read code           → opengrok_search_and_read (1 call)
+Multi-step (3+ calls needed) → opengrok_execute (1 call, logic runs in sandbox)
+Single search                → opengrok_search_code
+
+NEVER: search_code + get_file_content → use search_and_read
+NEVER: multiple search_code calls → use batch_search
+NEVER: get_file_content on file > 50 lines without start_line + end_line
+
+## LEGACY TOOL RULES
+- ALWAYS call get_file_symbols before get_file_content to find line ranges cheaply
+- ALWAYS pass file_type to narrow results (cxx, java, python, etc.)
+- LIMIT max_results to 5 unless asked for more
+
+## CODE MODE — opengrok_execute
+- Call opengrok_api ONCE at session start for the API spec
+- All env.opengrok.* calls are synchronous from your code's perspective
+- Use env.opengrok.batchSearch([...]) for parallel searches — do NOT write Promise.all()
+- Filter data inside the sandbox — only return what is needed
+
+## MEMORY — MANDATORY BEFORE FINAL ANSWER
+You MUST do both of these before responding to the user:
+  1. opengrok_update_memory("active-task.md", <current state>, "overwrite")
+  2. If a significant finding: opengrok_update_memory("investigation-log.md", <summary>, "append")
+
+Memory files: active-task.md (current task) | investigation-log.md (findings log)
 `.trim();
 
 
@@ -938,7 +952,7 @@ export function createServer(
   const local = buildLocalLayer(config);
 
   // Always register legacy tools — useful for simple lookups
-  registerLegacyTools(server, client, config, local, memoryBank);
+  registerLegacyTools(server, client, config, local, codeMode, memoryBank);
 
   // Also register Code Mode tools when enabled — LLM chooses best approach
   if (codeMode && memoryBank) {
@@ -957,14 +971,48 @@ function registerMemoryTools(
   memoryBank: MemoryBank
 ): void {
   server.registerTool(
+    "opengrok_memory_status",
+    {
+      title: "Memory Bank Status",
+      description:
+        "Returns status of all OpenGrok memory files. Call once at session start " +
+        "to check whether there is prior investigation state to restore.",
+      inputSchema: { _: z.string().optional().describe("(no input required)") },
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
+    },
+    async () => {
+      try {
+        const lines: string[] = ["# OpenGrok Memory Status"];
+        for (const filename of ALLOWED_FILES) {
+          const content = await memoryBank.read(filename);
+          if (!content) {
+            lines.push(`- ${filename}: empty`);
+          } else {
+            const bytes = Buffer.byteLength(content, "utf8");
+            const firstLine = content.split("\n").find(l => l.trim().length > 0) ?? "";
+            const preview = firstLine.trim().slice(0, 60);
+            lines.push(`- ${filename}: ${bytes}B — "${preview}"`);
+          }
+        }
+        lines.push("");
+        lines.push("Note: For general codebase context (conventions, architecture), use VS Code's");
+        lines.push("built-in memory tool (/memory command) — it auto-loads at every session.");
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      } catch (err) {
+        return makeToolError("opengrok_memory_status", err);
+      }
+    }
+  );
+
+  server.registerTool(
     "opengrok_read_memory",
     {
       title: "Read Memory Bank",
       description:
         "Read a Living Document file. Call at session start to restore context. " +
-        "Files: AGENTS.md, codebase-map.md, symbol-index.md, known-patterns.md, investigation-log.md, active-context.md",
+        "Files: active-task.md (current task state), investigation-log.md (findings history)",
       inputSchema: {
-        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"]
+        filename: z.enum(["active-task.md", "investigation-log.md"]
         ).describe("File to read from the memory bank"),
       },
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
@@ -987,10 +1035,10 @@ function registerMemoryTools(
     {
       title: "Update Memory Bank",
       description:
-        "Write findings to a Living Document file. Call at session end to persist knowledge. " +
-        "Use mode=append for investigation-log.md to add a new entry.",
+        "Write findings to a Living Document file. Use mode=append for investigation-log.md. " +
+        "MANDATORY: Update active-task.md before every final answer.",
       inputSchema: {
-        filename: z.enum(["AGENTS.md", "codebase-map.md", "symbol-index.md", "known-patterns.md", "investigation-log.md", "active-context.md"])
+        filename: z.enum(["active-task.md", "investigation-log.md"])
           .describe("File to update"),
         content: z.string().min(1).describe("Content to write"),
         mode: z.enum(["overwrite", "append"]).default("overwrite").describe("append adds to end (use for investigation-log)"),
@@ -1011,6 +1059,8 @@ function registerMemoryTools(
 // ---------------------------------------------------------------------------
 // Code Mode tools: opengrok_api + opengrok_execute
 // ---------------------------------------------------------------------------
+
+let executeCallCount = 0;
 
 function registerCodeModeTools(
   server: McpServer,
@@ -1123,9 +1173,14 @@ function registerCodeModeTools(
         );
 
         const historyHeader = masker.getMaskedHistoryHeader();
-        const finalResult = historyHeader
+        let finalResult = historyHeader
           ? `${historyHeader}\n---\n${result}`
           : result;
+
+        executeCallCount++;
+        if (executeCallCount % 5 === 0 && executeCallCount > 3) {
+          finalResult += "\n\n> Memory: Update active-task.md before answering.";
+        }
 
         return { content: [{ type: "text", text: finalResult }] };
       } catch (err) {
@@ -1144,14 +1199,18 @@ function registerLegacyTools(
   client: OpenGrokClient,
   config: Config,
   local: LocalLayer,
+  codeMode: boolean,
   memoryBank?: MemoryBank
 ): void {
+  const desc = (full: string, compact: string): string => codeMode ? compact : full;
   server.registerTool(
     "opengrok_search_code",
     {
       title: "Search Code",
-      description:
+      description: desc(
         "Search OpenGrok. Types: full (text), defs (definitions), refs (references), path (filenames), hist (commit messages). Prefer defs/refs for known symbol names. Use opengrok_batch_search for multiple queries.",
+        "(fallback) search the codebase"
+      ),
       inputSchema: SearchCodeArgs.shape,
       outputSchema: SearchResultsOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1178,7 +1237,7 @@ function registerLegacyTools(
     "opengrok_find_file",
     {
       title: "Find File",
-      description: "Find files by name/path pattern across the codebase.",
+      description: desc("Find files by name/path pattern across the codebase.", "(fallback) find file by name pattern"),
       inputSchema: FindFileArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1204,8 +1263,10 @@ function registerLegacyTools(
     "opengrok_get_file_content",
     {
       title: "Get File Content",
-      description:
+      description: desc(
         "Get file contents. ALWAYS pass start_line/end_line — never fetch full files. Use opengrok_search_code first to find line numbers. For full symbol context use opengrok_get_symbol_context.",
+        "(fallback) read file lines — always pass start_line + end_line"
+      ),
       inputSchema: GetFileContentArgs.shape,
       outputSchema: FileContentOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1225,7 +1286,7 @@ function registerLegacyTools(
     "opengrok_get_file_history",
     {
       title: "Get File History",
-      description: "Commit history for a file.",
+      description: desc("Commit history for a file.", "(fallback) file commit history"),
       inputSchema: GetFileHistoryArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1247,7 +1308,7 @@ function registerLegacyTools(
     "opengrok_browse_directory",
     {
       title: "Browse Directory",
-      description: "List files/subdirectories at a path.",
+      description: desc("List files/subdirectories at a path.", "(fallback) list directory contents"),
       inputSchema: BrowseDirectoryArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1272,7 +1333,7 @@ function registerLegacyTools(
     "opengrok_list_projects",
     {
       title: "List Projects",
-      description: "List indexed OpenGrok projects.",
+      description: desc("List indexed OpenGrok projects.", "(fallback) list all indexed projects"),
       inputSchema: ListProjectsArgs.shape,
       outputSchema: ProjectsListOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1292,8 +1353,10 @@ function registerLegacyTools(
     "opengrok_get_file_annotate",
     {
       title: "Get File Annotate",
-      description:
+      description: desc(
         "Blame annotations (who changed each line). Use start_line/end_line to limit output.",
+        "(fallback) line-by-line blame"
+      ),
       inputSchema: GetFileAnnotateArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1318,7 +1381,7 @@ function registerLegacyTools(
     "opengrok_search_suggest",
     {
       title: "Search Suggest",
-      description: "Autocomplete suggestions for a partial query.",
+      description: desc("Autocomplete suggestions for a partial query.", "(fallback) search autocomplete suggestions"),
       inputSchema: SearchSuggestArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1349,11 +1412,13 @@ function registerLegacyTools(
     "opengrok_batch_search",
     {
       title: "Batch Search",
-      description:
+      description: desc(
         "Execute up to 5 searches in parallel in one call.\n\n" +
         "**When to use**: Always prefer this over multiple opengrok_search_code calls for the same investigation.\n\n" +
         "**Args**: `queries` array (each with `query`, `search_type`, `max_results`); `projects` and `file_type` apply to all queries.\n\n" +
         "**Example**: Find definition, references, and usage patterns of a symbol in one call.",
+        "(fallback) 2–5 parallel searches in 1 call"
+      ),
       inputSchema: BatchSearchArgs.shape,
       outputSchema: BatchSearchOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1373,10 +1438,12 @@ function registerLegacyTools(
     "opengrok_search_and_read",
     {
       title: "Search and Read",
-      description:
+      description: desc(
         "Search and return matching code with surrounding context in one call.\n\n" +
         "**When to use**: Instead of opengrok_search_code + opengrok_get_file_content. Never fetches full files.\n\n" +
         "**When not to use**: When you need the full file or deep symbol analysis — use opengrok_get_symbol_context instead.",
+        "(fallback) search + surrounding code in 1 call"
+      ),
       inputSchema: SearchAndReadArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1398,12 +1465,14 @@ function registerLegacyTools(
     "opengrok_get_symbol_context",
     {
       title: "Get Symbol Context",
-      description:
+      description: desc(
         "Complete symbol investigation in one call: definition with context + corresponding header + references.\n\n" +
         "**When to use**: First choice for any unknown C++ symbol or function. Replaces search_code + get_file_content combination.\n\n" +
         "**When not to use**: For simple file reads or when you already have the exact line number.\n\n" +
         "**Args**: `symbol` (required); `projects`, `context_lines`, `max_refs`, `include_header`, `file_type` (optional).\n\n" +
         "**Example**: Use for any CamelCase/PascalCase identifier to get definition + header + callers in one call.",
+        "(fallback) symbol definition + header + refs in 1 call"
+      ),
       inputSchema: GetSymbolContextArgs.shape,
       outputSchema: SymbolContextOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1441,8 +1510,10 @@ function registerLegacyTools(
     "opengrok_index_health",
     {
       title: "Index Health",
-      description:
+      description: desc(
         "OpenGrok server connection status and diagnostics. Call if results seem stale or incomplete.",
+        "(fallback) server connectivity and index status"
+      ),
       inputSchema: IndexHealthArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1465,12 +1536,14 @@ function registerLegacyTools(
     "opengrok_get_compile_info",
     {
       title: "Get Compile Info",
-      description:
+      description: desc(
         "Get compilation details for a source file: compiler, include paths, preprocessor defines, and language standard.\n\n" +
         "**When to use**: When you need compiler flags or include paths for precise analysis of C/C++ files.\n\n" +
         "**When not to use**: For non-C/C++ files or when compile_commands.json is not present.\n\n" +
         "**Args**: `path` — absolute or OpenGrok-relative path (e.g., GridNode/EventLoop.cpp).\n\n" +
         "**Example**: Use before asking about preprocessor macros or platform-specific includes.",
+        "(fallback) compiler flags for a file (requires local compile_commands.json)"
+      ),
       inputSchema: GetCompileInfoArgs.shape,
       annotations: READ_ONLY_LOCAL,
     },
@@ -1492,12 +1565,14 @@ function registerLegacyTools(
     "opengrok_get_file_symbols",
     {
       title: "Get File Symbols",
-      description:
+      description: desc(
         "List all symbols defined in a file: functions, classes, structs, macros with line numbers and signatures.\n\n" +
         "**When to use**: To understand a file's structure before reading it with opengrok_get_file_content.\n\n" +
         "**When not to use**: When you already know exactly which lines to read.\n\n" +
         "**Args**: `project` and `path` (required).\n\n" +
         "**Example**: Use before opengrok_get_file_content to identify which function/class starts at which line.",
+        "(fallback) file symbols list — call before get_file_content"
+      ),
       inputSchema: GetFileSymbolsArgs.shape,
       annotations: READ_ONLY_OPEN,
     },

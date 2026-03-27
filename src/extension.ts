@@ -698,6 +698,7 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
 
         const defaultProject = config.get<string>('defaultProject') ?? '';
         const responseFormatOverride = config.get<string>('responseFormatOverride') ?? '';
+        const compileDbPaths = (config.get<string>('compileDbPaths') ?? '').trim();
         if (defaultProject) env.OPENGROK_DEFAULT_PROJECT = defaultProject;
         if (responseFormatOverride) env.OPENGROK_RESPONSE_FORMAT_OVERRIDE = responseFormatOverride;
 
@@ -754,10 +755,15 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
             env.HTTPS_PROXY = proxy;
         }
 
-        // Local layer — auto-discover compile_commands.json files in all workspace folders
-        const compileDbUris = await vscode.workspace.findFiles('**/compile_commands.json');
-        if (compileDbUris.length > 0) {
-            env.OPENGROK_LOCAL_COMPILE_DB_PATHS = compileDbUris.map(u => u.fsPath).join(',');
+        // Local layer — user config takes precedence over auto-discovery
+        if (compileDbPaths) {
+            env.OPENGROK_LOCAL_COMPILE_DB_PATHS = compileDbPaths;
+        } else {
+            // Auto-discover compile_commands.json files in all workspace folders
+            const compileDbUris = await vscode.workspace.findFiles('**/compile_commands.json');
+            if (compileDbUris.length > 0) {
+                env.OPENGROK_LOCAL_COMPILE_DB_PATHS = compileDbUris.map(u => u.fsPath).join(',');
+            }
         }
 
         // Return the definition object
@@ -860,6 +866,7 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
     const responseFormatOverride = config.get<string>('responseFormatOverride') || '';
     const codeMode = config.get<boolean>('codeMode') ?? true;
     const memoryBankDir = config.get<string>('memoryBankDir') || '';
+    const compileDbPaths = config.get<string>('compileDbPaths') || '';
 
     let hasPassword = false;
     if (username) {
@@ -869,7 +876,7 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
 
     webview.postMessage({
         type: 'loadConfig',
-        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir }
+        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths }
     });
 }
 
@@ -891,6 +898,7 @@ async function _handleSaveConfiguration(webview: vscode.Webview, data: {
     responseFormatOverride?: string;
     codeMode?: boolean;
     memoryBankDir?: string;
+    compileDbPaths?: string;
     codeModeChanged?: boolean;
 }): Promise<void> {
     await handleSaveConfiguration(
@@ -979,10 +987,11 @@ async function handleSaveConfiguration(
         responseFormatOverride?: string;
         codeMode?: boolean;
         memoryBankDir?: string;
+        compileDbPaths?: string;
         codeModeChanged?: boolean;
     }
 ): Promise<void> {
-    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, codeModeChanged } = data;
+    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged } = data;
 
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const oldUsername = config.get<string>('username');
@@ -1006,6 +1015,7 @@ async function handleSaveConfiguration(
     if (responseFormatOverride !== undefined) await config.update('responseFormatOverride', responseFormatOverride || undefined, vscode.ConfigurationTarget.Global);
     if (codeMode !== undefined) await config.update('codeMode', codeMode, vscode.ConfigurationTarget.Global);
     if (memoryBankDir !== undefined) await config.update('memoryBankDir', memoryBankDir || undefined, vscode.ConfigurationTarget.Global);
+    if (compileDbPaths !== undefined) await config.update('compileDbPaths', compileDbPaths || undefined, vscode.ConfigurationTarget.Global);
 
     await secretStorage.store(`opengrok-password-${username}`, finalPassword);
 

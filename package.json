@@ -145,11 +145,18 @@
           "description": "Directory for Living Document memory bank files. Defaults to <workspace>/.opengrok/memory-bank/. Maps to OPENGROK_MEMORY_BANK_DIR env var.",
           "order": 8
         },
+        "opengrok-mcp.compileDbPaths": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-separated paths to compile_commands.json files for C/C++ compile flag support. Leave blank for workspace auto-discovery. Maps to OPENGROK_LOCAL_COMPILE_DB_PATHS env var.",
+          "order": 9,
+          "scope": "window"
+        },
         "opengrok-mcp.defaultProject": {
           "type": "string",
           "default": "",
           "description": "Default OpenGrok project to scope searches to when none is specified. Maps to OPENGROK_DEFAULT_PROJECT env var.",
-          "order": 9
+          "order": 10
         },
         "opengrok-mcp.responseFormatOverride": {
           "type": "string",
@@ -165,7 +172,7 @@
           ],
           "default": "",
           "description": "Force all tool responses to a specific format (empty = auto). Maps to OPENGROK_RESPONSE_FORMAT_OVERRIDE env var.",
-          "order": 10
+          "order": 11
         }
       }
     }

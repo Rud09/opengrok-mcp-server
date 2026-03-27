@@ -83,6 +83,9 @@ When Code Mode is enabled, these 2 tools replace all individual tools above:
 | List top-level symbols in a file (functions, classes, macros) | `opengrok_get_file_symbols` |
 | Autocomplete suggestions for partial queries | `opengrok_search_suggest` |
 | Compiler flags and include paths (requires local `compile_commands.json`) | `opengrok_get_compile_info` |
+| Check session memory state (call at startup) | `opengrok_memory_status` |
+| Read a memory bank file (`active-task.md` or `investigation-log.md`) | `opengrok_read_memory` |
+| Write or append to a memory bank file | `opengrok_update_memory` |
 
 > **`opengrok_find_file` vs `search_type: "path"`:** Use `find_file` for
 > filename/glob patterns (e.g., `config.ts`, `test*.js`). Use `opengrok_search_code`
@@ -94,6 +97,43 @@ When Code Mode is enabled, these 2 tools replace all individual tools above:
 > take a single `project: string`. Search tools (`search_code`, `search_and_read`,
 > `batch_search`, `get_symbol_context`) take `projects: string[]` — omit the
 > field to use the configured default project (set via Extension Settings → Default Project or `OPENGROK_DEFAULT_PROJECT`).
+
+## Session Memory
+
+The MCP server maintains 2 persistent files across sessions:
+
+| File | Purpose | Usage |
+|------|---------|-------|
+| `active-task.md` | Current task state | Overwrite at task start, update before final answer |
+| `investigation-log.md` | Append-only findings history | Append after each significant discovery |
+
+### Mandatory Agentic Loop
+
+**On every session start:**
+1. Call `opengrok_memory_status` — check if prior state exists
+2. If `active-task.md` has content: call `opengrok_read_memory` to restore context
+3. If `investigation-log.md` has content: call `opengrok_read_memory` to see recent findings
+4. Begin investigation
+
+**Before every final answer:**
+- Update `active-task.md` with current task state via `opengrok_update_memory`
+- Append key findings to `investigation-log.md` if new discoveries were made
+
+### VS Code Memory Note
+
+For general codebase context (architecture, conventions, key directories), use VS Code's built-in `/memory` command — it auto-loads at every Copilot session and doesn't cost tool call tokens. Reserve the OpenGrok memory bank for investigation-specific state.
+
+### active-task.md format
+
+```yaml
+task: <what you're currently investigating>
+started: <YYYY-MM-DD>
+last_symbol: <last symbol examined>
+last_file: <last file examined>
+next_step: <what to do next>
+open_questions: [<question1>, <question2>]
+status: investigating | blocked | complete
+```
 
 ## Code Mode
 
@@ -210,6 +250,10 @@ Always pass `start_line` and `end_line` to `opengrok_get_file_content`. Never fe
 9. **`opengrok_get_symbol_context` has `include_header`.** For C/C++ codebases, set `include_header: true` (default) to automatically fetch the matching `.h`/`.hpp` file alongside a `.cpp` definition — saves an extra read call.
 
 10. **All tools are read-only.** Every tool has `readOnlyHint: true` and `destructiveHint: false`. They never modify the OpenGrok index or source files.
+
+11. **VS Code memory vs OpenGrok memory.** VS Code Copilot's built-in `/memory` command stores general codebase knowledge (architecture, conventions, key directories) and auto-loads every session — free. The OpenGrok memory bank (`active-task.md`, `investigation-log.md`) is for investigation-specific state that needs to persist across multiple OpenGrok sessions. Use VS Code memory for "what is this codebase", OpenGrok memory for "what am I currently investigating".
+
+12. **17 tools = ~2,550 prompt tokens.** In token-constrained environments, enable Code Mode (2 tools = ~200 tokens) via Extension Settings or `OPENGROK_CODE_MODE=true`. When Code Mode is active, individual tools remain available as fallbacks with compact descriptions.
 
 ## Error Recovery
 
