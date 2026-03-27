@@ -394,3 +394,61 @@ export const SymbolContextOutput = z.object({
     )
     .optional(),
 });
+
+const MetaSchema = z.object({
+  tool: z.string(),
+  project: z.string().optional(),
+  path: z.string().optional(),
+  fetchedAt: z.string(),
+  version: z.string(),
+});
+
+/** Output schema for opengrok_get_file_history */
+export const FileHistoryOutput = z.object({
+  _meta: MetaSchema,
+  entries: z.array(
+    z.object({
+      revision: z.string(),
+      author: z.string(),
+      date: z.string(),
+      message: z.string(),
+    })
+  ),
+});
+
+/** Output schema for opengrok_get_file_symbols */
+export const FileSymbolsOutput = z.object({
+  _meta: MetaSchema,
+  symbols: z.array(
+    z.object({
+      name: z.string(),
+      type: z.string(),
+      line: z.number(),
+    })
+  ),
+});
+
+/** Output schema for opengrok_what_changed */
+export const WhatChangedOutput = z.object({
+  _meta: MetaSchema,
+  changes: z.array(
+    z.object({
+      commit: z.string(),
+      author: z.string(),
+      date: z.string(),
+      lines: z.array(z.number()),
+    })
+  ),
+});
+
+/** Output schema for opengrok_dependency_map */
+export const DependencyMapOutput = z.object({
+  _meta: MetaSchema,
+  nodes: z.array(
+    z.object({
+      path: z.string(),
+      level: z.number(),
+      direction: z.enum(["uses", "used_by"]),
+    })
+  ),
+});
