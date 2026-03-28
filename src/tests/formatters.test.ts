@@ -11,8 +11,10 @@ import {
   formatSearchAndRead,
   formatSymbolContext,
   formatFileSymbols,
+  formatFileDiff,
 } from '../server/formatters.js';
 import type { SearchAndReadEntry, SymbolContextResult } from '../server/formatters.js';
+import type { FileDiff } from '../server/models.js';
 import type {
   SearchResults,
   FileContent,
@@ -683,5 +685,102 @@ describe('formatFileSymbols', () => {
     expect(output).toContain('...');
     // Signature should be truncated to 77 + '...' = 80 total
     expect(output).not.toContain(longSig);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatFileDiff
+// ---------------------------------------------------------------------------
+
+describe('formatFileDiff', () => {
+  const sampleDiff: FileDiff = {
+    project: 'myproj',
+    path: 'src/main.cpp',
+    rev1: 'abc12345deadbeef',
+    rev2: 'def67890cafebabe',
+    hunks: [
+      {
+        oldStart: 5, oldCount: 4, newStart: 5, newCount: 4,
+        lines: [
+          { type: 'context', newLineNumber: 5, content: '#include "header.h"' },
+          { type: 'removed', oldLineNumber: 6, content: '    int x = 0;' },
+          { type: 'added', newLineNumber: 6, content: '    int x = 42;' },
+          { type: 'context', newLineNumber: 7, content: '    return x;' },
+        ],
+      },
+    ],
+    unifiedDiff: '--- a/src/main.cpp\n+++ b/src/main.cpp\n@@ -5,4 +5,4 @@\n #include "header.h"\n-    int x = 0;\n+    int x = 42;\n     return x;',
+    stats: { added: 1, removed: 1 },
+  };
+
+  it('wraps unified diff in markdown code fence', () => {
+    const output = formatFileDiff(sampleDiff, 'markdown');
+    expect(output).toContain('```diff');
+    expect(output).toContain('-    int x = 0;');
+    expect(output).toContain('+    int x = 42;');
+  });
+
+  it('includes header with path, short revs, and stats', () => {
+    const output = formatFileDiff(sampleDiff, 'markdown');
+    expect(output).toContain('`src/main.cpp`');
+    expect(output).toContain('abc12345');
+    expect(output).toContain('def67890');
+    expect(output).toContain('+1 / -1 lines');
+  });
+
+  it('returns JSON with all fields', () => {
+    const output = formatFileDiff(sampleDiff, 'json');
+    const parsed = JSON.parse(output);
+    expect(parsed.project).toBe('myproj');
+    expect(parsed.hunks).toHaveLength(1);
+    expect(parsed.stats.added).toBe(1);
+    expect(parsed.stats.removed).toBe(1);
+    expect(parsed.hunks[0].lines).toHaveLength(4);
+  });
+
+  it('returns TSV with type/oldLine/newLine/content columns', () => {
+    const output = formatFileDiff(sampleDiff, 'tsv');
+    const lines = output.split('\n');
+    expect(lines[0]).toBe('type\toldLine\tnewLine\tcontent');
+    expect(lines[1]).toContain('context');
+    expect(lines[2]).toContain('removed');
+    expect(lines[3]).toContain('added');
+  });
+
+  it('returns YAML with stats and unifiedDiff', () => {
+    const output = formatFileDiff(sampleDiff, 'yaml');
+    expect(output).toContain('project: myproj');
+    expect(output).toContain('path: src/main.cpp');
+    expect(output).toContain('added: 1');
+    expect(output).toContain('removed: 1');
+  });
+
+  it('shows "No changes detected" for empty hunks in markdown', () => {
+    const emptyDiff: FileDiff = {
+      ...sampleDiff,
+      hunks: [],
+      unifiedDiff: '',
+      stats: { added: 0, removed: 0 },
+    };
+    const output = formatFileDiff(emptyDiff, 'markdown');
+    expect(output).toContain('No changes detected');
+  });
+
+  it('uses text format without code fences', () => {
+    const output = formatFileDiff(sampleDiff, 'text');
+    expect(output).not.toContain('```');
+    expect(output).toContain('-    int x = 0;');
+    expect(output).toContain('+    int x = 42;');
+  });
+
+  it('handles short revision hashes without error', () => {
+    const shortRevDiff: FileDiff = {
+      ...sampleDiff,
+      rev1: 'abc',
+      rev2: 'def',
+    };
+    const output = formatFileDiff(shortRevDiff, 'markdown');
+    expect(output).toContain('abc');
+    expect(output).toContain('def');
   });
 });
