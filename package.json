@@ -2,7 +2,7 @@
   "name": "opengrok-mcp-server",
   "displayName": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases",
-  "version": "5.6.0",
+  "version": "6.0.0",
   "mcpName": "io.github.IcyHot09/opengrok-mcp-server",
   "license": "PolyForm-Noncommercial-1.0.0",
   "publisher": "IcyHot09",
