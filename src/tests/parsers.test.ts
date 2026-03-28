@@ -18,7 +18,7 @@ import {
   ANNOTATE_HTML_17X,
   WEB_SEARCH_RESULTS_HTML,
   XREF_FILE_SYMBOLS_HTML,
-  DIFF_EDTEXT,
+  DIFF_UNIFIED_HTML,
 } from './fixtures/html.js';
 
 // ---------------------------------------------------------------------------
@@ -327,79 +327,109 @@ describe('parseFileSymbols', () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseFileDiff
+// parseFileDiff — parses unified HTML from OpenGrok format=u
 // ---------------------------------------------------------------------------
 
 describe('parseFileDiff', () => {
   it('returns project, path, rev1, rev2 metadata', () => {
-    const result = parseFileDiff(DIFF_EDTEXT, 'myproj', 'src/foo.cpp', 'abc123', 'def456');
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'myproj', 'src/foo.cpp', 'abc123', 'def456');
     expect(result.project).toBe('myproj');
     expect(result.path).toBe('src/foo.cpp');
     expect(result.rev1).toBe('abc123');
     expect(result.rev2).toBe('def456');
   });
 
-  it('parses deleted and added lines from ED diff text into hunks', () => {
-    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
-    expect(result.hunks.length).toBe(2); // fixture has 2 deltas: 7c7 and 109a110,111
-    const lines = result.hunks.flatMap(h => h.lines);
-    expect(lines.filter(l => l.type === 'removed').length).toBe(1);
-    expect(lines.filter(l => l.type === 'added').length).toBe(3);
+  it('splits changes into separate hunks at line-number gaps', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
+    // Hunk 1: context(5,6) + del(7) + add(7) + context(8,9)
+    // [gap: 98 hidden lines]
+    // Hunk 2: context(108,109) + add(110,111) + context(112)
+    expect(result.hunks.length).toBe(2);
   });
 
-  it('captures content of deleted line (strips "< " prefix)', () => {
-    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+  it('includes context lines in hunks (critical for AI comprehension)', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
+    const ctx = result.hunks[0].lines.filter(l => l.type === 'context');
+    expect(ctx.length).toBeGreaterThan(0);
+    expect(ctx.map(l => l.content)).toContain('void init() {');
+    expect(ctx.map(l => l.content)).toContain('    doSomething(x);');
+  });
+
+  it('captures content of deleted line from <del class="d">', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
     const removed = result.hunks.flatMap(h => h.lines).filter(l => l.type === 'removed');
+    expect(removed).toHaveLength(1);
     expect(removed[0].content).toBe('    int x = 0;');
   });
 
-  it('captures content of added lines (strips "> " prefix)', () => {
-    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+  it('captures content of added lines from <span class="a it">', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
     const added = result.hunks.flatMap(h => h.lines).filter(l => l.type === 'added');
+    expect(added).toHaveLength(3);
     expect(added[0].content).toBe('    int x = 42;');
     expect(added[1].content).toBe('void newFunction() {}');
     expect(added[2].content).toBe('// end of addition');
   });
 
-  it('records old line numbers on removed lines from change command (7c7)', () => {
-    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+  it('records old line number on deleted lines', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
     const removed = result.hunks.flatMap(h => h.lines).filter(l => l.type === 'removed');
     expect(removed[0].oldLineNumber).toBe(7);
     expect(removed[0].newLineNumber).toBeUndefined();
   });
 
-  it('records new line numbers on added lines from add command (109a110,111)', () => {
-    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+  it('records new line numbers on added lines', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
     const added = result.hunks.flatMap(h => h.lines).filter(l => l.type === 'added');
+    expect(added[0].newLineNumber).toBe(7);
+    expect(added[0].oldLineNumber).toBeUndefined();
     expect(added[1].newLineNumber).toBe(110);
-    expect(added[1].oldLineNumber).toBeUndefined();
   });
 
-  it('computes correct added/removed stats', () => {
-    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+  it('records new line numbers on context lines', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
+    const ctx = result.hunks[0].lines.filter(l => l.type === 'context');
+    expect(ctx[0].newLineNumber).toBe(5);
+  });
+
+  it('computes correct added/removed stats (context excluded)', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
     expect(result.stats.removed).toBe(1);
     expect(result.stats.added).toBe(3);
   });
 
-  it('produces a unified diff string with @@ headers and +/- prefixed lines', () => {
-    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+  it('produces a unified diff string with @@ headers, context, and +/- lines', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
     expect(result.unifiedDiff).toContain('@@');
     expect(result.unifiedDiff).toContain('-    int x = 0;');
     expect(result.unifiedDiff).toContain('+    int x = 42;');
     expect(result.unifiedDiff).toContain('+void newFunction() {}');
+    // Context lines should be present with space prefix
+    expect(result.unifiedDiff).toContain(' void init() {');
+    expect(result.unifiedDiff).toContain(' }');
   });
 
-  it('sets correct oldStart/newStart on first hunk (change command 7c7)', () => {
-    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
-    expect(result.hunks[0].oldStart).toBe(7);
-    expect(result.hunks[0].newStart).toBe(7);
+  it('decodes HTML entities in content (e.g. &quot; → ")', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
+    const ctx = result.hunks[0].lines.filter(l => l.type === 'context');
+    expect(ctx[0].content).toBe('#include "other.h"');
   });
 
-  it('returns empty hunks for empty diff text', () => {
-    const result = parseFileDiff('', 'p', 'f.cpp', 'r1', 'r2');
+  it('sets correct newStart on first hunk from first context line', () => {
+    const result = parseFileDiff(DIFF_UNIFIED_HTML, 'p', 'f.cpp', 'r1', 'r2');
+    expect(result.hunks[0].newStart).toBe(5);
+  });
+
+  it('returns empty hunks for HTML with no diff table', () => {
+    const result = parseFileDiff('<html><body></body></html>', 'p', 'f.cpp', 'r1', 'r2');
     expect(result.hunks).toEqual([]);
     expect(result.stats.added).toBe(0);
     expect(result.stats.removed).toBe(0);
     expect(result.unifiedDiff).toBe('');
+  });
+
+  it('returns empty hunks for empty string', () => {
+    const result = parseFileDiff('', 'p', 'f.cpp', 'r1', 'r2');
+    expect(result.hunks).toEqual([]);
   });
 });

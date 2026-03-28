@@ -876,11 +876,11 @@ export class OpenGrokClient {
     // r1/r2 use the OpenGrok convention: /{project}/{path}@{revision}
     url.searchParams.set("r1", `/${project}/${normalizedPath}@${rev1}`);
     url.searchParams.set("r2", `/${project}/${normalizedPath}@${rev2}`);
-    // action=download returns raw delta.toString() text with no HTML wrapping
-    url.searchParams.set("action", "download");
-    const response = await this.request(url, TIMEOUTS.file, "text/plain, */*");
-    const text = await response.text();
-    return parseFileDiff(text, project, normalizedPath, rev1, rev2);
+    // format=u returns unified diff as HTML with context lines
+    url.searchParams.set("format", "u");
+    const response = await this.request(url, TIMEOUTS.file, "text/html, */*");
+    const html = await response.text();
+    return parseFileDiff(html, project, normalizedPath, rev1, rev2);
   }
 
   async close(): Promise<void> {

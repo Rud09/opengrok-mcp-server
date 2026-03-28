@@ -487,8 +487,13 @@ describe('OpenGrokClient methods', () => {
   });
 
   describe('getFileDiff', () => {
-    it('fetches raw ED diff text from /diff/{project}/{path} endpoint with action=download', async () => {
-      mockFetchText('7c7\n<     int x = 0;\n---\n>     int x = 42;\n');
+    const minimalDiffHtml = '<div id="difftable"><div class="pre"><table class="plain"><tbody>' +
+      '<tr class="chunk"><td><del class="d">7</del>    int x = 0;<br/></td></tr>' +
+      '<tr class="k"><td><span class="a it">7</span>    int x = 42;<br/></td></tr>' +
+      '</tbody></table></div></div>';
+
+    it('fetches unified diff HTML from /diff/{project}/{path} with format=u', async () => {
+      mockFetchText(minimalDiffHtml);
       const result = await client.getFileDiff('proj', 'src/file.cpp', 'abc123', 'def456');
       expect(result.project).toBe('proj');
       expect(result.path).toBe('src/file.cpp');
@@ -496,11 +501,12 @@ describe('OpenGrokClient methods', () => {
       expect(result.rev2).toBe('def456');
       const calledUrl = fetchSpy.mock.calls[0][0] as string;
       expect(calledUrl).toContain('/diff/proj/src/file.cpp');
-      expect(calledUrl).toContain('action=download');
+      expect(calledUrl).toContain('format=u');
+      expect(calledUrl).not.toContain('action=download');
     });
 
-    it('parses the ED diff text and returns stats', async () => {
-      mockFetchText('7c7\n<     int x = 0;\n---\n>     int x = 42;\n');
+    it('parses the unified HTML and returns stats', async () => {
+      mockFetchText(minimalDiffHtml);
       const result = await client.getFileDiff('proj', 'src/file.cpp', 'abc123', 'def456');
       expect(result.stats.removed).toBe(1);
       expect(result.stats.added).toBe(1);

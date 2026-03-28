@@ -262,15 +262,50 @@ export const XREF_FILE_SYMBOLS_HTML = `
 `;
 
 // ---------------------------------------------------------------------------
-// DIFF_EDTEXT — raw ED diff text as returned by OpenGrok ?action=download
-// (delta.toString() output from jrcs, no HTML wrapping)
-// Fixture represents: line 7 changed (x=0 → x=42), then lines 110-111 added
+// DIFF_UNIFIED_HTML — realistic OpenGrok diff.jsp ?format=u output
+// Mirrors actual JSP rendering: single-column table, lines separated by <br/>
+// <span class="it">N</span> = context, <del class="d">N</del> = deleted,
+// <span class="a it">N</span> = added
+// Fixture: line 7 changed (x=0 → x=42) with context, then lines 110-111 added
 // ---------------------------------------------------------------------------
-export const DIFF_EDTEXT = `7c7
-<     int x = 0;
----
->     int x = 42;
-109a110,111
-> void newFunction() {}
-> // end of addition
+export const DIFF_UNIFIED_HTML = `
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Diff Fixture</title></head>
+<body>
+<div id="difftable">
+  <div class="pre">
+    <table class="plain" aria-label="table with old and new content">
+      <tbody>
+        <tr class="k"><td>
+          <span class="it">5</span>#include &quot;other.h&quot;<br/>
+          <span class="it">6</span>void init() {<br/>
+        </td></tr>
+        <tr class="chunk"><td>
+          <del class="d">7</del>    int x = 0;<br/>
+        </td></tr>
+        <tr class="k"><td>
+          <span class="a it">7</span>    int x = 42;<br/>
+        </td></tr>
+        <tr class="k"><td>
+          <span class="it">8</span>    doSomething(x);<br/>
+          <span class="it">9</span>}<br/>
+          <br/>--- <strong>98 unchanged lines hidden</strong> (<a href="#">view full</a>)
+          --- <br/><br/>
+          <span class="it">108</span>// more code<br/>
+          <span class="it">109</span>void cleanup() {<br/>
+        </td></tr>
+        <tr class="k chunk"><td>
+          <span class="a it">110</span>void newFunction() {}<br/>
+          <span class="a it">111</span>// end of addition<br/>
+        </td></tr>
+        <tr class="k"><td>
+          <span class="it">112</span>}<br/>
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>
 `;

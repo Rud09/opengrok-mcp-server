@@ -544,101 +544,163 @@ export function parseFileSymbols(html: string): FileSymbol[] {
 
 
 // ---------------------------------------------------------------------------
-// parseFileDiff — parse raw ED diff text from OpenGrok ?action=download
+// parseFileDiff — parse unified diff HTML from OpenGrok ?format=u
 // ---------------------------------------------------------------------------
 
+// Regex patterns for extracting line data from OpenGrok unified diff HTML.
+// Each line within a <td> is separated by <br/> and contains one of:
+const DEL_LINE_RE = /<del\s+class="d">(\d+)<\/del>([\s\S]*)/;     // deleted line
+const ADD_LINE_RE = /<span\s+class="a it">(\d+)<\/span>([\s\S]*)/; // added line
+const CTX_LINE_RE = /<span\s+class="it">(\d+)<\/span>([\s\S]*)/;   // context line
+
+/** Strip HTML tags from a string. */
+function stripTags(s: string): string {
+  return s.replace(/<[^>]+>/g, '');
+}
+
 /**
- * Parse the raw ED diff text returned by OpenGrok's `?action=download` endpoint
- * (which is delta.toString() from the jrcs library).
+ * Parse unified diff HTML from OpenGrok's `?format=u` endpoint.
  *
- * ED diff format:
- *   NcM        = change: lines N in old → M in new  (< = old, --- , > = new)
- *   NaM[,P]    = add: after line N in old, insert lines M..P in new (> = new)
- *   N[,P]dM    = delete: remove lines N..P from old  (< = old)
+ * The HTML structure (from diff.jsp):
+ * - `<del class="d">N</del>CONTENT` = deleted line (old file)
+ * - `<span class="a it">N</span>CONTENT` = added line (new file)
+ * - `<span class="it">N</span>CONTENT` = context line (unchanged)
+ * - Lines within each `<td>` are separated by `<br/>`
+ * - `--- N unchanged lines hidden` = collapsed context separator (hunk boundary)
  *
- * Returns FileDiff with structured hunks + standard unified diff string.
+ * Returns FileDiff with structured hunks (including context lines) + unified diff string.
  */
 export function parseFileDiff(
-  text: string,
+  html: string,
   project: string,
   path: string,
   rev1: string,
   rev2: string,
 ): FileDiff {
   const empty: FileDiff = { project, path, rev1, rev2, hunks: [], unifiedDiff: '', stats: { added: 0, removed: 0 } };
-  if (!text || !text.trim()) return empty;
+  if (!html || !html.trim()) return empty;
 
-  // Each ED diff block starts with a command line then content lines.
-  // Split on command lines: /^\d+(,\d+)?[acd]\d+(,\d+)?$/m
-  const commandRe = /^(\d+)(?:,(\d+))?([acd])(\d+)(?:,(\d+))?$/;
-  const lines = text.split('\n');
+  const root = parseHtml(html);
+  const difftable = root.querySelector('#difftable');
+  if (!difftable) return empty;
 
-  const hunks: DiffHunk[] = [];
-  let i = 0;
+  // Extract all diff lines from every <td> in the diff table
+  const allLines: DiffLine[] = [];
+  const tds = difftable.querySelectorAll('td');
 
-  while (i < lines.length) {
-    const cmd = lines[i].trim();
-    const m = commandRe.exec(cmd);
-    if (!m) { i++; continue; }
+  for (const td of tds) {
+    const fragments = td.innerHTML.split(/<br\s*\/?>/gi);
+    for (const frag of fragments) {
+      const trimmed = frag.trim();
+      if (!trimmed) continue;
+      // Skip collapsed-context separators
+      if (trimmed.includes('unchanged lines hidden')) continue;
+      // Skip plain separator markers (--- <br/>)
+      if (/^-{3}\s*$/.test(stripTags(trimmed).trim())) continue;
 
-    const [, os1, os2, op, ns1, ns2] = m;
-    const oldStart = parseInt(os1, 10);
-    const oldEnd   = os2 ? parseInt(os2, 10) : oldStart;
-    const newStart = parseInt(ns1, 10);
-    const newEnd   = ns2 ? parseInt(ns2, 10) : newStart;
-    i++;
-
-    const hunkLines: DiffLine[] = [];
-
-    if (op === 'c' || op === 'd') {
-      // Consume "< " lines (old/removed)
-      let oldNum = oldStart;
-      while (i < lines.length && lines[i].startsWith('< ')) {
-        hunkLines.push({ type: 'removed', oldLineNumber: oldNum++, content: lines[i].slice(2) });
-        i++;
+      const delM = DEL_LINE_RE.exec(trimmed);
+      if (delM) {
+        allLines.push({
+          type: 'removed',
+          oldLineNumber: parseInt(delM[1], 10),
+          content: decodeEntities(stripTags(delM[2]).trimEnd()),
+        });
+        continue;
       }
-      if (op === 'c') {
-        // Skip "---" separator
-        if (i < lines.length && lines[i] === '---') i++;
+
+      const addM = ADD_LINE_RE.exec(trimmed);
+      if (addM) {
+        allLines.push({
+          type: 'added',
+          newLineNumber: parseInt(addM[1], 10),
+          content: decodeEntities(stripTags(addM[2]).trimEnd()),
+        });
+        continue;
+      }
+
+      const ctxM = CTX_LINE_RE.exec(trimmed);
+      if (ctxM) {
+        allLines.push({
+          type: 'context',
+          newLineNumber: parseInt(ctxM[1], 10),
+          content: decodeEntities(stripTags(ctxM[2]).trimEnd()),
+        });
+        continue;
       }
     }
-
-    if (op === 'c' || op === 'a') {
-      // Consume "> " lines (new/added)
-      let newNum = newStart;
-      while (i < lines.length && lines[i].startsWith('> ')) {
-        hunkLines.push({ type: 'added', newLineNumber: newNum++, content: lines[i].slice(2) });
-        i++;
-      }
-    }
-
-    if (hunkLines.length === 0) continue;
-
-    const oldCount = op === 'a' ? 0 : (oldEnd - oldStart + 1);
-    const newCount = op === 'd' ? 0 : (newEnd - newStart + 1);
-
-    hunks.push({ oldStart, oldCount, newStart, newCount, lines: hunkLines });
   }
 
-  if (hunks.length === 0) return empty;
+  if (allLines.length === 0) return empty;
 
-  // Build unified diff string from hunks
-  const diffLines: string[] = [`--- a/${path}`, `+++ b/${path}`];
-  let added = 0, removed = 0;
+  // Group lines into hunks. A hunk boundary occurs when there's a gap in
+  // sequential new-line numbering (indicating collapsed unchanged lines).
+  const hunks: DiffHunk[] = [];
+  let currentHunkLines: DiffLine[] = [allLines[0]];
+
+  for (let i = 1; i < allLines.length; i++) {
+    const prev = allLines[i - 1];
+    const curr = allLines[i];
+    const prevNew = prev.newLineNumber ?? prev.oldLineNumber ?? 0;
+    const currNew = curr.newLineNumber ?? curr.oldLineNumber ?? 0;
+
+    // Gap > 1 in line numbering signals a new hunk (collapsed context between)
+    if (currNew - prevNew > 1 && curr.type === 'context' && (prev.type === 'context' || prev.type === 'added')) {
+      hunks.push(buildHunk(currentHunkLines));
+      currentHunkLines = [];
+    }
+    currentHunkLines.push(curr);
+  }
+  if (currentHunkLines.length > 0) {
+    hunks.push(buildHunk(currentHunkLines));
+  }
+
+  // Build unified diff string
+  const diffOutput: string[] = [`--- a/${path}`, `+++ b/${path}`];
+  let totalAdded = 0, totalRemoved = 0;
 
   for (const hunk of hunks) {
-    diffLines.push(`@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`);
+    diffOutput.push(`@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`);
     for (const line of hunk.lines) {
-      if (line.type === 'removed') { diffLines.push(`-${line.content}`); removed++; }
-      else if (line.type === 'added')   { diffLines.push(`+${line.content}`); added++; }
-      else                              { diffLines.push(` ${line.content}`); }
+      if (line.type === 'removed')    { diffOutput.push(`-${line.content}`); totalRemoved++; }
+      else if (line.type === 'added') { diffOutput.push(`+${line.content}`); totalAdded++; }
+      else                            { diffOutput.push(` ${line.content}`); }
     }
   }
 
   return {
     project, path, rev1, rev2,
     hunks,
-    unifiedDiff: diffLines.join('\n'),
-    stats: { added, removed },
+    unifiedDiff: diffOutput.join('\n'),
+    stats: { added: totalAdded, removed: totalRemoved },
   };
+}
+
+/**
+ * Build a DiffHunk from a sequence of DiffLines.
+ * Computes oldStart by tracking the offset between old and new line numbers.
+ */
+function buildHunk(lines: DiffLine[]): DiffHunk {
+  // Compute newStart from first line with a new line number
+  const firstNew = lines.find(l => l.newLineNumber !== undefined);
+  const newStart = firstNew?.newLineNumber ?? 1;
+
+  // Compute oldStart: use first deleted line if available, else derive from context
+  const firstDel = lines.find(l => l.type === 'removed');
+  const firstCtx = lines.find(l => l.type === 'context');
+  let oldStart: number;
+  if (firstDel?.oldLineNumber !== undefined) {
+    // Count context lines before the first delete to find where old file starts
+    const ctxBefore = lines.indexOf(firstDel);
+    oldStart = firstDel.oldLineNumber - ctxBefore;
+  } else if (firstCtx?.newLineNumber !== undefined) {
+    // Pure add hunk — old line matches context position
+    oldStart = firstCtx.newLineNumber;
+  } else {
+    oldStart = newStart;
+  }
+
+  const oldCount = lines.filter(l => l.type === 'removed' || l.type === 'context').length;
+  const newCount = lines.filter(l => l.type === 'added' || l.type === 'context').length;
+
+  return { oldStart, oldCount, newStart, newCount, lines };
 }
