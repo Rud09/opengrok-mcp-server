@@ -145,12 +145,31 @@ Look for all places in the code where ThreadPool is instantiated or referenced.
 | ---- | ---------------- | ------------- |
 | `opengrok_get_symbol_context` | 1) searches definition, 2) reads source, 3) fetches headers, 4) gets references | **~92% fewer tokens** |
 | `opengrok_search_and_read` | 1) executes search, 2) immediately fetches surrounding code context | **~92% fewer tokens** |
-| `opengrok_batch_search` | Combines 2-5 individual search queries | **~73% fewer tokens** |
-| `opengrok_index_health` | Checks latency and backend connectivity | Diagnostic utility |
+| `opengrok_batch_search` | Combines 2-5 individual search queries; deduplicates `file:line` hits across queries | **~73% fewer tokens** |
+| `opengrok_index_health` | Checks latency, backend connectivity, staleness score, and latency trend | Diagnostic utility |
 
 *(Note: The search functions support language filtering. Pass `file_type` as `java`, `cxx`, `python`, `golang`, etc.)*
 
-### 🧬 Code Mode (v5+) — For Large C++ Codebases
+### 🔍 Investigation & Analysis Tools (v5.5+)
+
+| Tool | Purpose |
+| ---- | ------- |
+| `opengrok_what_changed` | Recent line changes grouped by commit — author, date, SHA, changed lines with context |
+| `opengrok_dependency_map` | BFS traversal of `#include`/`import` chains up to configurable depth (1–3); directed graph with `uses`/`used_by` |
+| `opengrok_search_pattern` | Regex code search via `regexp=true`; returns `file:line:content` matches |
+| `opengrok_blame` | Git blame with line range (`start_line`/`end_line`); returns author, date, commit per line |
+| `opengrok_call_graph` | Call chain tracing via OpenGrok API v2 `/symbol/{name}/callgraph` (requires `OPENGROK_API_VERSION=v2`) |
+
+### 🧠 Memory & Session Tools (v5.4+)
+
+| Tool | Purpose |
+| ---- | ------- |
+| `opengrok_memory_status` | Shows both memory files (status, bytes, 3-line preview) — helps LLM decide whether to read |
+| `opengrok_read_memory` | Read `active-task.md` or `investigation-log.md` from the Living Document memory bank |
+| `opengrok_update_memory` | Write or append to memory files; auto-timestamps `investigation-log.md` entries |
+| `opengrok_get_task_result` | Poll async task status by task ID for long-running `opengrok_execute` sandbox jobs |
+
+### 🧬 Code Mode (v5+) — For Large Multi-Language Codebases
 
 Set `OPENGROK_CODE_MODE=true` to switch to a 2-tool interface optimised for multi-step investigations:
 
@@ -172,7 +191,14 @@ const content = env.opengrok.getFileContent(first.project, first.path, {
 return { callerFile: first.path, code: content.content };
 ```
 
-The sandbox also exposes a **Memory Bank** — 6 persistent markdown files (`AGENTS.md`, `codebase-map.md`, `symbol-index.md`, `known-patterns.md`, `investigation-log.md`, `active-context.md`) that survive across turns via `env.opengrok.readMemory()` / `env.opengrok.writeMemory()`.
+The sandbox exposes a **Living Document Memory Bank** — two persistent markdown files that survive across turns:
+
+| File | Size Limit | Purpose |
+| ---- | ---------- | ------- |
+| `active-task.md` | ≤ 4 KB | Current task state: `task:`, `last_symbol:`, `next_step:`, `open_questions:`, `status:` |
+| `investigation-log.md` | ≤ 32 KB | Append-only log of findings, grouped by `## YYYY-MM-DD HH:MM:` headings |
+
+Access via `env.opengrok.readMemory(filename)` / `env.opengrok.writeMemory(filename, content)` inside the sandbox, or via the `opengrok_read_memory` / `opengrok_update_memory` / `opengrok_memory_status` tools in classic mode. Delta encoding returns `[unchanged]` on repeated reads; richness-scored trimming keeps the most valuable log entries when space is tight.
 
 <details>
 <summary>⚙️ Automated Compilation Data (Optional)</summary>
@@ -212,24 +238,143 @@ The sandbox also exposes a **Memory Bank** — 6 persistent markdown files (`AGE
 
 </details>
 
-### Advanced Configuration (v5 — env vars)
+### Advanced Configuration (v6 — env vars)
 
 For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these environment variables:
 
+#### Core Settings
+
 | Variable | Values | Description |
 | :--- | :--- | :--- |
-| `OPENGROK_CONTEXT_BUDGET` | `minimal` (default) / `standard` / `generous` | Response size tier: 4 KB / 8 KB / 16 KB |
-| `OPENGROK_CODE_MODE` | `true` / `false` | Switch to 2-tool Code Mode for large C++ codebases |
-| `OPENGROK_MEMORY_BANK_DIR` | path | Directory for Living Document persistent files |
-| `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | `tsv` / `yaml` / `text` / `markdown` | Force a response format globally |
-| `OPENGROK_LOG_LEVEL` | `debug` / `info` | Verbose logging |
-| `OPENGROK_AUDIT_LOG_FILE` | path | File path for audit log compliance export |
+| `OPENGROK_BASE_URL` | URL | OpenGrok server base URL (required) |
+| `OPENGROK_USERNAME` | string | Authentication username |
+| `OPENGROK_PASSWORD` | string | Authentication password (or use `OPENGROK_PASSWORD_FILE`) |
+| `OPENGROK_PASSWORD_FILE` | path | Path to AES-256-CBC encrypted credential file |
+| `OPENGROK_PASSWORD_KEY` | string | Decryption key for `OPENGROK_PASSWORD_FILE` |
+| `OPENGROK_VERIFY_SSL` | `true` (default) / `false` | Disable TLS verification for self-signed certs |
+| `OPENGROK_TIMEOUT` | integer (seconds, default: `30`) | HTTP request timeout |
 
-VS Code users can set `opengrok-mcp.codeMode`, `opengrok-mcp.contextBudget`, and `opengrok-mcp.memoryBankDir` in VS Code settings instead.
+#### Code Mode & Performance
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_CODE_MODE` | `true` / `false` | Switch to 2-tool Code Mode (opengrok_api + opengrok_execute) |
+| `OPENGROK_CONTEXT_BUDGET` | `minimal` (default) / `standard` / `generous` | Response size tier: 4 KB / 8 KB / 16 KB |
+| `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | `tsv` / `yaml` / `text` / `markdown` | Force a response format globally for all tools |
+| `OPENGROK_DEFAULT_PROJECT` | string | Default project name to scope all searches |
+| `OPENGROK_DEFAULT_MAX_RESULTS` | integer (default: `25`) | Default search result limit |
+| `OPENGROK_LOCAL_COMPILE_DB_PATHS` | comma-separated paths | Paths to `compile_commands.json` for C/C++ compiler flag extraction |
+| `OPENGROK_ENABLE_CACHE_HINTS` | `true` / `false` (default: `false`) | Enable `cache-control: immutable` hints for prompt caching infrastructure |
+
+#### Memory Bank
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_MEMORY_BANK_DIR` | path | Override directory for `active-task.md` + `investigation-log.md` files |
+
+#### Rate Limiting
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_RATELIMIT_ENABLED` | `true` (default) / `false` | Enable token-bucket rate limiting |
+| `OPENGROK_RATELIMIT_RPM` | integer (default: `60`) | Global requests-per-minute limit |
+| `OPENGROK_PER_TOOL_RATELIMIT` | `tool:rpm,tool:rpm` | Per-tool RPM overrides (e.g., `opengrok_execute:10,opengrok_batch_search:20`) |
+
+#### Response Cache
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_CACHE_ENABLED` | `true` (default) / `false` | Enable TTL response cache |
+| `OPENGROK_CACHE_MAX_SIZE` | integer (default: `500`) | Max cache entries |
+| `OPENGROK_CACHE_SEARCH_TTL` | seconds (default: `300`) | Search result cache TTL |
+| `OPENGROK_CACHE_FILE_TTL` | seconds (default: `600`) | File content cache TTL |
+| `OPENGROK_CACHE_HISTORY_TTL` | seconds (default: `1800`) | File history cache TTL |
+| `OPENGROK_CACHE_PROJECTS_TTL` | seconds (default: `3600`) | Project list cache TTL |
+
+#### Security & Audit
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_AUDIT_LOG_FILE` | path | File path for structured audit log (CSV or JSON) |
+| `OPENGROK_ALLOWED_CLIENT_IDS` | comma-separated | Allowlisted MCP client IDs (enforcement pending SDK support) |
+
+#### MCP Protocol Features
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_ENABLE_ELICITATION` | `true` / `false` (default: `false`) | Enable project picker form when no project specified and >1 project exists |
+| `OPENGROK_ENABLE_FILES_API` | `true` / `false` (default: `false`) | Enable FileReferenceCache for `investigation-log.md` (SHA-256 content-addressed) |
+| `OPENGROK_SAMPLING_MODEL` | string | Model preference for MCP Sampling (error explanation, graph summarization) |
+| `OPENGROK_SAMPLING_MAX_TOKENS` | integer (default: `256`, max: `4096`) | Token budget for MCP Sampling responses |
+
+#### OpenGrok API
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_API_VERSION` | `v1` (default) / `v2` | OpenGrok REST API version (`v2` required for `opengrok_call_graph`) |
+
+#### HTTP Transport (v6.0+)
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_HTTP_PORT` | integer | Expose Streamable HTTP transport on this port (in addition to stdio) |
+| `OPENGROK_HTTP_MAX_SESSIONS` | integer (default: `100`) | Max concurrent HTTP sessions before new connections are rejected |
+| `OPENGROK_HTTP_AUTH_TOKEN` | string | Static Bearer token for HTTP endpoint authentication |
+| `OPENGROK_HTTP_CLIENT_ID` | string | OAuth 2.1 `client_credentials` client ID |
+| `OPENGROK_HTTP_CLIENT_SECRET` | string | OAuth 2.1 `client_credentials` client secret |
+| `OPENGROK_RBAC_TOKENS` | `tok1:role,tok2:role` | Role-based access tokens: `admin` / `developer` / `readonly` |
+
+#### Logging
+
+| Variable | Values | Description |
+| :--- | :--- | :--- |
+| `OPENGROK_LOG_LEVEL` | `debug` / `info` (default) | Verbose structured logging to stderr |
+
+VS Code users can set `opengrok-mcp.codeMode`, `opengrok-mcp.contextBudget`, `opengrok-mcp.memoryBankDir`, `opengrok-mcp.defaultProject`, `opengrok-mcp.responseFormatOverride`, and `opengrok-mcp.compileDbPaths` in VS Code settings instead.
 
 > **MCP SDK Note:** This version uses `@modelcontextprotocol/sdk` v1.28.0.
 > MCP SDK v2 is in pre-alpha; we will migrate when stable (expected Q3-Q4 2026).
 > v2 will enable enhanced completions for tool parameters and resource templates.
+
+---
+
+## HTTP Transport (v6.0+)
+
+By default the server communicates over **stdio** (standard MCP). For team deployments, you can also expose a **Streamable HTTP endpoint**:
+
+```bash
+OPENGROK_HTTP_PORT=3666 npm run serve
+# or add to your MCP client config:
+# "OPENGROK_HTTP_PORT": "3666"
+```
+
+### Session Management
+
+- Each HTTP client receives an isolated `McpServer` instance (per-session factory pattern)
+- Sessions expire after 30 minutes of inactivity; `OPENGROK_HTTP_MAX_SESSIONS` caps concurrent sessions (default: 100)
+- `GET /mcp/sessions` returns JSON with active session count and oldest session age
+
+### Authentication
+
+Configure one of the following:
+
+| Method | Config |
+| ------ | ------ |
+| **Static Bearer token** | `OPENGROK_HTTP_AUTH_TOKEN=mysecret` |
+| **OAuth 2.1 client credentials** | `OPENGROK_HTTP_CLIENT_ID=app` + `OPENGROK_HTTP_CLIENT_SECRET=secret` |
+| **RBAC with named roles** | `OPENGROK_RBAC_TOKENS='alice-token:admin,bot-token:readonly'` |
+
+OAuth 2.1 discovery is available at `/.well-known/oauth-authorization-server`.
+
+### RBAC Roles
+
+| Role | Permissions |
+| ---- | ----------- |
+| `admin` | Full access to all tools and configuration |
+| `developer` | All search, read, memory, and code tools |
+| `readonly` | Search and read tools only; no memory writes, no code execution |
+
+> **Fail-safe**: unknown or missing tokens default to `readonly`, not `admin`.
 
 ---
 
@@ -268,7 +413,7 @@ npm install
 
 # Code Quality & Tests
 npm run lint           # Strict TypeScript & ESLint validation
-npm test               # Execute the Vitest test suite (591 tests)
+npm test               # Execute the Vitest test suite (861 tests)
 npm run test:sandbox   # Sandbox integration tests (requires compile first)
 npm run test:coverage  # Coverage report (≥90% threshold)
 
