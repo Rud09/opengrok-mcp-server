@@ -24,6 +24,8 @@ export default defineConfig({
         // Sandbox files require a compiled worker — coverage is measured by npm run test:sandbox
         'src/server/sandbox.ts',
         'src/server/sandbox-worker.ts',
+        // Pure TypeScript interface re-exports — no runtime statements to measure
+        'src/server/api-types.ts',
       ],
       thresholds: {
         lines: 90,

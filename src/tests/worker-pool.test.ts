@@ -177,3 +177,16 @@ describe("SandboxWorkerPool", () => {
     await pool.drain();
   });
 });
+
+  it("9. release() is a no-op when handle is no longer alive (terminated worker)", async () => {
+    const pool = new SandboxWorkerPool();
+    const handle = await pool.acquire();
+    // Terminate the worker — isAlive becomes false
+    await handle.terminate();
+    // Releasing a dead handle should be a no-op (line 39 branch)
+    expect(() => pool.release(handle)).not.toThrow();
+    // Pool should remain empty
+    const second = await pool.acquire();
+    expect(second).not.toBe(handle); // spawned fresh
+    await pool.drain();
+  });

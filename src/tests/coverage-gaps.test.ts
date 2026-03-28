@@ -592,3 +592,69 @@ describe('config.ts edge cases', () => {
     expect(config.OPENGROK_PASSWORD).toBe('env-pass');
   });
 });
+
+// ---------------------------------------------------------------------------
+// models.ts — BlameArgs superRefine branch (line_end < line_start)
+// ---------------------------------------------------------------------------
+import { BlameArgs } from '../server/models.js';
+
+describe('BlameArgs superRefine validation', () => {
+  it('rejects when line_end is less than line_start', () => {
+    const result = BlameArgs.safeParse({
+      project: 'proj',
+      path: 'src/file.cpp',
+      line_start: 10,
+      line_end: 5,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some(i => i.path.includes('line_end'))).toBe(true);
+    }
+  });
+
+  it('accepts when line_end equals line_start', () => {
+    const result = BlameArgs.safeParse({
+      project: 'proj',
+      path: 'src/file.cpp',
+      line_start: 5,
+      line_end: 5,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts when line_end is greater than line_start', () => {
+    const result = BlameArgs.safeParse({
+      project: 'proj',
+      path: 'src/file.cpp',
+      line_start: 1,
+      line_end: 100,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// audit.ts — appendFileSync error fallback branch (lines 69-72)
+// ---------------------------------------------------------------------------
+import { auditLog, configureAuditLog } from '../server/audit.js';
+
+describe('auditLog file write error fallback', () => {
+  afterEach(() => {
+    configureAuditLog(undefined);
+    vi.restoreAllMocks();
+  });
+
+  it('writes fallback error to stderr when audit file path is unwritable', () => {
+    // Use a path whose parent directory does not exist — appendFileSync will throw ENOENT
+    configureAuditLog('/nonexistent_dir_xyz/audit.log');
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    auditLog({ type: 'config_load' });
+
+    // Should have written twice: once for the event, once for the fallback error
+    expect(stderrSpy).toHaveBeenCalledTimes(2);
+    const secondCall = stderrSpy.mock.calls[1][0] as string;
+    const parsed = JSON.parse(secondCall.trim());
+    expect(parsed.error).toBe('Failed to write audit log file');
+  });
+});

@@ -216,6 +216,35 @@ describe("Task 4.16 — Task Registry", () => {
     taskRegistry.clearAllTasks();
     expect(taskRegistry.listTasks().length).toBe(0);
   });
+
+  it("getTask returns null and removes a running task stuck for >30 minutes", () => {
+    const taskId = taskRegistry.createTask();
+    // Simulate 31 minutes in the future (past MAX_RUNNING_AGE_MS = 30 min)
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31 * 60 * 1000);
+    const result = taskRegistry.getTask(taskId);
+    expect(result).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it("getTask returns null and removes a completed task past TTL", () => {
+    const taskId = taskRegistry.createTask();
+    taskRegistry.completeTask(taskId, "done");
+    // Simulate 61 minutes in the future (past TASK_TTL_MS = 1 hour)
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61 * 60 * 1000);
+    const result = taskRegistry.getTask(taskId);
+    expect(result).toBeNull();
+    vi.restoreAllMocks();
+  });
+
+  it("listTasks prunes completed tasks past TTL", () => {
+    const taskId = taskRegistry.createTask();
+    taskRegistry.completeTask(taskId, "done");
+    // Simulate 61 minutes in the future (past TASK_TTL_MS = 1 hour)
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61 * 60 * 1000);
+    const tasks = taskRegistry.listTasks();
+    expect(tasks.find((t) => t.taskId === taskId)).toBeUndefined();
+    vi.restoreAllMocks();
+  });
 });
 
 // ---------------------------------------------------------------------------

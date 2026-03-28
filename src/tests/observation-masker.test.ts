@@ -98,4 +98,22 @@ describe('ObservationMasker', () => {
     const header = masker.getMaskedHistoryHeader();
     expect(header).toContain('END EARLIER OBSERVATIONS');
   });
+
+  it('summary extraction includes found count for search results with match text', () => {
+    masker.record(1, 'opengrok_search_code', 'ThreadPool', '5 matches found in 3 files');
+    for (let i = 2; i <= 11; i++) {
+      masker.record(i, 'opengrok_execute', `q${i}`, `r${i}`);
+    }
+    const header = masker.getMaskedHistoryHeader();
+    expect(header).toContain('found:5');
+  });
+
+  it('summary extraction returns fallback when no key entities found', () => {
+    masker.record(1, 'opengrok_execute', '', '');
+    for (let i = 2; i <= 11; i++) {
+      masker.record(i, 'opengrok_execute', `q${i}`, `r${i}`);
+    }
+    const header = masker.getMaskedHistoryHeader();
+    expect(header).toContain('no key entities extracted');
+  });
 });

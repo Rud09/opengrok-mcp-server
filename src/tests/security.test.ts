@@ -2,8 +2,11 @@
  * Tests for Task 4.10 (sandbox error sanitization) and Task 4.11 (audit logging).
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { sanitizeSandboxError } from '../server/sandbox.js';
-import { auditLog } from '../server/audit.js';
+import { auditLog, configureAuditLog, exportAuditLogAsCSV, exportAuditLogAsJSON } from '../server/audit.js';
 
 // ---------------------------------------------------------------------------
 // Task 4.10 — sanitizeSandboxError
@@ -142,5 +145,117 @@ describe('auditLog', () => {
     expect('tool' in parsed).toBe(false);
     expect('project' in parsed).toBe(false);
     expect('detail' in parsed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// exportAuditLogAsCSV / exportAuditLogAsJSON
+// ---------------------------------------------------------------------------
+
+describe('exportAuditLogAsCSV', () => {
+  let tmpFile: string;
+
+  afterEach(() => {
+    if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    configureAuditLog(undefined);
+  });
+
+  it('throws when file does not exist', () => {
+    expect(() => exportAuditLogAsCSV('/nonexistent/path/audit.log')).toThrow('Audit log file not found');
+  });
+
+  it('returns CSV header + rows from a log file', () => {
+    tmpFile = path.join(os.tmpdir(), `audit-test-${Date.now()}.log`);
+    fs.writeFileSync(tmpFile,
+      JSON.stringify({ ts: '2026-01-01T00:00:00.000Z', type: 'tool_invoke', tool: 'opengrok_search_code', project: 'myproj', detail: 'query' }) + '\n' +
+      JSON.stringify({ ts: '2026-01-01T00:00:01.000Z', type: 'config_load' }) + '\n'
+    );
+    const csv = exportAuditLogAsCSV(tmpFile);
+    const lines = csv.split('\n');
+    expect(lines[0]).toBe('timestamp,type,tool,project,detail');
+    expect(lines[1]).toContain('tool_invoke');
+    expect(lines[1]).toContain('opengrok_search_code');
+    expect(lines[2]).toContain('config_load');
+  });
+
+  it('skips malformed JSON lines without throwing', () => {
+    tmpFile = path.join(os.tmpdir(), `audit-test-${Date.now()}.log`);
+    fs.writeFileSync(tmpFile, 'NOT_JSON\n' + JSON.stringify({ ts: 'x', type: 'config_load' }) + '\n');
+    const csv = exportAuditLogAsCSV(tmpFile);
+    const lines = csv.split('\n');
+    expect(lines.length).toBe(2); // header + 1 valid row
+  });
+
+
+  it('handles entries with missing ts and type fields in CSV (covers ?? "" branches)', () => {
+    tmpFile = path.join(os.tmpdir(), `audit-test-${Date.now()}.log`);
+    // Entry with no ts, no type, no tool, no project, no detail
+    fs.writeFileSync(tmpFile, JSON.stringify({}) + '\n');
+    const csv = exportAuditLogAsCSV(tmpFile);
+    const lines = csv.split('\n');
+    // Should have header + 1 data row with all empty-string fields
+    expect(lines.length).toBe(2);
+    expect(lines[1]).toBe('"","","","",""');
+  });
+  it('escapes double-quotes in field values', () => {
+    tmpFile = path.join(os.tmpdir(), `audit-test-${Date.now()}.log`);
+    fs.writeFileSync(tmpFile, JSON.stringify({ ts: 'x', type: 'tool_invoke', detail: 'say "hello"' }) + '\n');
+    const csv = exportAuditLogAsCSV(tmpFile);
+    expect(csv).toContain('say ""hello""');
+  });
+});
+
+describe('exportAuditLogAsJSON', () => {
+  let tmpFile: string;
+
+  afterEach(() => {
+    if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    configureAuditLog(undefined);
+  });
+
+  it('throws when file does not exist', () => {
+    expect(() => exportAuditLogAsJSON('/nonexistent/path/audit.log')).toThrow('Audit log file not found');
+  });
+
+  it('returns JSON array from log file', () => {
+    tmpFile = path.join(os.tmpdir(), `audit-test-${Date.now()}.log`);
+    fs.writeFileSync(tmpFile,
+      JSON.stringify({ ts: '2026-01-01T00:00:00.000Z', type: 'tool_invoke' }) + '\n' +
+      JSON.stringify({ ts: '2026-01-01T00:00:01.000Z', type: 'config_load' }) + '\n'
+    );
+    const json = exportAuditLogAsJSON(tmpFile);
+    const entries = JSON.parse(json);
+    expect(Array.isArray(entries)).toBe(true);
+    expect(entries).toHaveLength(2);
+    expect(entries[0].type).toBe('tool_invoke');
+    expect(entries[1].type).toBe('config_load');
+  });
+
+  it('skips malformed JSON lines without throwing', () => {
+    tmpFile = path.join(os.tmpdir(), `audit-test-${Date.now()}.log`);
+    fs.writeFileSync(tmpFile, 'NOT_JSON\n' + JSON.stringify({ type: 'config_load' }) + '\n');
+    const json = exportAuditLogAsJSON(tmpFile);
+    const entries = JSON.parse(json);
+    expect(entries).toHaveLength(1);
+  });
+});
+
+describe('auditLog with file output', () => {
+  let tmpFile: string;
+
+  afterEach(() => {
+    if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    configureAuditLog(undefined);
+  });
+
+  it('appends to file when configureAuditLog is set', () => {
+    tmpFile = path.join(os.tmpdir(), `audit-test-${Date.now()}.log`);
+    configureAuditLog(tmpFile);
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    auditLog({ type: 'config_load' });
+    vi.restoreAllMocks();
+    const contents = fs.readFileSync(tmpFile, 'utf-8');
+    const parsed = JSON.parse(contents.trim());
+    expect(parsed.type).toBe('config_load');
   });
 });
