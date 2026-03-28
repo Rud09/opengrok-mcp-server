@@ -5,6 +5,7 @@
  * enabling opengrok_read_memory to return "[unchanged]" when content is identical
  * to the last read.
  */
+import { createHash } from "node:crypto";
 export class FileReferenceCache {
   private cache = new Map<string, { hash: string; uploadedAt: number }>();
 
@@ -32,7 +33,5 @@ export class FileReferenceCache {
 }
 
 export function simpleHash(s: string): string {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  return Math.abs(h).toString(36);
+  return createHash("sha256").update(s).digest("hex").slice(0, 16);
 }

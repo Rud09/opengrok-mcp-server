@@ -505,7 +505,7 @@ export class OpenGrokClient {
       return results;
     }
 
-    const url = buildSafeUrl(this.baseUrl, "api/v1/search");
+    const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/search`);
     url.searchParams.set(searchType, query);
     url.searchParams.set("maxresults", String(maxResults));
     if (projects?.length) {
@@ -562,7 +562,7 @@ export class OpenGrokClient {
     maxResults?: number;
   }): Promise<SearchResults> {
     const { pattern, projects, fileType, maxResults = 20 } = opts;
-    const url = buildSafeUrl(this.baseUrl, "api/v1/search");
+    const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/search`);
     url.searchParams.set("full", pattern);
     url.searchParams.set("regexp", "true");
     url.searchParams.set("maxresults", String(maxResults));
@@ -583,7 +583,7 @@ export class OpenGrokClient {
     project?: string,
     field: string = "full"
   ): Promise<{ suggestions: string[]; time: number; partialResult: boolean }> {
-    const url = buildSafeUrl(this.baseUrl, "api/v1/suggest");
+    const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/suggest`);
     url.searchParams.set(field, query);
     url.searchParams.set("field", field);
     url.searchParams.set("caret", String(query.length));
@@ -714,7 +714,7 @@ export class OpenGrokClient {
       return JSON.parse(cached) as FileSymbols;
     }
     /* v8 ignore stop */
-    const url = buildSafeUrl(this.baseUrl, "api/v1/file/defs");
+    const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/file/defs`);
     url.searchParams.set("path", "/" + normalizedPath);
     try {
       const response = await this.request(url, TIMEOUTS.file, "application/json");
@@ -807,7 +807,7 @@ export class OpenGrokClient {
 
   async testConnection(): Promise<boolean> {
     try {
-      const url = buildSafeUrl(this.baseUrl, "api/v1/projects");
+      const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/projects`);
       const response = await this.request(url, TIMEOUTS.suggest);
       if (!response.ok) return false;
       const json = await response.json() as unknown;

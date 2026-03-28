@@ -663,8 +663,9 @@ describe("RBAC for multi-user HTTP deployments (Task 5.10)", () => {
         });
         expect(toolRes.status).toBe(403);
         const errorJson = JSON.parse(toolRes.body);
-        expect(errorJson.error).toBe("Forbidden");
-        expect(errorJson.tool).toBe("opengrok_execute");
+        expect(errorJson.jsonrpc).toBe("2.0");
+        expect(errorJson.error.code).toBe(-32001);
+        expect(errorJson.error.data.tool).toBe("opengrok_execute");
       }
     } finally {
       close();
@@ -741,10 +742,11 @@ describe("RBAC for multi-user HTTP deployments (Task 5.10)", () => {
         });
         expect(toolRes.status).toBe(403);
         const errorJson = JSON.parse(toolRes.body);
-        expect(errorJson.error).toBe("Forbidden");
-        expect(errorJson.message).toContain("does not have permission");
-        expect(errorJson.tool).toBe("opengrok_update_memory");
-        expect(errorJson.role).toBe("readonly");
+        expect(errorJson.jsonrpc).toBe("2.0");
+        expect(errorJson.error.code).toBe(-32001);
+        expect(errorJson.error.message).toContain("does not have permission");
+        expect(errorJson.error.data.tool).toBe("opengrok_update_memory");
+        expect(errorJson.error.data.role).toBe("readonly");
       }
     } finally {
       close();

@@ -38,7 +38,7 @@ export interface SessionMetadata {
   createdAt: Date;
   lastActivity: Date;
   requestCount: number;
-  role?: string; // RBAC role (admin, developer, readonly)
+  role: Role; // RBAC role (admin, developer, readonly)
 }
 
 type TransportHandle = {
@@ -177,7 +177,7 @@ export async function startHttpTransport(
   const setCorsHeaders = (res: ServerResponse): void => {
     // RFC 8252 §8.3: relax CORS for loopback bindings so native apps on any
     // port can reach the server.
-    res.setHeader("Access-Control-Allow-Origin", loopback ? "*" : "*");
+    res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Authorization");
   };
@@ -185,11 +185,14 @@ export async function startHttpTransport(
   /** Extract bearer token from Authorization header and return role (or "admin" if no RBAC configured). */
   const extractRole = (req: IncomingMessage): Role => {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) return "admin"; // no token → admin by default
-
+    if (!auth?.startsWith("Bearer ")) {
+      // No token: open deployment (no RBAC configured) → admin; RBAC active → readonly (safe default)
+      return rbacConfig.tokens.size > 0 ? "readonly" : "admin";
+    }
     const token = auth.slice(7);
     const role = rbacConfig.tokens.get(token);
-    return role ?? "admin"; // unknown token → admin by default
+    // Unknown token should have been rejected by auth guard; fail safe to readonly
+    return role ?? "readonly";
   };
 
   /** Check if a request body is an MCP tool call, and validate RBAC if so. Returns null if permission denied. */
@@ -305,17 +308,18 @@ export async function startHttpTransport(
       }
 
       // Check RBAC permissions for existing sessions
-      const rbacCheck = checkRbacForToolCall(handle.meta.role as Role, body);
+      const rbacCheck = checkRbacForToolCall(handle.meta.role, body);
       if (!rbacCheck.allowed) {
         res.writeHead(403, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            error: "Forbidden",
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          error: {
+            code: -32001,
             message: `Role '${handle.meta.role}' does not have permission for tool '${rbacCheck.toolName}'`,
-            tool: rbacCheck.toolName,
-            role: handle.meta.role,
-          })
-        );
+            data: { tool: rbacCheck.toolName, role: handle.meta.role },
+          },
+          id: null,
+        }));
         return;
       }
 

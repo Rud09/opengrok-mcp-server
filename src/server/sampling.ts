@@ -73,13 +73,18 @@ export async function sampleOrNull(
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      let timerId: ReturnType<typeof setTimeout> | undefined;
       const sampling = Promise.race([
         callSampling(server, messages, { maxTokens, systemPrompt, model }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("sampling timeout")), timeoutMs)
-        ),
+        new Promise<never>((_, reject) => {
+          timerId = setTimeout(() => reject(new Error("sampling timeout")), timeoutMs);
+        }),
       ]);
-      return await sampling;
+      try {
+        return await sampling;
+      } finally {
+        clearTimeout(timerId);
+      }
     } catch {
       if (attempt === retries) return null;
       // Exponential backoff: 500 ms, 1 000 ms, 2 000 ms ...
