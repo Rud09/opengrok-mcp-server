@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Highlights
 
+### 🚀 v6.0 — Enterprise MCP: HTTP Transport, OAuth 2.1 & RBAC
+
+Streamable HTTP transport for team deployments, OAuth 2.1 with `client_credentials` grant, role-based access control (admin/developer/readonly), OpenGrok API v2 support, and full MCP 2025-06-18 spec compliance: structured tool output (`outputSchema` + `structuredContent`), MCP Resources, Prompts, Elicitation, and Sampling. 25 tools total, 861 tests.
+
 ### 🧬 v5.0 — Code Mode: Pure-WASM Sandbox + Token Optimization
 
 Code Mode sandbox built on `@sebastianwessel/quickjs` — pure JS + WASM, zero native compilation, no `node-gyp`, works everywhere including `npx` and enterprise Linux. Full token optimization suite: three context budget tiers, compact TSV/YAML/text formats, Living Document memory bank, and session observation masker for long investigations.
+
+- 🔬 **v5.6** — MCP SDK 1.28.0, `outputSchema` + `structuredContent` on 10 tools, MCP Resources/Prompts/Elicitation/Sampling, `opengrok_blame`, per-tool rate limiting, structured audit logging, sandbox sanitization.
+- ⚡ **v5.5** — Sandbox worker pool, 4 new tools (`opengrok_what_changed`, `opengrok_dependency_map`, `opengrok_search_pattern`, enhanced `opengrok_index_health`), C++ specialized skill (489 lines), TSV batch format.
+- 🗃️ **v5.4** — 2-file memory bank (active-task.md + investigation-log.md), rewritten SERVER_INSTRUCTIONS, `opengrok_memory_status` tool, compact Code Mode descriptions, new session/investigation skills.
+- 🐛 **v5.3.2** — P0 bug fixes: activation events, ObservationMasker injection layer, SERVER_INSTRUCTIONS dead references, UI polish.
 
 ### 🏗️ v4.0 — Modern MCP SDK & Breaking Tool Rename
 
@@ -28,15 +37,6 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
-
-### 🚀 v6.0 — Enterprise MCP: HTTP Transport, OAuth 2.1 & RBAC
-
-Streamable HTTP transport for team deployments, OAuth 2.1 with `client_credentials` grant, RBAC (admin/developer/readonly), OpenGrok API v2 support, and full MCP 2025-06-18 spec compliance: structured tool output, MCP Resources, Prompts, Elicitation, and Sampling.
-
-- 🔬 **v5.6** — MCP SDK 1.28.0, `outputSchema` + `structuredContent` on 10 tools, MCP Resources/Prompts/Elicitation/Sampling, `opengrok_blame`, per-tool rate limiting, audit logging, sandbox sanitization.
-- ⚡ **v5.5** — Sandbox worker pool, 4 new tools (`opengrok_what_changed`, `opengrok_dependency_map`, `opengrok_search_pattern`, enhanced `opengrok_index_health`), C++ specialized skill, TSV batch format.
-- 🗃️ **v5.4** — 2-file memory bank (active-task.md + investigation-log.md), rewritten SERVER_INSTRUCTIONS, `opengrok_memory_status` tool, compact Code Mode descriptions, new session/investigation skills.
-- 🐛 **v5.3.2** — P0 bug fixes: activation events, ObservationMasker injection layer, SERVER_INSTRUCTIONS dead references, UI polish.
 
 ---
 
