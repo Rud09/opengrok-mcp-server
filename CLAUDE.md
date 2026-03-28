@@ -84,7 +84,7 @@ Manages credentials (VS Code SecretStorage + encrypted temp files), registers th
 | `OPENGROK_CODE_MODE` | Enable 2-tool Code Mode |
 | `OPENGROK_MEMORY_BANK_DIR` | Override memory-bank directory |
 | `OPENGROK_DEFAULT_PROJECT` | Default project to scope searches to |
-| `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | Force `markdown` or `json` for all tool responses |
+| `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | Force `markdown`, `json`, `tsv`, `toon`, `yaml`, or `text` for all tool responses |
 | `OPENGROK_LOCAL_COMPILE_DB_PATHS` | Comma-separated paths to `compile_commands.json` |
 | `OPENGROK_ENABLE_CACHE_HINTS` | `true`/`false` — prompt caching infrastructure flag |
 | `OPENGROK_API_VERSION` | `v1` (default) / `v2` — OpenGrok REST API version |

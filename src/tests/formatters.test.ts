@@ -8,6 +8,8 @@ import {
   formatAnnotate,
   formatBatchSearchResults,
   formatBatchSearchResultsTSV,
+  formatSearchResultsTOON,
+  formatBatchSearchResultsTOON,
   formatSearchAndRead,
   formatSymbolContext,
   formatFileSymbols,
@@ -782,5 +784,125 @@ describe('formatFileDiff', () => {
     const output = formatFileDiff(shortRevDiff, 'markdown');
     expect(output).toContain('abc');
     expect(output).toContain('def');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatSearchResultsTOON
+// ---------------------------------------------------------------------------
+
+describe('formatSearchResultsTOON', () => {
+  const mockResults = {
+    query: 'EventLoop',
+    searchType: 'defs',
+    totalCount: 2,
+    timeMs: 10,
+    startIndex: 0,
+    endIndex: 2,
+    results: [
+      {
+        project: 'myproject',
+        path: 'src/EventLoop.cpp',
+        matches: [{ lineNumber: 45, lineContent: 'class EventLoop {' }],
+      },
+      {
+        project: 'myproject',
+        path: 'src/EventLoop.h',
+        matches: [{ lineNumber: 12, lineContent: 'class EventLoop;' }],
+      },
+    ],
+  };
+
+  it('includes header with query and match count', () => {
+    const output = formatSearchResultsTOON(mockResults);
+    expect(output).toContain('Search: "EventLoop"');
+    expect(output).toContain('2 matches');
+  });
+
+  it('includes file paths and content', () => {
+    const output = formatSearchResultsTOON(mockResults);
+    expect(output).toContain('EventLoop.cpp');
+    expect(output).toContain('EventLoop.h');
+    expect(output).toContain('class EventLoop');
+  });
+
+  it('returns no-results message for empty results', () => {
+    const empty = { ...mockResults, results: [], totalCount: 0 };
+    const output = formatSearchResultsTOON(empty);
+    expect(output).toContain('No results found');
+  });
+
+  it('is significantly shorter than JSON for uniform data', () => {
+    const jsonOutput = JSON.stringify(mockResults.results, null, 2);
+    const toonOutput = formatSearchResultsTOON(mockResults);
+    expect(toonOutput.length).toBeLessThan(jsonOutput.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatBatchSearchResultsTOON
+// ---------------------------------------------------------------------------
+
+describe('formatBatchSearchResultsTOON', () => {
+  const mockBatch = [
+    {
+      query: 'EventLoop',
+      searchType: 'defs',
+      results: {
+        query: 'EventLoop',
+        searchType: 'defs',
+        totalCount: 1,
+        timeMs: 5,
+        startIndex: 0,
+        endIndex: 1,
+        results: [
+          {
+            project: 'myproject',
+            path: 'src/EventLoop.cpp',
+            matches: [{ lineNumber: 45, lineContent: 'class EventLoop {' }],
+          },
+        ],
+      },
+    },
+    {
+      query: 'Timer',
+      searchType: 'full',
+      results: {
+        query: 'Timer',
+        searchType: 'full',
+        totalCount: 1,
+        timeMs: 3,
+        startIndex: 0,
+        endIndex: 1,
+        results: [
+          {
+            project: 'myproject',
+            path: 'src/Timer.h',
+            matches: [{ lineNumber: 10, lineContent: 'class Timer;' }],
+          },
+        ],
+      },
+    },
+  ];
+
+  it('includes batch header with query count', () => {
+    const output = formatBatchSearchResultsTOON(mockBatch);
+    expect(output).toContain('Batch: 2 queries');
+    expect(output).toContain('2 total matches');
+  });
+
+  it('includes data from both queries', () => {
+    const output = formatBatchSearchResultsTOON(mockBatch);
+    expect(output).toContain('EventLoop');
+    expect(output).toContain('Timer');
+  });
+
+  it('returns no-results message for empty batch', () => {
+    const empty = [{ query: 'nothing', searchType: 'full', results: {
+      query: 'nothing', searchType: 'full', totalCount: 0, timeMs: 1,
+      startIndex: 0, endIndex: 0, results: [],
+    }}];
+    const output = formatBatchSearchResultsTOON(empty);
+    expect(output).toContain('No results found');
   });
 });

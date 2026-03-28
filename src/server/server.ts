@@ -21,6 +21,7 @@ import { parsePerToolLimits, parseAllowedClientIds, getConfigDirectory, checkCre
 import {
   formatAnnotate,
   formatBatchSearchResults,
+  formatBatchSearchResultsTOON,
   formatBatchSearchResultsTSV,
   formatBlame,
   formatCompileInfo,
@@ -33,6 +34,7 @@ import {
   formatProjectsList,
   formatSearchAndRead,
   formatSearchResults,
+  formatSearchResultsTOON,
   formatSearchResultsTSV,
   formatSymbolContext,
   formatSymbolContextYAML,
@@ -227,8 +229,10 @@ NEVER: get_file_content on file > 50 lines without start_line + end_line
 ## CODE MODE — opengrok_execute
 - Call opengrok_api ONCE at session start for the API spec
 - All env.opengrok.* calls are synchronous from your code's perspective
+- Results are returned directly — no polling required
 - Use env.opengrok.batchSearch([...]) for parallel searches — do NOT write Promise.all()
 - Filter data inside the sandbox — only return what is needed
+- Return strings, not objects (see return_rules in the API spec)
 
 ## MEMORY — MANDATORY BEFORE FINAL ANSWER
 You MUST do both of these before responding to the user:
@@ -507,6 +511,13 @@ function formatResponse(
   };
 }
 
+/** Pick the best search formatter based on the resolved format. */
+function pickSearchFormatter(fmt: ResponseFormat): (r: SearchResults) => string {
+  if (fmt === "toon") return formatSearchResultsTOON;
+  if (fmt === "tsv") return formatSearchResultsTSV;
+  return formatSearchResults;
+}
+
 // ---------------------------------------------------------------------------
 // Apply default project helper
 // ---------------------------------------------------------------------------
@@ -546,7 +557,7 @@ async function executeSearchCode(
     args.file_type
   );
   const fmt = selectFormat("search", args.response_format);
-  const text = fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+  const text = pickSearchFormatter(fmt)(results);
   return { text, structured: results };
 }
 
@@ -685,9 +696,11 @@ async function executeBatchSearch(
 
   const fmt = selectFormat("search", args.response_format);
   const text =
-    fmt === "tsv"
-      ? formatBatchSearchResultsTSV(deduped)
-      : formatBatchSearchResults(deduped);
+    fmt === "toon"
+      ? formatBatchSearchResultsTOON(deduped)
+      : fmt === "tsv"
+        ? formatBatchSearchResultsTSV(deduped)
+        : formatBatchSearchResults(deduped);
 
   return {
     text,
@@ -994,7 +1007,7 @@ async function dispatchTool(
         maxResults: args.max_results,
       });
       const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
-      return fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+      return pickSearchFormatter(fmt)(results);
     }
 
     case "opengrok_get_file_content": {
@@ -1308,13 +1321,16 @@ function registerMemoryTools(
           if (ref === null) {
             return { content: [{ type: "text", text: "[unchanged]" }] };
           }
-          const content = await memoryBank.read(args.filename);
+          const content = await memoryBank.readCompressed(args.filename);
           if (!content) {
             return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
           }
           return { content: [{ type: "text", text: capResponse(content) }] };
         }
-        const content = await memoryBank.read(args.filename);
+        // Delta encoding: returns "[unchanged]" when hash matches last read
+        const content = args.filename === "investigation-log.md"
+          ? await memoryBank.readCompressed(args.filename)
+          : await memoryBank.readWithDelta(args.filename);
         if (!content) {
           return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
         }
@@ -1467,70 +1483,60 @@ function registerCodeModeTools(
       if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_execute");
       const currentTurn = ++turn;
 
-      // Create task immediately and execute asynchronously
-      const taskId = taskRegistry.createTask();
-
-      void (async () => {
+      try {
+        const budget = BUDGET_LIMITS[getActiveBudget()];
+        const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
+        const workerHandle = await workerPool.acquire();
+        let result: string;
         try {
-          const budget = BUDGET_LIMITS[getActiveBudget()];
-          const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
-          const workerHandle = await workerPool.acquire();
-          let result: string;
-          try {
-            result = await executeInSandbox(
-              args.code,
-              sandboxApi,
-              (r) => capCodeModeResult(r, budget.maxResponseBytes),
-              budget.maxResponseBytes,
-              workerHandle
-            );
-          } finally {
-            workerPool.release(workerHandle);
-          }
-
-          // When execution fails, use MCP Sampling to get an LLM-generated explanation
-          if (result.startsWith("Error:")) {
-            const suggestion = await sampleOrNull(server, [
-              {
-                role: "user",
-                content: {
-                  type: "text",
-                  text: `The following JavaScript code failed in a sandbox:\n\`\`\`js\n${args.code}\n\`\`\`\n${result}\n\nBriefly explain what went wrong and suggest a fix.`,
-                },
-              },
-            ], { maxTokens: config.OPENGROK_SAMPLING_MAX_TOKENS, systemPrompt: "You are a code debugging assistant for OpenGrok. Be concise.", model: config.OPENGROK_SAMPLING_MODEL, retries: 2 });
-            taskRegistry.completeTask(taskId, suggestion ? `${result}\n\nSuggestion: ${suggestion}` : result);
-            return;
-          }
-
-          // Record in masker for future turns
-          masker.record(
-            currentTurn,
-            "opengrok_execute",
-            args.code.slice(0, 80).replace(/\n/g, " "),
-            result
+          result = await executeInSandbox(
+            args.code,
+            sandboxApi,
+            (r) => capCodeModeResult(r, budget.maxResponseBytes),
+            budget.maxResponseBytes,
+            workerHandle
           );
-
-          const historyHeader = masker.getMaskedHistoryHeader();
-          let finalResult = historyHeader
-            ? `${historyHeader}\n---\n${result}`
-            : result;
-
-          executeCallCount++;
-          if (executeCallCount % 5 === 0 && executeCallCount > 3) {
-            finalResult += "\n\n> Memory: Update active-task.md before answering.";
-          }
-
-          taskRegistry.completeTask(taskId, finalResult);
-        } catch (err) {
-          taskRegistry.failTask(taskId, String(err));
+        } finally {
+          workerPool.release(workerHandle);
         }
-      })();
 
-      return {
-        content: [{ type: "text", text: `Task started. Poll with opengrok_get_task_result({ taskId: "${taskId}" })` }],
-        structuredContent: { taskId, status: "running" },
-      };
+        // When execution fails, use MCP Sampling to get an LLM-generated explanation
+        if (result.startsWith("Error:")) {
+          const suggestion = await sampleOrNull(server, [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: `The following JavaScript code failed in a sandbox:\n\`\`\`js\n${args.code}\n\`\`\`\n${result}\n\nBriefly explain what went wrong and suggest a fix.`,
+              },
+            },
+          ], { maxTokens: config.OPENGROK_SAMPLING_MAX_TOKENS, systemPrompt: "You are a code debugging assistant for OpenGrok. Be concise.", model: config.OPENGROK_SAMPLING_MODEL, retries: 2 });
+          const errorResult = suggestion ? `${result}\n\nSuggestion: ${suggestion}` : result;
+          return { content: [{ type: "text", text: errorResult }] };
+        }
+
+        // Record in masker for future turns
+        masker.record(
+          currentTurn,
+          "opengrok_execute",
+          args.code.slice(0, 80).replace(/\n/g, " "),
+          result
+        );
+
+        const historyHeader = masker.getMaskedHistoryHeader();
+        let finalResult = historyHeader
+          ? `${historyHeader}\n---\n${result}`
+          : result;
+
+        executeCallCount++;
+        if (executeCallCount % 5 === 0 && executeCallCount > 3) {
+          finalResult += "\n\n> Memory: Update active-task.md before answering.";
+        }
+
+        return { content: [{ type: "text", text: finalResult }] };
+      } catch (err) {
+        return makeToolError("opengrok_execute", err);
+      }
     }
   );
 
@@ -1677,7 +1683,7 @@ function registerLegacyTools(
           args.start_index
         );
         const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
-        const text = fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+        const text = pickSearchFormatter(fmt)(results);
         return { content: [{ type: "text", text: capResponse(text) }] };
       } catch (err) {
         return makeToolError("opengrok_find_file", err);
@@ -1707,7 +1713,7 @@ function registerLegacyTools(
           maxResults: parsed.max_results,
         });
         const fmt = selectFormat("search", parsed.response_format as ResponseFormat | undefined);
-        const text = fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+        const text = pickSearchFormatter(fmt)(results);
         return { content: [{ type: "text", text: capResponse(text) }] };
       } catch (err) {
         return makeToolError("opengrok_search_pattern", err);
@@ -2185,7 +2191,7 @@ function registerLegacyTools(
         const parsed = CallGraphArgs.parse(args as unknown as Record<string, unknown>);
         const results = await client.getCallGraph(parsed.project, parsed.symbol);
         const fmt = selectFormat("search", parsed.response_format as ResponseFormat | undefined);
-        const text = fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+        const text = pickSearchFormatter(fmt)(results);
         const structured = {
           _meta: {
             tool: "opengrok_call_graph",

@@ -178,12 +178,8 @@ describe('Code Mode — opengrok_execute tool', () => {
     const { client } = await createCodeModeClient(bank);
     const result = await client.callTool({ name: 'opengrok_execute', arguments: { code: 'return 42;' } });
     expect(vi.mocked(executeInSandbox)).toHaveBeenCalled();
-    // Execution is async — poll for the task result
-    const sc = result.structuredContent as { taskId: string } | undefined;
-    const taskId = sc?.taskId ?? (result.content as { type: string; text: string }[])[0]?.text?.match(/taskId: "([^"]+)"/)?.[1] ?? '';
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    const taskResult = await client.callTool({ name: 'opengrok_get_task_result', arguments: { taskId } });
-    const text = (taskResult.content as { type: string; text: string }[])[0]?.text ?? '';
+    // Execution is now synchronous — result returned directly
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
     expect(text).toContain('mock output');
     await client.close();
   });

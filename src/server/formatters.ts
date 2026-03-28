@@ -8,6 +8,7 @@
  */
 
 import yaml from "js-yaml";
+import { encode as toonEncode } from "@toon-format/toon";
 import type {
   AnnotatedFile,
   DirectoryEntry,
@@ -24,7 +25,7 @@ import type { CompileInfo } from "./local/compile-info.js";
 // Response format type + global format selector
 // ---------------------------------------------------------------------------
 
-export type ResponseFormat = "markdown" | "json" | "tsv" | "yaml" | "text" | "auto";
+export type ResponseFormat = "markdown" | "json" | "tsv" | "yaml" | "text" | "toon" | "auto";
 
 /**
  * Resolve the effective format for a given response type.
@@ -37,7 +38,7 @@ export function selectFormat(
 ): ResponseFormat {
   // Global override (for rollback / experimentation)
   const globalOverride = process.env.OPENGROK_RESPONSE_FORMAT_OVERRIDE?.trim().toLowerCase();
-  const validFormats: ResponseFormat[] = ["markdown", "json", "tsv", "yaml", "text", "auto"];
+  const validFormats: ResponseFormat[] = ["markdown", "json", "tsv", "yaml", "text", "toon", "auto"];
   const override = validFormats.includes(globalOverride as ResponseFormat)
     ? (globalOverride as ResponseFormat)
     : undefined;
@@ -651,6 +652,40 @@ export function formatBatchSearchResultsTSV(
   return rows.join("\n");
 }
 
+/**
+ * Format batch search results as TOON for maximum token density.
+ */
+export function formatBatchSearchResultsTOON(
+  queryResults: Array<{
+    query: string;
+    searchType: string;
+    results: SearchResults;
+  }>
+): string {
+  const totalMatches = queryResults.reduce(
+    (s, r) => s + r.results.totalCount,
+    0
+  );
+  const matches: { query: string; type: string; path: string; project: string; line: number; content: string }[] = [];
+  for (const { query, searchType, results } of queryResults) {
+    for (const result of results.results) {
+      for (const match of result.matches.slice(0, 5)) {
+        matches.push({
+          query,
+          type: searchType,
+          path: result.path,
+          project: result.project,
+          line: match.lineNumber,
+          content: stripHtmlTags(match.lineContent).trim().replace(/,/g, ";"),
+        });
+      }
+    }
+  }
+  const header = `# Batch: ${queryResults.length} queries, ${totalMatches.toLocaleString()} total matches\n`;
+  if (matches.length === 0) return `${header}No results found.`;
+  return header + toonEncode({ matches });
+}
+
 // ---------------------------------------------------------------------------
 // Compound: get_symbol_context
 // ---------------------------------------------------------------------------
@@ -867,6 +902,32 @@ export function formatSearchResultsTSV(results: SearchResults): string {
   }
 
   return rows.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// TOON: Token-Oriented Object Notation (~40-60% fewer tokens than JSON)
+// ---------------------------------------------------------------------------
+
+/**
+ * Format search results as TOON — optimal for uniform arrays of matches.
+ * TOON uses explicit {field} headers and CSV-style rows for maximum token
+ * density while maintaining LLM parseability.
+ */
+export function formatSearchResultsTOON(results: SearchResults): string {
+  const matches: { path: string; project: string; line: number; content: string }[] = [];
+  for (const result of results.results) {
+    for (const match of result.matches.slice(0, 5)) {
+      matches.push({
+        path: result.path,
+        project: result.project,
+        line: match.lineNumber,
+        content: stripHtmlTags(match.lineContent).trim().replace(/,/g, ";"),
+      });
+    }
+  }
+  const header = `# Search: "${results.query}" -- ${results.totalCount.toLocaleString()} matches (${results.timeMs}ms)\n`;
+  if (matches.length === 0) return `${header}No results found.`;
+  return header + toonEncode({ matches });
 }
 
 // ---------------------------------------------------------------------------

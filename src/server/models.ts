@@ -9,12 +9,13 @@ import { z } from "zod";
 // Extended with compact formats: tsv (tabular, ~50% token savings), yaml (hierarchical, ~35% savings),
 // text (raw code, minimal overhead), auto (server picks best format per response type).
 const RESPONSE_FORMAT = z
-  .enum(["markdown", "json", "tsv", "yaml", "text", "auto"])
+  .enum(["markdown", "json", "tsv", "yaml", "text", "toon", "auto"])
   .default("markdown")
   .optional()
   .describe(
     'Output format. "markdown" (default, LLM-optimised), "json" (programmatic), ' +
-    '"tsv" (tabular search results, most compact), "yaml" (hierarchical data, best for symbol context), ' +
+    '"tsv" (tabular search results, most compact), "toon" (Token-Oriented Object Notation, ~40% fewer tokens than JSON for search results), ' +
+    '"yaml" (hierarchical data, best for symbol context), ' +
     '"text" (raw code, no markdown framing), "auto" (server selects best format)'
   );
 

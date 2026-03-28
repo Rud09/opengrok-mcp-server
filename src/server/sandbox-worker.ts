@@ -108,6 +108,7 @@ async function runJob(
       indexHealth:      makeMethod("indexHealth"),
       readMemory:       makeMethod("readMemory"),
       writeMemory:      makeMethod("writeMemory"),
+      getFileDiff:      makeMethod("getFileDiff"),
     },
   };
 

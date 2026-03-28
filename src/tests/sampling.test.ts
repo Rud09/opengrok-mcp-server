@@ -332,17 +332,12 @@ describe('opengrok_execute — sampling error explanation', () => {
     const client = new Client({ name: 'test-client', version: '1.0' });
     await client.connect(clientTransport);
 
-    const execResult = await client.callTool({ name: 'opengrok_execute', arguments: { code: 'return foo;' } });
-    // Execution is async — poll for the task result
-    const sc = execResult.structuredContent as { taskId: string } | undefined;
-    const taskId = sc?.taskId ?? (execResult.content as { type: string; text: string }[])[0]?.text?.match(/taskId: "([^"]+)"/)?.[1] ?? '';
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const result = await client.callTool({ name: 'opengrok_get_task_result', arguments: { taskId } });
+    // Execution is now synchronous — result returned directly
+    const result = await client.callTool({ name: 'opengrok_execute', arguments: { code: 'return foo;' } });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
-    const parsed = JSON.parse(text);
-    expect(parsed.result).toContain('Error: ReferenceError');
-    expect(parsed.result).toContain('Suggestion:');
-    expect(parsed.result).toContain('foo is not declared in this scope.');
+    expect(text).toContain('Error: ReferenceError');
+    expect(text).toContain('Suggestion:');
+    expect(text).toContain('foo is not declared in this scope.');
   });
 
   it('returns plain error when sampling is not available', async () => {
@@ -362,17 +357,11 @@ describe('opengrok_execute — sampling error explanation', () => {
     const client = new Client({ name: 'test-client', version: '1.0' });
     await client.connect(clientTransport);
 
-    const execResult = await client.callTool({ name: 'opengrok_execute', arguments: { code: 'return foo;' } });
-    // Execution is async — poll for the task result
-    const sc = execResult.structuredContent as { taskId: string } | undefined;
-    const taskId = sc?.taskId ?? (execResult.content as { type: string; text: string }[])[0]?.text?.match(/taskId: "([^"]+)"/)?.[1] ?? '';
-    // Wait for retries with backoff to complete (~1500ms)
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    const result = await client.callTool({ name: 'opengrok_get_task_result', arguments: { taskId } });
+    // Execution is now synchronous — result returned directly
+    const result = await client.callTool({ name: 'opengrok_execute', arguments: { code: 'return foo;' } });
     const text = (result.content as Array<{ type: string; text: string }>)[0].text;
-    const parsed = JSON.parse(text);
-    expect(parsed.result).toContain('Error: ReferenceError');
-    expect(parsed.result).not.toContain('Suggestion:');
+    expect(text).toContain('Error: ReferenceError');
+    expect(text).not.toContain('Suggestion:');
   });
 
   it('does not call sampling when execution succeeds', async () => {

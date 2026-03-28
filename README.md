@@ -261,7 +261,7 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | :--- | :--- | :--- |
 | `OPENGROK_CODE_MODE` | `true` / `false` | Switch to 2-tool Code Mode (opengrok_api + opengrok_execute) |
 | `OPENGROK_CONTEXT_BUDGET` | `minimal` (default) / `standard` / `generous` | Response size tier: 4 KB / 8 KB / 16 KB |
-| `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | `tsv` / `yaml` / `text` / `markdown` | Force a response format globally for all tools |
+| `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | `tsv` / `toon` / `yaml` / `text` / `markdown` | Force a response format globally for all tools |
 | `OPENGROK_DEFAULT_PROJECT` | string | Default project name to scope all searches |
 | `OPENGROK_DEFAULT_MAX_RESULTS` | integer (default: `25`) | Default search result limit |
 | `OPENGROK_LOCAL_COMPILE_DB_PATHS` | comma-separated paths | Paths to `compile_commands.json` for C/C++ compiler flag extraction |
@@ -414,7 +414,7 @@ npm install
 
 # Code Quality & Tests
 npm run lint           # Strict TypeScript & ESLint validation
-npm test               # Execute the Vitest test suite (893 tests)
+npm test               # Execute the Vitest test suite (919 tests)
 npm run test:sandbox   # Sandbox integration tests (requires compile first)
 npm run test:coverage  # Coverage report (≥90% threshold)
 

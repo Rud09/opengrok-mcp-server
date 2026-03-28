@@ -219,7 +219,7 @@ const content = env.opengrok.getFileContent(first.project, first.path, {
   startLine: Math.max(1, first.matches[0].lineNumber - 5),
   endLine: first.matches[0].lineNumber + 10
 });
-return { callerFile: first.path, code: content.content };
+return \`\${first.path}:\${first.matches[0].lineNumber}\\n\${content.content}\`;
 `.trim(),
 };
 
