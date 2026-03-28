@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🚀 v6.0 — Enterprise MCP: HTTP Transport, OAuth 2.1 & RBAC
 
-Streamable HTTP transport for team deployments, OAuth 2.1 with `client_credentials` grant, role-based access control (admin/developer/readonly), OpenGrok API v2 support, and full MCP 2025-06-18 spec compliance: structured tool output (`outputSchema` + `structuredContent`), MCP Resources, Prompts, Elicitation, and Sampling. 25 tools total, 861 tests.
+Streamable HTTP transport for team deployments, OAuth 2.1 with `client_credentials` grant, role-based access control (admin/developer/readonly), OpenGrok API v2 support, and full MCP 2025-06-18 spec compliance: structured tool output (`outputSchema` + `structuredContent`), MCP Resources, Prompts, Elicitation, and Sampling. **26 tools total, 893 tests.**
+
+- 🔍 **v6.1** — `opengrok_get_file_diff` (tool 26): unified diff with context lines via `?format=u` HTML parsing; Code Mode `return_rules` micro-optimizations; typed `CodeModeAnnotations` for interleaved thinking.
 
 ### 🧬 v5.0 — Code Mode: Pure-WASM Sandbox + Token Optimization
 
@@ -37,6 +39,33 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [6.1.0] - 2026-03-28
+
+### 🔍 New Tool: `opengrok_get_file_diff`
+
+- **`opengrok_get_file_diff`** (tool 26): fetch the unified diff between any two revisions of a file
+- Parses OpenGrok's `?format=u` unified HTML endpoint — includes **context lines** around every change so AI can understand what function/scope was modified
+- Each hunk contains context lines (`type: "context"`), deleted lines (`type: "removed"`, `oldLineNumber`), and added lines (`type: "added"`, `newLineNumber`)
+- Output includes a standard `--- a/... +++ b/...` unified diff string with `@@` hunk headers for direct AI consumption
+- Structured JSON output: `hunks[]`, `stats.added`, `stats.removed`, `unifiedDiff`
+- Available in both standard mode and Code Mode sandbox (`env.opengrok.getFileDiff(project, path, rev1, rev2)`)
+
+### 🧬 Code Mode Improvements
+
+- **`return_rules`** added to Code Mode `API_SPEC`: three micro-optimization rules directing sandbox scripts to return structured objects with `result` + `summary` fields, keep responses under 2 KB, and avoid re-fetching data within a session
+- Fixed `readMemory.allowed` in `API_SPEC` — corrected to the actual 2-file list (`active-task.md | investigation-log.md`) instead of the stale 6-file list
+
+### 🔧 Type Safety
+
+- **`CodeModeAnnotations`** type alias (`ToolAnnotations & { "x-supports-interleaving": true }`) replaces unsafe `as ToolAnnotations` casts on Code Mode tool registrations — TypeScript now correctly models the interleaved thinking annotation
+
+### 📈 Stats
+
+- Tests: 861 → **893** (+32 tests; 37 test files)
+- Tools: 25 → **26** (`opengrok_get_file_diff`)
 
 ---
 

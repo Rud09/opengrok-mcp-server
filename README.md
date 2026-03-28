@@ -159,6 +159,7 @@ Look for all places in the code where ThreadPool is instantiated or referenced.
 | `opengrok_search_pattern` | Regex code search via `regexp=true`; returns `file:line:content` matches |
 | `opengrok_blame` | Git blame with line range (`start_line`/`end_line`); returns author, date, commit per line |
 | `opengrok_call_graph` | Call chain tracing via OpenGrok API v2 `/symbol/{name}/callgraph` (requires `OPENGROK_API_VERSION=v2`) |
+| `opengrok_get_file_diff` | Unified diff between two revisions with full context lines — shows surrounding code so AI understands *why* a change was made; use `opengrok_get_file_history` to discover revision hashes |
 
 ### 🧠 Memory & Session Tools (v5.4+)
 
@@ -413,7 +414,7 @@ npm install
 
 # Code Quality & Tests
 npm run lint           # Strict TypeScript & ESLint validation
-npm test               # Execute the Vitest test suite (861 tests)
+npm test               # Execute the Vitest test suite (893 tests)
 npm run test:sandbox   # Sandbox integration tests (requires compile first)
 npm run test:coverage  # Coverage report (≥90% threshold)
 
