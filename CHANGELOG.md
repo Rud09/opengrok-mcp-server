@@ -18,10 +18,10 @@ Streamable HTTP transport for team deployments, OAuth 2.1 with `client_credentia
 
 Code Mode sandbox built on `@sebastianwessel/quickjs` — pure JS + WASM, zero native compilation, no `node-gyp`, works everywhere including `npx` and enterprise Linux. Full token optimization suite: three context budget tiers, compact TSV/YAML/text formats, Living Document memory bank, and session observation masker for long investigations.
 
-- 🐛 **v5.3.2** — P0 bug fixes: activation events, ObservationMasker injection layer, SERVER_INSTRUCTIONS dead references, UI polish.
-- 🗃️ **v5.4** — 2-file memory bank (active-task.md + investigation-log.md), rewritten SERVER_INSTRUCTIONS, `opengrok_memory_status` tool, compact Code Mode descriptions, new session/investigation skills.
-- ⚡ **v5.5** — Sandbox worker pool, 4 new tools (`opengrok_what_changed`, `opengrok_dependency_map`, `opengrok_search_pattern`, enhanced `opengrok_index_health`), C++ specialized skill (489 lines), TSV batch format.
 - 🔬 **v5.6** — MCP SDK 1.28.0, `outputSchema` + `structuredContent` on 10 tools, MCP Resources/Prompts/Elicitation/Sampling, `opengrok_blame`, per-tool rate limiting, structured audit logging, sandbox sanitization.
+- ⚡ **v5.5** — Sandbox worker pool, 4 new tools (`opengrok_what_changed`, `opengrok_dependency_map`, `opengrok_search_pattern`, enhanced `opengrok_index_health`), C++ specialized skill (489 lines), TSV batch format.
+- 🗃️ **v5.4** — 2-file memory bank (active-task.md + investigation-log.md), rewritten SERVER_INSTRUCTIONS, `opengrok_memory_status` tool, compact Code Mode descriptions, new session/investigation skills.
+- 🐛 **v5.3.2** — P0 bug fixes: activation events, ObservationMasker injection layer, SERVER_INSTRUCTIONS dead references, UI polish.
 
 ### 🏗️ v4.0 — Modern MCP SDK & Breaking Tool Rename
 
@@ -31,9 +31,9 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 
 6 new compound tools, ~92% fewer tokens, full OpenGrok 1.7.x support, and a zero-config local source layer that knows your compiler flags. The largest update since the original rewrite.
 
-- 🚀 **v3.1** — Auto-update notifications. One click in VS Code, no manual downloads.
-- 🌐 **v3.2** — Standalone MCP server. One-command installer, cross-platform credential wrappers, no VS Code required.
 - 🛡️ **v3.3** — Security hardening, 100% code coverage, Node 24, enterprise-grade quality. 476 tests, zero audit findings.
+- 🌐 **v3.2** — Standalone MCP server. One-command installer, cross-platform credential wrappers, no VS Code required.
+- 🚀 **v3.1** — Auto-update notifications. One click in VS Code, no manual downloads.
 
 ### 🔐 v2.0 — Full TypeScript Rewrite
 
