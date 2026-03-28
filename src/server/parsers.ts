@@ -8,6 +8,9 @@ import type {
   AnnotatedFile,
   AnnotateLine,
   DirectoryEntry,
+  FileDiff,
+  DiffHunk,
+  DiffLine,
   FileHistory,
   FileSymbol,
   HistoryEntry,
@@ -539,3 +542,103 @@ export function parseFileSymbols(html: string): FileSymbol[] {
   return symbols;
 }
 
+
+// ---------------------------------------------------------------------------
+// parseFileDiff — parse raw ED diff text from OpenGrok ?action=download
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the raw ED diff text returned by OpenGrok's `?action=download` endpoint
+ * (which is delta.toString() from the jrcs library).
+ *
+ * ED diff format:
+ *   NcM        = change: lines N in old → M in new  (< = old, --- , > = new)
+ *   NaM[,P]    = add: after line N in old, insert lines M..P in new (> = new)
+ *   N[,P]dM    = delete: remove lines N..P from old  (< = old)
+ *
+ * Returns FileDiff with structured hunks + standard unified diff string.
+ */
+export function parseFileDiff(
+  text: string,
+  project: string,
+  path: string,
+  rev1: string,
+  rev2: string,
+): FileDiff {
+  const empty: FileDiff = { project, path, rev1, rev2, hunks: [], unifiedDiff: '', stats: { added: 0, removed: 0 } };
+  if (!text || !text.trim()) return empty;
+
+  // Each ED diff block starts with a command line then content lines.
+  // Split on command lines: /^\d+(,\d+)?[acd]\d+(,\d+)?$/m
+  const commandRe = /^(\d+)(?:,(\d+))?([acd])(\d+)(?:,(\d+))?$/;
+  const lines = text.split('\n');
+
+  const hunks: DiffHunk[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const cmd = lines[i].trim();
+    const m = commandRe.exec(cmd);
+    if (!m) { i++; continue; }
+
+    const [, os1, os2, op, ns1, ns2] = m;
+    const oldStart = parseInt(os1, 10);
+    const oldEnd   = os2 ? parseInt(os2, 10) : oldStart;
+    const newStart = parseInt(ns1, 10);
+    const newEnd   = ns2 ? parseInt(ns2, 10) : newStart;
+    i++;
+
+    const hunkLines: DiffLine[] = [];
+
+    if (op === 'c' || op === 'd') {
+      // Consume "< " lines (old/removed)
+      let oldNum = oldStart;
+      while (i < lines.length && lines[i].startsWith('< ')) {
+        hunkLines.push({ type: 'removed', oldLineNumber: oldNum++, content: lines[i].slice(2) });
+        i++;
+      }
+      if (op === 'c') {
+        // Skip "---" separator
+        if (i < lines.length && lines[i] === '---') i++;
+      }
+    }
+
+    if (op === 'c' || op === 'a') {
+      // Consume "> " lines (new/added)
+      let newNum = newStart;
+      while (i < lines.length && lines[i].startsWith('> ')) {
+        hunkLines.push({ type: 'added', newLineNumber: newNum++, content: lines[i].slice(2) });
+        i++;
+      }
+    }
+
+    if (hunkLines.length === 0) continue;
+
+    const oldCount = op === 'a' ? 0 : (oldEnd - oldStart + 1);
+    const newCount = op === 'd' ? 0 : (newEnd - newStart + 1);
+
+    hunks.push({ oldStart, oldCount, newStart, newCount, lines: hunkLines });
+  }
+
+  if (hunks.length === 0) return empty;
+
+  // Build unified diff string from hunks
+  const diffLines: string[] = [`--- a/${path}`, `+++ b/${path}`];
+  let added = 0, removed = 0;
+
+  for (const hunk of hunks) {
+    diffLines.push(`@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`);
+    for (const line of hunk.lines) {
+      if (line.type === 'removed') { diffLines.push(`-${line.content}`); removed++; }
+      else if (line.type === 'added')   { diffLines.push(`+${line.content}`); added++; }
+      else                              { diffLines.push(` ${line.content}`); }
+    }
+  }
+
+  return {
+    project, path, rev1, rev2,
+    hunks,
+    unifiedDiff: diffLines.join('\n'),
+    stats: { added, removed },
+  };
+}

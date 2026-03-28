@@ -260,3 +260,17 @@ export const XREF_FILE_SYMBOLS_HTML = `
 </body>
 </html>
 `;
+
+// ---------------------------------------------------------------------------
+// DIFF_EDTEXT — raw ED diff text as returned by OpenGrok ?action=download
+// (delta.toString() output from jrcs, no HTML wrapping)
+// Fixture represents: line 7 changed (x=0 → x=42), then lines 110-111 added
+// ---------------------------------------------------------------------------
+export const DIFF_EDTEXT = `7c7
+<     int x = 0;
+---
+>     int x = 42;
+109a110,111
+> void newFunction() {}
+> // end of addition
+`;

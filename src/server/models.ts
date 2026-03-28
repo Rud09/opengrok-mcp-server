@@ -204,6 +204,14 @@ export const CallGraphArgs = z.object({
   response_format: RESPONSE_FORMAT,
 });
 
+export const GetFileDiffArgs = z.object({
+  project: z.string().min(1).describe("OpenGrok project name"),
+  path: z.string().min(1).describe("File path within the project (e.g. src/Foo.cpp)"),
+  rev1: z.string().min(1).describe("First (older) revision hash — use opengrok_get_file_history to discover revisions"),
+  rev2: z.string().min(1).describe("Second (newer) revision hash"),
+  response_format: RESPONSE_FORMAT,
+});
+
 // ---------------------------------------------------------------------------
 // Domain model interfaces
 // ---------------------------------------------------------------------------
@@ -295,6 +303,35 @@ export interface FileSymbols {
   project: string;
   path: string;
   symbols: FileSymbol[];
+}
+
+export interface DiffLine {
+  /** 'added' = new line (+), 'removed' = old line (-), 'context' = unchanged */
+  type: 'added' | 'removed' | 'context';
+  oldLineNumber?: number;
+  newLineNumber?: number;
+  /** Raw line content (no +/- prefix) */
+  content: string;
+}
+
+export interface DiffHunk {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: DiffLine[];
+}
+
+export interface FileDiff {
+  project: string;
+  path: string;
+  rev1: string;
+  rev2: string;
+  /** Structured list of change hunks */
+  hunks: DiffHunk[];
+  /** Standard unified diff string (git-diff compatible) */
+  unifiedDiff: string;
+  stats: { added: number; removed: number };
 }
 
 // ---------------------------------------------------------------------------

@@ -486,6 +486,44 @@ describe('OpenGrokClient methods', () => {
     });
   });
 
+  describe('getFileDiff', () => {
+    it('fetches raw ED diff text from /diff/{project}/{path} endpoint with action=download', async () => {
+      mockFetchText('7c7\n<     int x = 0;\n---\n>     int x = 42;\n');
+      const result = await client.getFileDiff('proj', 'src/file.cpp', 'abc123', 'def456');
+      expect(result.project).toBe('proj');
+      expect(result.path).toBe('src/file.cpp');
+      expect(result.rev1).toBe('abc123');
+      expect(result.rev2).toBe('def456');
+      const calledUrl = fetchSpy.mock.calls[0][0] as string;
+      expect(calledUrl).toContain('/diff/proj/src/file.cpp');
+      expect(calledUrl).toContain('action=download');
+    });
+
+    it('parses the ED diff text and returns stats', async () => {
+      mockFetchText('7c7\n<     int x = 0;\n---\n>     int x = 42;\n');
+      const result = await client.getFileDiff('proj', 'src/file.cpp', 'abc123', 'def456');
+      expect(result.stats.removed).toBe(1);
+      expect(result.stats.added).toBe(1);
+      expect(result.unifiedDiff).toContain('-    int x = 0;');
+      expect(result.unifiedDiff).toContain('+    int x = 42;');
+    });
+
+    it('encodes r1 and r2 as /{project}/{path}@{rev} query params', async () => {
+      mockFetchText('<div id="difftable"></div>');
+      await client.getFileDiff('myproj', 'path/to/file.cpp', 'rev1hash', 'rev2hash');
+      const calledUrl = fetchSpy.mock.calls[0][0] as string;
+      expect(calledUrl).toContain('r1=');
+      expect(decodeURIComponent(calledUrl)).toContain('/myproj/path/to/file.cpp@rev1hash');
+      expect(decodeURIComponent(calledUrl)).toContain('/myproj/path/to/file.cpp@rev2hash');
+    });
+
+    it('rejects path traversal in path argument', async () => {
+      await expect(
+        client.getFileDiff('proj', '../../etc/passwd', 'r1', 'r2')
+      ).rejects.toThrow(/Unsafe path/);
+    });
+  });
+
   describe('getFileSymbols', () => {
     it('returns symbols from API', async () => {
       mockFetchJSON([

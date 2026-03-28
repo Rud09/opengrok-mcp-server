@@ -6,6 +6,7 @@ import {
   parseAnnotate,
   parseWebSearchResults,
   parseFileSymbols,
+  parseFileDiff,
 } from '../server/parsers.js';
 import {
   PROJECTS_PAGE_HTML,
@@ -17,6 +18,7 @@ import {
   ANNOTATE_HTML_17X,
   WEB_SEARCH_RESULTS_HTML,
   XREF_FILE_SYMBOLS_HTML,
+  DIFF_EDTEXT,
 } from './fixtures/html.js';
 
 // ---------------------------------------------------------------------------
@@ -321,5 +323,83 @@ describe('parseFileSymbols', () => {
   it('returns empty array for empty string', () => {
     const symbols = parseFileSymbols('');
     expect(symbols).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseFileDiff
+// ---------------------------------------------------------------------------
+
+describe('parseFileDiff', () => {
+  it('returns project, path, rev1, rev2 metadata', () => {
+    const result = parseFileDiff(DIFF_EDTEXT, 'myproj', 'src/foo.cpp', 'abc123', 'def456');
+    expect(result.project).toBe('myproj');
+    expect(result.path).toBe('src/foo.cpp');
+    expect(result.rev1).toBe('abc123');
+    expect(result.rev2).toBe('def456');
+  });
+
+  it('parses deleted and added lines from ED diff text into hunks', () => {
+    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+    expect(result.hunks.length).toBe(2); // fixture has 2 deltas: 7c7 and 109a110,111
+    const lines = result.hunks.flatMap(h => h.lines);
+    expect(lines.filter(l => l.type === 'removed').length).toBe(1);
+    expect(lines.filter(l => l.type === 'added').length).toBe(3);
+  });
+
+  it('captures content of deleted line (strips "< " prefix)', () => {
+    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+    const removed = result.hunks.flatMap(h => h.lines).filter(l => l.type === 'removed');
+    expect(removed[0].content).toBe('    int x = 0;');
+  });
+
+  it('captures content of added lines (strips "> " prefix)', () => {
+    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+    const added = result.hunks.flatMap(h => h.lines).filter(l => l.type === 'added');
+    expect(added[0].content).toBe('    int x = 42;');
+    expect(added[1].content).toBe('void newFunction() {}');
+    expect(added[2].content).toBe('// end of addition');
+  });
+
+  it('records old line numbers on removed lines from change command (7c7)', () => {
+    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+    const removed = result.hunks.flatMap(h => h.lines).filter(l => l.type === 'removed');
+    expect(removed[0].oldLineNumber).toBe(7);
+    expect(removed[0].newLineNumber).toBeUndefined();
+  });
+
+  it('records new line numbers on added lines from add command (109a110,111)', () => {
+    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+    const added = result.hunks.flatMap(h => h.lines).filter(l => l.type === 'added');
+    expect(added[1].newLineNumber).toBe(110);
+    expect(added[1].oldLineNumber).toBeUndefined();
+  });
+
+  it('computes correct added/removed stats', () => {
+    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+    expect(result.stats.removed).toBe(1);
+    expect(result.stats.added).toBe(3);
+  });
+
+  it('produces a unified diff string with @@ headers and +/- prefixed lines', () => {
+    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+    expect(result.unifiedDiff).toContain('@@');
+    expect(result.unifiedDiff).toContain('-    int x = 0;');
+    expect(result.unifiedDiff).toContain('+    int x = 42;');
+    expect(result.unifiedDiff).toContain('+void newFunction() {}');
+  });
+
+  it('sets correct oldStart/newStart on first hunk (change command 7c7)', () => {
+    const result = parseFileDiff(DIFF_EDTEXT, 'p', 'f.cpp', 'r1', 'r2');
+    expect(result.hunks[0].oldStart).toBe(7);
+    expect(result.hunks[0].newStart).toBe(7);
+  });
+
+  it('returns empty hunks for empty diff text', () => {
+    const result = parseFileDiff('', 'p', 'f.cpp', 'r1', 'r2');
+    expect(result.hunks).toEqual([]);
+    expect(result.stats.added).toBe(0);
+    expect(result.stats.removed).toBe(0);
+    expect(result.unifiedDiff).toBe('');
   });
 });

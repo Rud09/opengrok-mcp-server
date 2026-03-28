@@ -227,3 +227,8 @@ export interface HealthAPIResult {
   latencyMs: number;
   baseUrl: string;
 }
+
+// ---------------------------------------------------------------------------
+// File diff — re-exported from models for sandbox/Code-Mode consumers
+// ---------------------------------------------------------------------------
+export type { DiffLine, DiffHunk, FileDiff as FileDiffAPIResult } from './models.js';

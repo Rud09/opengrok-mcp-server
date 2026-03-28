@@ -25,6 +25,7 @@ import {
   formatBlame,
   formatCompileInfo,
   formatDirectoryListing,
+  formatFileDiff,
   formatFileContent,
   formatFileContentText,
   formatFileHistory,
@@ -58,6 +59,7 @@ import {
   GetCompileInfoArgs,
   GetFileAnnotateArgs,
   GetFileContentArgs,
+  GetFileDiffArgs,
   GetFileHistoryArgs,
   GetFileSymbolsArgs,
   CallGraphArgs,
@@ -1778,6 +1780,50 @@ function registerLegacyTools(
         };
       } catch (err) {
         return makeToolError("opengrok_get_file_history", err);
+      }
+    }
+  );
+
+  // Tool: opengrok_get_file_diff — diff between two revisions
+  server.registerTool(
+    "opengrok_get_file_diff",
+    {
+      title: "Get File Diff",
+      description: desc(
+        "Get the diff between two revisions of a file. Returns a standard unified diff (git-diff format) " +
+        "with +/- lines and @@ hunk headers. Use opengrok_get_file_history first to discover revision hashes.",
+        "(fallback) diff between two file revisions"
+      ),
+      inputSchema: GetFileDiffArgs.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_get_file_diff" });
+      try {
+        const diff = await client.getFileDiff(args.project, args.path, args.rev1, args.rev2);
+        const fmt = selectFormat("generic", args.response_format);
+        return {
+          content: [{ type: "text" as const, text: capResponse(formatFileDiff(diff, fmt)) }],
+          structuredContent: {
+            _meta: {
+              tool: "opengrok_get_file_diff",
+              project: args.project,
+              path: args.path,
+              rev1: args.rev1,
+              rev2: args.rev2,
+              fetchedAt: new Date().toISOString(),
+              version: __VERSION__,
+            },
+            stats: diff.stats,
+            hunks: diff.hunks.map(h => ({
+              oldStart: h.oldStart, oldCount: h.oldCount,
+              newStart: h.newStart, newCount: h.newCount,
+              lines: h.lines.length,
+            })),
+          } as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return makeToolError("opengrok_get_file_diff", err);
       }
     }
   );

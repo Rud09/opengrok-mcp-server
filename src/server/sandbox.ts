@@ -187,6 +187,17 @@ export const API_SPEC = {
       signature: "env.opengrok.indexHealth()",
       returns: "HealthAPIResult: { connected, latencyMs, baseUrl }",
     },
+    getFileDiff: {
+      signature: "env.opengrok.getFileDiff(project, path, rev1, rev2)",
+      returns:
+        "FileDiffAPIResult: { project, path, rev1, rev2, " +
+        "hunks: [{oldStart, oldCount, newStart, newCount, lines: [{type:'added'|'removed'|'context', content, oldLineNumber?, newLineNumber?}]}], " +
+        "unifiedDiff: string, stats: {added, removed} }",
+      note:
+        "Use opengrok.getFileHistory() first to get revision hashes. " +
+        "unifiedDiff is a standard git-diff string — prefer it for display. " +
+        "hunks[] gives structured per-line access for programmatic analysis.",
+    },
     readMemory: {
       signature: "env.opengrok.readMemory(filename)",
       allowed: "'active-task.md' | 'investigation-log.md'",
@@ -257,6 +268,7 @@ export interface SandboxAPI {
   searchSuggest(query: string, opts?: { project?: string; field?: string }): Promise<unknown>;
   getCompileInfo(path: string): Promise<unknown>;
   indexHealth(): Promise<unknown>;
+  getFileDiff(project: string, path: string, rev1: string, rev2: string): Promise<unknown>;
   readMemory(filename: string): Promise<unknown>;
   writeMemory(filename: string, content: string, mode?: "overwrite" | "append"): Promise<unknown>;
 }
@@ -405,6 +417,10 @@ export function createSandboxAPI(
         baseUrl: "",
       };
       return result;
+    },
+
+    async getFileDiff(project, path, rev1, rev2) {
+      return client.getFileDiff(project, path, rev1, rev2);
     },
 
     async readMemory(filename) {

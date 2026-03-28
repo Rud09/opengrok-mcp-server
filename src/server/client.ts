@@ -12,6 +12,7 @@ import type {
   AnnotatedFile,
   DirectoryEntry,
   FileContent,
+  FileDiff,
   FileHistory,
   FileSymbol,
   FileSymbols,
@@ -24,6 +25,7 @@ import {
   parseDirectoryListing,
   parseFileHistory,
   parseFileSymbols,
+  parseFileDiff,
   parseProjectsPage,
   parseWebSearchResults,
 } from "./parsers";
@@ -860,6 +862,25 @@ export class OpenGrokClient {
   warmCache(): void {
     void this.listProjects().catch(() => undefined);
     void this.search("main", "defs", undefined, 1).catch(() => undefined);
+  }
+
+  async getFileDiff(
+    project: string,
+    path: string,
+    rev1: string,
+    rev2: string,
+  ): Promise<FileDiff> {
+    assertSafePath(path);
+    const normalizedPath = path.replace(/^\/+/, "");
+    const url = buildSafeUrl(this.baseUrl, `diff/${encodeURIComponent(project)}/${normalizedPath}`);
+    // r1/r2 use the OpenGrok convention: /{project}/{path}@{revision}
+    url.searchParams.set("r1", `/${project}/${normalizedPath}@${rev1}`);
+    url.searchParams.set("r2", `/${project}/${normalizedPath}@${rev2}`);
+    // action=download returns raw delta.toString() text with no HTML wrapping
+    url.searchParams.set("action", "download");
+    const response = await this.request(url, TIMEOUTS.file, "text/plain, */*");
+    const text = await response.text();
+    return parseFileDiff(text, project, normalizedPath, rev1, rev2);
   }
 
   async close(): Promise<void> {

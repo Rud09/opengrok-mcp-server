@@ -11,6 +11,7 @@ import yaml from "js-yaml";
 import type {
   AnnotatedFile,
   DirectoryEntry,
+  FileDiff,
   FileContent,
   FileHistory,
   FileSymbols,
@@ -1015,4 +1016,54 @@ export function formatDependencyMap(
   }
 
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// formatFileDiff
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a FileDiff result.
+ *
+ * - markdown / text: standard unified diff (what AI models understand best)
+ * - json: structured hunk data for programmatic analysis
+ * - tsv: one-line-per-change for quick scan
+ * - yaml: structured with human-readable keys
+ */
+export function formatFileDiff(result: FileDiff, format = "markdown"): string {
+  if (format === "json") return JSON.stringify(result, null, 2);
+
+  if (format === "tsv") {
+    const rows = ["type\toldLine\tnewLine\tcontent"];
+    for (const hunk of result.hunks) {
+      for (const line of hunk.lines) {
+        rows.push(`${line.type}\t${line.oldLineNumber ?? ''}\t${line.newLineNumber ?? ''}\t${line.content}`);
+      }
+    }
+    return rows.join('\n');
+  }
+
+  if (format === "yaml") {
+    return yaml.dump({
+      project: result.project,
+      path: result.path,
+      rev1: result.rev1,
+      rev2: result.rev2,
+      stats: result.stats,
+      unifiedDiff: result.unifiedDiff,
+    }, { lineWidth: 120 });
+  }
+
+  // markdown / text / auto — emit unified diff with a compact header
+  const header = [
+    `**Diff** \`${result.path}\`  rev \`${result.rev1.slice(0, 8)}\` → \`${result.rev2.slice(0, 8)}\``,
+    `**Stats:** +${result.stats.added} / -${result.stats.removed} lines`,
+    '',
+  ].join('\n');
+
+  if (result.hunks.length === 0) return `${header}_No changes detected._`;
+
+  return format === "markdown"
+    ? `${header}\`\`\`diff\n${result.unifiedDiff}\n\`\`\``
+    : `${header}${result.unifiedDiff}`;
 }
