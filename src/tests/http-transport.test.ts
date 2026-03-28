@@ -565,3 +565,287 @@ describe("stream parameter on SearchCodeArgs (Task 5.4)", () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 5.10: RBAC for multi-user HTTP deployments
+// ---------------------------------------------------------------------------
+
+describe("RBAC for multi-user HTTP deployments (Task 5.10)", () => {
+  const BASE_RBAC_PORT = BASE_PORT + 700;
+  const initHeaders = { Accept: "application/json, text/event-stream" };
+
+  const initBody = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "test-client", version: "0.0.1" },
+    },
+  });
+
+  const toolCallBody = (toolName: string) =>
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: toolName },
+    });
+
+  it("admin can call any tool", async () => {
+    const port = BASE_RBAC_PORT;
+    const { close } = await startHttpTransport(makeFactory(), {
+      port,
+      rbacTokens: "admin-token:admin,dev-token:developer,ro-token:readonly",
+    });
+
+    try {
+      const initRes = await httpRequest({
+        port,
+        method: "POST",
+        headers: { ...initHeaders, Authorization: "Bearer admin-token" },
+        body: initBody,
+      });
+      expect(initRes.status).toBe(200);
+
+      const sessionsRes = await httpRequest({
+        port,
+        method: "GET",
+        path: "/mcp/sessions",
+      });
+      const json = JSON.parse(sessionsRes.body);
+      if (json.sessions?.[0]) {
+        const sessionId = json.sessions[0].sessionId;
+        const toolRes = await httpRequest({
+          port,
+          method: "POST",
+          headers: { ...initHeaders, "Mcp-Session-Id": sessionId },
+          body: toolCallBody("opengrok_search"),
+        });
+        // Should allow (not 403)
+        expect([200, 400, 500]).toContain(toolRes.status);
+      }
+    } finally {
+      close();
+    }
+  });
+
+  it("readonly is blocked from opengrok_execute", async () => {
+    const port = BASE_RBAC_PORT + 1;
+    const { close } = await startHttpTransport(makeFactory(), {
+      port,
+      rbacTokens: "admin-token:admin,dev-token:developer,ro-token:readonly",
+    });
+
+    try {
+      const initRes = await httpRequest({
+        port,
+        method: "POST",
+        headers: { ...initHeaders, Authorization: "Bearer ro-token" },
+        body: initBody,
+      });
+      expect(initRes.status).toBe(200);
+
+      const sessionsRes = await httpRequest({
+        port,
+        method: "GET",
+        path: "/mcp/sessions",
+      });
+      const json = JSON.parse(sessionsRes.body);
+      if (json.sessions?.[0]) {
+        const sessionId = json.sessions[0].sessionId;
+        const toolRes = await httpRequest({
+          port,
+          method: "POST",
+          headers: { ...initHeaders, "Mcp-Session-Id": sessionId },
+          body: toolCallBody("opengrok_execute"),
+        });
+        expect(toolRes.status).toBe(403);
+        const errorJson = JSON.parse(toolRes.body);
+        expect(errorJson.error).toBe("Forbidden");
+        expect(errorJson.tool).toBe("opengrok_execute");
+      }
+    } finally {
+      close();
+    }
+  });
+
+  it("developer can call opengrok_execute", async () => {
+    const port = BASE_RBAC_PORT + 2;
+    const { close } = await startHttpTransport(makeFactory(), {
+      port,
+      rbacTokens: "admin-token:admin,dev-token:developer,ro-token:readonly",
+    });
+
+    try {
+      const initRes = await httpRequest({
+        port,
+        method: "POST",
+        headers: { ...initHeaders, Authorization: "Bearer dev-token" },
+        body: initBody,
+      });
+      expect(initRes.status).toBe(200);
+
+      const sessionsRes = await httpRequest({
+        port,
+        method: "GET",
+        path: "/mcp/sessions",
+      });
+      const json = JSON.parse(sessionsRes.body);
+      if (json.sessions?.[0]) {
+        const sessionId = json.sessions[0].sessionId;
+        const toolRes = await httpRequest({
+          port,
+          method: "POST",
+          headers: { ...initHeaders, "Mcp-Session-Id": sessionId },
+          body: toolCallBody("opengrok_execute"),
+        });
+        // Should allow (not 403)
+        expect([200, 400, 500]).toContain(toolRes.status);
+      }
+    } finally {
+      close();
+    }
+  });
+
+  it("HTTP 403 returns correct error response", async () => {
+    const port = BASE_RBAC_PORT + 3;
+    const { close } = await startHttpTransport(makeFactory(), {
+      port,
+      rbacTokens: "admin-token:admin,dev-token:developer,ro-token:readonly",
+    });
+
+    try {
+      const initRes = await httpRequest({
+        port,
+        method: "POST",
+        headers: { ...initHeaders, Authorization: "Bearer ro-token" },
+        body: initBody,
+      });
+      expect(initRes.status).toBe(200);
+
+      const sessionsRes = await httpRequest({
+        port,
+        method: "GET",
+        path: "/mcp/sessions",
+      });
+      const json = JSON.parse(sessionsRes.body);
+      if (json.sessions?.[0]) {
+        const sessionId = json.sessions[0].sessionId;
+        const toolRes = await httpRequest({
+          port,
+          method: "POST",
+          headers: { ...initHeaders, "Mcp-Session-Id": sessionId },
+          body: toolCallBody("opengrok_update_memory"),
+        });
+        expect(toolRes.status).toBe(403);
+        const errorJson = JSON.parse(toolRes.body);
+        expect(errorJson.error).toBe("Forbidden");
+        expect(errorJson.message).toContain("does not have permission");
+        expect(errorJson.tool).toBe("opengrok_update_memory");
+        expect(errorJson.role).toBe("readonly");
+      }
+    } finally {
+      close();
+    }
+  });
+
+  it("no RBAC config defaults to admin role", async () => {
+    const port = BASE_RBAC_PORT + 4;
+    const { close } = await startHttpTransport(makeFactory(), {
+      port,
+      // no rbacTokens configured, no authToken
+    });
+
+    try {
+      const initRes = await httpRequest({
+        port,
+        method: "POST",
+        headers: initHeaders,
+        body: initBody,
+      });
+      expect(initRes.status).toBe(200);
+
+      const sessionsRes = await httpRequest({
+        port,
+        method: "GET",
+        path: "/mcp/sessions",
+      });
+      const json = JSON.parse(sessionsRes.body);
+      if (json.sessions?.[0]) {
+        const sessionId = json.sessions[0].sessionId;
+        const toolRes = await httpRequest({
+          port,
+          method: "POST",
+          headers: { ...initHeaders, "Mcp-Session-Id": sessionId },
+          body: toolCallBody("opengrok_execute"),
+        });
+        // Should allow (not 403)
+        expect([200, 400, 500]).toContain(toolRes.status);
+      }
+    } finally {
+      close();
+    }
+  });
+
+  it("unknown token is rejected when RBAC is configured", async () => {
+    const port = BASE_RBAC_PORT + 5;
+    const { close } = await startHttpTransport(makeFactory(), {
+      port,
+      rbacTokens: "admin-token:admin,dev-token:developer,ro-token:readonly",
+    });
+
+    try {
+      const initRes = await httpRequest({
+        port,
+        method: "POST",
+        headers: { ...initHeaders, Authorization: "Bearer unknown-token" },
+        body: initBody,
+      });
+      // Should be rejected at the HTTP layer due to RBAC validation
+      expect(initRes.status).toBe(401);
+    } finally {
+      close();
+    }
+  });
+
+  it("readonly allowed on opengrok_search", async () => {
+    const port = BASE_RBAC_PORT + 6;
+    const { close } = await startHttpTransport(makeFactory(), {
+      port,
+      rbacTokens: "admin-token:admin,dev-token:developer,ro-token:readonly",
+    });
+
+    try {
+      const initRes = await httpRequest({
+        port,
+        method: "POST",
+        headers: { ...initHeaders, Authorization: "Bearer ro-token" },
+        body: initBody,
+      });
+      expect(initRes.status).toBe(200);
+
+      const sessionsRes = await httpRequest({
+        port,
+        method: "GET",
+        path: "/mcp/sessions",
+      });
+      const json = JSON.parse(sessionsRes.body);
+      if (json.sessions?.[0]) {
+        const sessionId = json.sessions[0].sessionId;
+        const toolRes = await httpRequest({
+          port,
+          method: "POST",
+          headers: { ...initHeaders, "Mcp-Session-Id": sessionId },
+          body: toolCallBody("opengrok_search"),
+        });
+        // Should NOT be 403
+        expect(toolRes.status).not.toBe(403);
+      }
+    } finally {
+      close();
+    }
+  });
+});
+

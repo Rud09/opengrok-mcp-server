@@ -16,6 +16,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "./logger.js";
+import { parseRbacConfig, hasPermission, type Role } from "./rbac.js";
 
 export interface HttpTransportOptions {
   port: number;
@@ -28,6 +29,8 @@ export interface HttpTransportOptions {
   clientSecret?: string;
   /** Maximum concurrent sessions before new connections are rejected with 503. Default: 100 */
   maxSessions?: number;
+  /** RBAC config: 'token1:admin,token2:readonly' format (Task 5.10) */
+  rbacTokens?: string;
 }
 
 /** Per-session metadata for monitoring and cleanup. */
@@ -35,6 +38,7 @@ export interface SessionMetadata {
   createdAt: Date;
   lastActivity: Date;
   requestCount: number;
+  role?: string; // RBAC role (admin, developer, readonly)
 }
 
 type TransportHandle = {
@@ -150,8 +154,9 @@ export async function startHttpTransport(
   serverFactory: McpServerFactory,
   opts: HttpTransportOptions
 ): Promise<{ close: () => void }> {
-  const { port, host = "127.0.0.1", authToken = "", clientId = "", clientSecret = "", maxSessions = 100 } = opts;
+  const { port, host = "127.0.0.1", authToken = "", clientId = "", clientSecret = "", maxSessions = 100, rbacTokens = "" } = opts;
   const loopback = isLoopback(host);
+  const rbacConfig = parseRbacConfig(rbacTokens);
 
   // Active sessions: Mcp-Session-Id → { transport, server, meta }
   const sessions = new Map<string, TransportHandle>();
@@ -175,6 +180,33 @@ export async function startHttpTransport(
     res.setHeader("Access-Control-Allow-Origin", loopback ? "*" : "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Authorization");
+  };
+
+  /** Extract bearer token from Authorization header and return role (or "admin" if no RBAC configured). */
+  const extractRole = (req: IncomingMessage): Role => {
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith("Bearer ")) return "admin"; // no token → admin by default
+
+    const token = auth.slice(7);
+    const role = rbacConfig.tokens.get(token);
+    return role ?? "admin"; // unknown token → admin by default
+  };
+
+  /** Check if a request body is an MCP tool call, and validate RBAC if so. Returns null if permission denied. */
+  const checkRbacForToolCall = (role: Role, body: unknown): { allowed: boolean; toolName?: string } => {
+    if (!body || typeof body !== "object") return { allowed: true }; // not a tool call
+
+    const b = body as Record<string, unknown>;
+    if (b.method !== "tools/call") return { allowed: true }; // not a tool call
+
+    const params = b.params;
+    if (!params || typeof params !== "object") return { allowed: true };
+
+    const toolName = (params as Record<string, unknown>).name as string | undefined;
+    if (!toolName) return { allowed: true };
+
+    const isAllowed = hasPermission(role, toolName);
+    return { allowed: isAllowed, toolName };
   };
 
   /** Read the full request body as a parsed JSON object (or URL-encoded form). Returns null on failure. */
@@ -230,9 +262,12 @@ export async function startHttpTransport(
           return;
         }
 
+        // Extract role from bearer token (RBAC)
+        const role = extractRole(req);
+
         // New client — create a fresh server + transport for this session.
         const now = new Date();
-        const meta: SessionMetadata = { createdAt: now, lastActivity: now, requestCount: 1 };
+        const meta: SessionMetadata = { createdAt: now, lastActivity: now, requestCount: 1, role };
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
@@ -264,6 +299,21 @@ export async function startHttpTransport(
             jsonrpc: "2.0",
             error: { code: -32000, message: "Bad Request: No valid session ID provided" },
             id: null,
+          })
+        );
+        return;
+      }
+
+      // Check RBAC permissions for existing sessions
+      const rbacCheck = checkRbacForToolCall(handle.meta.role as Role, body);
+      if (!rbacCheck.allowed) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: "Forbidden",
+            message: `Role '${handle.meta.role}' does not have permission for tool '${rbacCheck.toolName}'`,
+            tool: rbacCheck.toolName,
+            role: handle.meta.role,
           })
         );
         return;
@@ -362,10 +412,31 @@ export async function startHttpTransport(
       return;
     }
 
-    // Bearer token validation for /mcp — only enforced when authToken is configured
-    if (authToken && !validateBearerToken(req, authToken)) {
-      rejectUnauthorized(res);
-      return;
+    // Bearer token validation for /mcp
+    // Only enforce auth for new sessions (initialize requests without session ID)
+    // Existing sessions are identified by session ID header
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    const isExistingSession = sessionId && sessions.has(sessionId);
+
+    if (!isExistingSession) {
+      // New request: validate bearer token
+      const auth = req.headers.authorization;
+      const hasBearer = auth?.startsWith("Bearer ");
+      const bearerToken = hasBearer ? auth!.slice(7) : null;
+
+      if (rbacConfig.tokens.size > 0) {
+        // RBAC mode: require token to be in RBAC config
+        if (!bearerToken || !rbacConfig.tokens.has(bearerToken)) {
+          rejectUnauthorized(res);
+          return;
+        }
+      } else if (authToken) {
+        // Standard auth mode: require exact token match
+        if (!validateBearerToken(req, authToken)) {
+          rejectUnauthorized(res);
+          return;
+        }
+      }
     }
 
     if (req.method === "POST") {
