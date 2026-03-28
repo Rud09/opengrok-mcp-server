@@ -77,6 +77,10 @@ export class SandboxWorkerPool {
         await worker.terminate();
       },
     };
+    // Prevent unhandled 'error' events (e.g. WASM init failures in test
+    // environments) from crashing the process. The worker is marked dead so
+    // the next acquire() call spawns a fresh one.
+    worker.on("error", () => { alive = false; });
     return handle;
   }
 }
