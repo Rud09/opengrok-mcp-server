@@ -71,7 +71,7 @@ describe("RBAC — hasPermission", () => {
     expect(hasPermission("admin", "unknown_tool")).toBe(true);
   });
 
-  it("developer has permission for most tools but not update_memory", () => {
+  it("developer has explicit allow-list (no wildcard)", () => {
     expect(hasPermission("developer", "opengrok_search")).toBe(true);
     expect(hasPermission("developer", "opengrok_execute")).toBe(true);
     expect(hasPermission("developer", "opengrok_search_code")).toBe(true);

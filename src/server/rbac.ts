@@ -17,9 +17,9 @@ export interface RbacConfig {
 /**
  * Permissions for each role.
  *
- * admin: all tools (*)
- * developer: all tools except update_memory (write to memory bank)
- * readonly: only read-only tools
+ * admin: all tools (*) — wildcard includes any future tools automatically
+ * developer: explicit allow-list of standard tools (search, read, execute, memory)
+ * readonly: only read-only tools (no execute, no memory writes, no batch)
  */
 const ROLE_PERMISSIONS: Record<Role, Set<string>> = {
   admin: new Set(["*"]), // all tools
