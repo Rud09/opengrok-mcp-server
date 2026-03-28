@@ -10,6 +10,9 @@ import * as path from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+
+/** Extended annotation type for tools that support Claude's interleaved thinking. */
+type CodeModeAnnotations = ToolAnnotations & { "x-supports-interleaving": true };
 import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
@@ -251,6 +254,26 @@ const READ_ONLY_LOCAL: ToolAnnotations = {
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: false,
+};
+
+// Code Mode tools carry an extra x-supports-interleaving hint.
+// Typed as CodeModeAnnotations (extends ToolAnnotations) so TypeScript
+// verifies the field is present; structural subtyping allows passing it
+// wherever ToolAnnotations is expected without an unsafe cast.
+const CODE_MODE_API_ANNOTATIONS: CodeModeAnnotations = {
+  readOnlyHint: true,
+  openWorldHint: false,
+  idempotentHint: true,
+  destructiveHint: false,
+  "x-supports-interleaving": true,
+};
+
+const CODE_MODE_EXECUTE_ANNOTATIONS: CodeModeAnnotations = {
+  readOnlyHint: false,
+  openWorldHint: true,
+  idempotentHint: false,
+  destructiveHint: false,
+  "x-supports-interleaving": true,
 };
 
 // ---------------------------------------------------------------------------
@@ -1406,7 +1429,7 @@ function registerCodeModeTools(
         "Call this ONCE at session start before writing any opengrok_execute code.",
       inputSchema: { _ : z.string().optional().describe("(no input required)") },
       // x-supports-interleaving: extended thinking hint for Claude (Task 5.9)
-      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false, "x-supports-interleaving": true } as ToolAnnotations,
+      annotations: CODE_MODE_API_ANNOTATIONS,
     },
     async () => {
       auditLog({ type: "tool_invoke", tool: "opengrok_api" });
@@ -1435,7 +1458,7 @@ function registerCodeModeTools(
         ),
       },
       // x-supports-interleaving: extended thinking hint for Claude (Task 5.9)
-      annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false, destructiveHint: false, "x-supports-interleaving": true } as ToolAnnotations,
+      annotations: CODE_MODE_EXECUTE_ANNOTATIONS,
     },
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_execute" });
