@@ -164,7 +164,8 @@ void (async () => {
   if (data?.code !== undefined) {
     // Immediate mode (existing behavior): workerData supplies sharedBuffer + code
     const { runSandboxed } = await loadQuickJs(variant);
-    await runJob(runSandboxed, data.sharedBuffer!, data.code);
+    if (!data.sharedBuffer) throw new Error("sandbox error: sharedBuffer missing");
+    await runJob(runSandboxed, data.sharedBuffer, data.code);
     return;
   }
 

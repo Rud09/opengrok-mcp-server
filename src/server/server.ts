@@ -1470,7 +1470,7 @@ function registerCodeModeTools(
       // Create task immediately and execute asynchronously
       const taskId = taskRegistry.createTask();
 
-      (async () => {
+      void (async () => {
         try {
           const budget = BUDGET_LIMITS[getActiveBudget()];
           const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
@@ -2253,10 +2253,12 @@ function registerLegacyTools(
         const byRevision = new Map<string, { author: string; date: string; lines: number[] }>();
         for (const line of annotation.lines) {
           if (!recentRevisions.has(line.revision)) continue;
-          if (!byRevision.has(line.revision)) {
-            byRevision.set(line.revision, { author: line.author, date: line.date, lines: [] });
+          let group = byRevision.get(line.revision);
+          if (!group) {
+            group = { author: line.author, date: line.date, lines: [] };
+            byRevision.set(line.revision, group);
           }
-          byRevision.get(line.revision)!.lines.push(line.lineNumber);
+          group.lines.push(line.lineNumber);
         }
         const changes = [...byRevision.entries()].map(([commit, { author, date, lines }]) => ({
           commit,
@@ -2618,29 +2620,31 @@ class ToolRateLimiter {
  */
 function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, config: Config): void {
   // On SIGHUP, reload config and notify if code mode changed
-  process.on("SIGHUP", async () => {
-    try {
-      auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
-      logger.info("Received SIGHUP, reloading config...");
-      
-      // Re-read config from environment
-      const newConfig = loadConfig();
-      
-      // Check if code mode changed
-      if (newConfig.OPENGROK_CODE_MODE !== config.OPENGROK_CODE_MODE) {
-        logger.info(
-          `Code Mode changed: ${config.OPENGROK_CODE_MODE} → ${newConfig.OPENGROK_CODE_MODE}`,
-          { detail: "Notifying clients of tool list change" }
-        );
-        server.sendToolListChanged();
-        auditLog({ 
-          type: "config_load", 
-          detail: `SIGHUP: Code Mode toggled to ${newConfig.OPENGROK_CODE_MODE}` 
-        });
+  process.on("SIGHUP", () => {
+    void (async () => {
+      try {
+        auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
+        logger.info("Received SIGHUP, reloading config...");
+        
+        // Re-read config from environment
+        const newConfig = loadConfig();
+        
+        // Check if code mode changed
+        if (newConfig.OPENGROK_CODE_MODE !== config.OPENGROK_CODE_MODE) {
+          logger.info(
+            `Code Mode changed: ${config.OPENGROK_CODE_MODE} → ${newConfig.OPENGROK_CODE_MODE}`,
+            { detail: "Notifying clients of tool list change" }
+          );
+          server.sendToolListChanged();
+          auditLog({ 
+            type: "config_load", 
+            detail: `SIGHUP: Code Mode toggled to ${newConfig.OPENGROK_CODE_MODE}` 
+          });
+        }
+      } catch (err) {
+        logger.error("SIGHUP reload failed", { error: String(err) });
       }
-    } catch (err) {
-      logger.error("SIGHUP reload failed", { error: String(err) });
-    }
+    })();
   });
 }
 
@@ -2652,21 +2656,23 @@ function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, co
 export function startHealthCheckPolling(server: McpServer, client: OpenGrokClient): NodeJS.Timeout {
   let lastConnected = false;
 
-  return setInterval(async () => {
-    try {
-      const ok = await client.testConnection();
-      if (ok !== lastConnected) {
-        lastConnected = ok;
-        logger.info(`Connectivity status changed: ${ok ? "connected" : "disconnected"}`);
-        server.sendToolListChanged();
-        auditLog({
-          type: "config_load",
-          detail: `Connectivity status changed to ${ok ? "connected" : "disconnected"}`
-        });
+  return setInterval(() => {
+    void (async () => {
+      try {
+        const ok = await client.testConnection();
+        if (ok !== lastConnected) {
+          lastConnected = ok;
+          logger.info(`Connectivity status changed: ${ok ? "connected" : "disconnected"}`);
+          server.sendToolListChanged();
+          auditLog({
+            type: "config_load",
+            detail: `Connectivity status changed to ${ok ? "connected" : "disconnected"}`
+          });
+        }
+      } catch {
+        // Silently ignore health check errors
       }
-    } catch {
-      // Silently ignore health check errors
-    }
+    })();
   }, 5 * 60 * 1000);
 }
 
@@ -2679,11 +2685,11 @@ export async function runServer(
   const server = createServer(client, config, memoryBank);
   const transport = new StdioServerTransport();
 
-  let healthCheckInterval: NodeJS.Timeout | undefined;
+  const state: { healthCheckInterval?: NodeJS.Timeout } = {};
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info(`Received ${signal}, shutting down...`);
-    if (healthCheckInterval) clearInterval(healthCheckInterval);
+    if (state.healthCheckInterval) clearInterval(state.healthCheckInterval);
     await client.close();
     process.exit(0);
   };
@@ -2730,7 +2736,7 @@ export async function runServer(
   await server.connect(transport);
 
   // Start health check polling after server connects
-  healthCheckInterval = startHealthCheckPolling(server, client);
+  state.healthCheckInterval = startHealthCheckPolling(server, client);
 }
 /* v8 ignore stop */
 
@@ -2809,7 +2815,7 @@ async function buildDependencyGraph(
   const usesQueue: [string, number][] = [];
   const usedByQueue: [string, number][] = [];
 
-  const rootName = filePath.split("/").pop()!;
+  const rootName = filePath.split("/").pop() ?? "";
 
   if (direction === "uses" || direction === "both") {
     usesQueue.push([rootName, 1]);
@@ -2819,7 +2825,9 @@ async function buildDependencyGraph(
   }
 
   while (usesQueue.length > 0) {
-    const [filename, level] = usesQueue.shift()!;
+    const item = usesQueue.shift();
+    if (!item) break;
+    const [filename, level] = item;
     if (level > depth) continue;
     if (expandedUses.has(filename)) continue;
     expandedUses.add(filename);
@@ -2827,7 +2835,7 @@ async function buildDependencyGraph(
     const results = await client.search(filename, "refs", [project], 20);
     for (const r of results.results) {
       if (r.path === filePath) continue; // skip exact self
-      const rName = r.path.split("/").pop()!;
+      const rName = r.path.split("/").pop() ?? "";
       if (!seenUsesPaths.has(r.path)) {
         seenUsesPaths.add(r.path);
         nodes.push({ path: r.path, level, direction: "uses" });
@@ -2839,7 +2847,9 @@ async function buildDependencyGraph(
   }
 
   while (usedByQueue.length > 0) {
-    const [filename, level] = usedByQueue.shift()!;
+    const item = usedByQueue.shift();
+    if (!item) break;
+    const [filename, level] = item;
     if (level > depth) continue;
     if (expandedUsedBy.has(filename)) continue;
     expandedUsedBy.add(filename);
@@ -2847,7 +2857,7 @@ async function buildDependencyGraph(
     const results = await client.search(filename, "refs", [project], 20);
     for (const r of results.results) {
       if (r.path === filePath) continue; // skip exact self
-      const rName = r.path.split("/").pop()!;
+      const rName = r.path.split("/").pop() ?? "";
       if (!seenUsedByPaths.has(r.path)) {
         seenUsedByPaths.add(r.path);
         nodes.push({ path: r.path, level, direction: "used_by" });

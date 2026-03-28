@@ -274,7 +274,7 @@ export class MemoryBank {
     // Sort ascending so we drop lowest-score entries first
     scored.sort((a, b) => a.score - b.score);
 
-    let kept = [...older];
+    const kept = [...older];
     for (const { i } of scored) {
       const candidate = trimNote + kept.join("") + recent.join("");
       if (Buffer.byteLength(candidate, "utf8") <= maxBytes) {

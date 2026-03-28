@@ -845,7 +845,7 @@ export class OpenGrokClient {
         const response = await this.request(url, TIMEOUTS.search, "application/json");
         const data = (await response.json()) as Record<string, unknown>;
         return parseSearchResponse(data, "refs", symbol);
-      } catch (err) {
+      } catch {
         // Fall through to v1 fallback on any error
       }
     }

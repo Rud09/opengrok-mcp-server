@@ -486,10 +486,12 @@ export function formatWhatChanged(
   const byRevision = new Map<string, { author: string; date: string; lineNumbers: number[] }>();
   for (const line of annotation.lines) {
     if (!recentRevisions.has(line.revision)) continue;
-    if (!byRevision.has(line.revision)) {
-      byRevision.set(line.revision, { author: line.author, date: line.date, lineNumbers: [] });
+    let group = byRevision.get(line.revision);
+    if (!group) {
+      group = { author: line.author, date: line.date, lineNumbers: [] };
+      byRevision.set(line.revision, group);
     }
-    byRevision.get(line.revision)!.lineNumbers.push(line.lineNumber);
+    group.lineNumbers.push(line.lineNumber);
   }
 
   if (!byRevision.size) {

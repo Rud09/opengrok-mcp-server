@@ -76,10 +76,7 @@ function rejectUnauthorized(res: ServerResponse): void {
   res.end(JSON.stringify({ error: "unauthorized", error_description: "Bearer token required" }));
 }
 
-/** Returns true when the host is loopback (127.x.x.x or ::1). */
-function isLoopback(host: string): boolean {
-  return host === "127.0.0.1" || host === "localhost" || host === "::1";
-}
+
 
 // ---------------------------------------------------------------------------
 // OAuth 2.1 helpers
@@ -155,7 +152,6 @@ export async function startHttpTransport(
   opts: HttpTransportOptions
 ): Promise<{ close: () => void }> {
   const { port, host = "127.0.0.1", authToken = "", clientId = "", clientSecret = "", maxSessions = 100, rbacTokens = "" } = opts;
-  const loopback = isLoopback(host);
   const rbacConfig = parseRbacConfig(rbacTokens);
 
   // Active sessions: Mcp-Session-Id → { transport, server, meta }
@@ -248,7 +244,8 @@ export async function startHttpTransport(
       let handle: TransportHandle | undefined;
 
       if (sessionId && sessions.has(sessionId)) {
-        handle = sessions.get(sessionId)!;
+        handle = sessions.get(sessionId);
+        if (!handle) throw new Error("Session vanished");
         handle.meta.lastActivity = new Date();
         handle.meta.requestCount += 1;
       } else if (!sessionId && isInitializeRequest(body)) {
@@ -345,7 +342,8 @@ export async function startHttpTransport(
       res.writeHead(400).end("Invalid or missing session ID");
       return;
     }
-    const handle = sessions.get(sessionId)!;
+    const handle = sessions.get(sessionId);
+    if (!handle) return;
     handle.meta.lastActivity = new Date();
     handle.meta.requestCount += 1;
     try {
@@ -363,7 +361,9 @@ export async function startHttpTransport(
       return;
     }
     try {
-      await sessions.get(sessionId)!.transport.handleRequest(req, res);
+      const handle = sessions.get(sessionId);
+    if (handle) await handle.transport.handleRequest(req, res);
+    else throw new Error("Session vanished");
     } catch (err) {
       logger.error("HTTP DELETE handler error:", err);
       if (!res.headersSent) res.writeHead(500).end("Internal server error");
@@ -426,7 +426,7 @@ export async function startHttpTransport(
       // New request: validate bearer token
       const auth = req.headers.authorization;
       const hasBearer = auth?.startsWith("Bearer ");
-      const bearerToken = hasBearer ? auth!.slice(7) : null;
+      const bearerToken = hasBearer && auth ? auth.slice(7) : null;
 
       if (rbacConfig.tokens.size > 0) {
         // RBAC mode: require token to be in RBAC config
