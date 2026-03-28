@@ -29,28 +29,303 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
 
+### 🚀 v6.0 — Enterprise MCP: HTTP Transport, OAuth 2.1 & RBAC
+
+Streamable HTTP transport for team deployments, OAuth 2.1 with `client_credentials` grant, RBAC (admin/developer/readonly), OpenGrok API v2 support, and full MCP 2025-06-18 spec compliance: structured tool output, MCP Resources, Prompts, Elicitation, and Sampling.
+
+- 🔬 **v5.6** — MCP SDK 1.28.0, `outputSchema` + `structuredContent` on 10 tools, MCP Resources/Prompts/Elicitation/Sampling, `opengrok_blame`, per-tool rate limiting, audit logging, sandbox sanitization.
+- ⚡ **v5.5** — Sandbox worker pool, 4 new tools (`opengrok_what_changed`, `opengrok_dependency_map`, `opengrok_search_pattern`, enhanced `opengrok_index_health`), C++ specialized skill, TSV batch format.
+- 🗃️ **v5.4** — 2-file memory bank (active-task.md + investigation-log.md), rewritten SERVER_INSTRUCTIONS, `opengrok_memory_status` tool, compact Code Mode descriptions, new session/investigation skills.
+- 🐛 **v5.3.2** — P0 bug fixes: activation events, ObservationMasker injection layer, SERVER_INSTRUCTIONS dead references, UI polish.
+
 ---
 
-## [Unreleased — v6.0.0]
+## [6.0.0] - 2026-03-28
 
-### Added
-- HTTP Streamable transport (OPENGROK_HTTP_PORT)
-- OpenGrok API v2 support (OPENGROK_API_VERSION=v2)
-- AI-powered index health prediction
-- Audit trail compliance export (OPENGROK_AUDIT_LOG_FILE + `export-audit` CLI command with CSV/JSON support)
-- Production MCP Sampling with retry/timeout
-- Interleaved thinking annotation for Code Mode
-- MCP Completions API support (infrastructure ready for project autocomplete when SDK v2 releases)
+### 🌐 HTTP Streamable Transport
 
-### Notes
-- **MCP SDK v2 Readiness**: We track v2 development but remain on v1.28.0 until stable.
-  When v2 is released, migration will involve:
-  1. Updating tool argument schemas to use `Completable` fields
-  2. Proper SDK method names (currently using experimental APIs)
-  3. Enhanced completions for all project-scoped parameters
-  4. Resource template URI variables with completion callbacks
-  
-  Migration guide will be added at release time.
+- **Streamable HTTP transport** (`OPENGROK_HTTP_PORT`): run `npm run serve` or set `OPENGROK_HTTP_PORT=3666` to expose an HTTP endpoint alongside stdio
+- Per-session isolated `McpServer` instances via factory pattern — each HTTP client gets its own server context
+- Session TTL (30 min default) with background sweep, configurable cap via `OPENGROK_HTTP_MAX_SESSIONS`
+- `GET /mcp/sessions` endpoint returns active session stats (count, oldest session age)
+- CORS headers and `OPTIONS` preflight support for browser-based MCP clients
+
+### 🔐 OAuth 2.1 Authentication
+
+- Bearer token auth via `OPENGROK_HTTP_AUTH_TOKEN`
+- `client_credentials` grant flow with `OPENGROK_HTTP_CLIENT_ID` / `OPENGROK_HTTP_CLIENT_SECRET`
+- RFC 8414 discovery document at `/.well-known/oauth-authorization-server`
+- RFC 8252 loopback CORS relaxation for native app clients (leverages MCP SDK 1.28.0)
+- 401 and 403 responses are fully JSON-RPC 2.0 compliant — no custom error formats
+
+### 👥 Role-Based Access Control (RBAC)
+
+- Three roles: `admin` / `developer` / `readonly` — configured via `OPENGROK_RBAC_TOKENS='tok1:admin,tok2:readonly'`
+- **Fail-safe**: unknown or missing tokens default to `readonly` (not `admin`)
+- Permission matrix: admin = full access; developer = all tools except RBAC config; readonly = search/read tools only
+- RBAC enforced at the HTTP transport layer before tool dispatch
+
+### 🔧 New Tool
+
+- **`opengrok_call_graph`**: traces call chains from a symbol using OpenGrok API v2 `/symbol/{name}/callgraph` endpoint; includes `outputSchema` for structured output and graceful v1 fallback on 404
+
+### 🗄️ OpenGrok API v2
+
+- `OPENGROK_API_VERSION=v2` — all five HTTP client methods (`searchCode`, `getFileContent`, `getFileHistory`, `getFileAnnotate`, `getFileSymbols`) use the configurable `apiPath`; defaults to `/api/v1` for backward compatibility
+- `opengrok_call_graph` uses the v2-only `/api/v2/symbol/{name}/callgraph` endpoint with automatic v1 fallback
+
+### 🏢 Enterprise Features
+
+- **FileReferenceCache** (`OPENGROK_ENABLE_FILES_API`): SHA-256 content-addressed cache for `investigation-log.md` reduces repeated read costs
+- **Audit log export** (`OPENGROK_AUDIT_LOG_FILE`): structured audit trail written to file in CSV or JSON format; `export-audit` CLI subcommand
+- **MCP Completions infrastructure**: project-name autocomplete for all project-scoped parameters (active; full `Completable` field support pending MCP SDK v2)
+- **Production MCP Sampling**: `sampleOrNull()` wrapper with retry/backoff, 10 s timeout, model preference via `OPENGROK_SAMPLING_MODEL` / `OPENGROK_SAMPLING_MAX_TOKENS`, SHA-256-based deduplication cache
+- **Interleaved thinking** (`x-supports-interleaving` annotation) on `opengrok_api` and `opengrok_execute` Code Mode tools
+- **AI-powered index health prediction**: `opengrok_index_health` now returns `stalenessScore` and `latencyTrend` computed from recent search hit rates and index age
+
+### 🐛 Bug Fixes (Quality Review)
+
+- `extractRole()` now defaults to `readonly` instead of `admin` for unknown/missing tokens — critical security fix
+- HTTP 403 responses are now JSON-RPC 2.0 format (`{"jsonrpc":"2.0","error":{"code":-32603,...}}`)
+- All 5 HTTP client methods now use `this.apiPath` (was silently hardcoded to `/api/v1`)
+- Sampling periodic cleanup timer properly cancelled on server close, preventing memory leaks
+- SHA-256 upgrade for FileReferenceCache (replaced weak hash)
+- `SessionMetadata.role` typed as `Role` instead of `string`
+- Dead CORS ternary removed from HTTP transport options
+
+### 📈 Stats
+
+- Tests: 773 → **861** (+88 tests, 42 test files)
+- New files: `src/server/http-transport.ts`, `src/server/rbac.ts`, `src/server/file-cache.ts`
+
+### ⚠️ MCP SDK v2 Readiness
+
+This version uses `@modelcontextprotocol/sdk` v1.28.0. MCP SDK v2 is in pre-alpha; we will migrate when stable (expected Q3–Q4 2026). Migration will involve enhanced `Completable` fields, resource template URI variables, and updated method names. A migration guide will be published at release time.
+
+---
+
+## [5.6.0] - 2026-03-27
+
+### 🔬 MCP SDK 1.28.0 Upgrade
+
+- Upgraded `@modelcontextprotocol/sdk` to `1.28.0` (pinned) — the first version with full structured output support
+- Added Zod schema validation CI test for `inputSchema` rejection of plain JSON schema objects
+- RFC 8252 loopback port relaxation now available for future HTTP transport (Phase 5)
+
+### 📊 Structured Tool Output (MCP 2025-06-18 spec)
+
+All major tools now return both `content` (markdown for LLM) and `structuredContent` (typed JSON for clients):
+- `opengrok_index_health` → `IndexHealthOutput` schema (connected, latencyMs, indexedProjects, warnings, stalenessScore)
+- `opengrok_memory_status` → `MemoryStatusOutput` schema (files array with name, status, bytes, preview)
+- `opengrok_blame` → `BlameOutput` schema (lines with author, date, commit, content)
+- `opengrok_what_changed` → `WhatChangedOutput` schema (commits with files and line changes)
+- `opengrok_dependency_map` → `DependencyMapOutput` schema (nodes with edges, depth, direction)
+- `opengrok_search_pattern` → `SearchPatternOutput` schema (matches with file, line, context)
+- `opengrok_batch_search` → `BatchSearchOutput` schema (per-query results with dedup metadata)
+- `opengrok_get_symbol_context` → `SymbolContextOutput` schema (definition, references, file content)
+- `opengrok_get_file_history` → `FileHistoryOutput` schema
+- `opengrok_call_graph` → `CallGraphOutput` schema
+- All tools include `_meta` enrichment: `latencyMs`, `cacheHit`, `stalenessHint`
+- Resource links (`resource_link` type) in file-returning tool results for lazy-loading via MCP Resources
+
+### 📁 MCP Resources
+
+- `opengrok-memory://active-task.md` and `opengrok-memory://investigation-log.md` registered as readable MCP Resources
+- Clients can `resources/read` memory files directly without going through tool calls
+- Resource `scopes_supported` declared for access control (leverages MCP SDK 1.28.0 metadata)
+
+### 💬 MCP Prompts
+
+Three reusable investigation prompts registered:
+- `investigate-symbol` — systematic symbol investigation workflow (search → read → refs → blame)
+- `find-feature` — feature location across project (batch search → dependency map → history)
+- `review-file` — file quality review (symbols → history → annotate → blame)
+
+### ❓ MCP Elicitation
+
+- `OPENGROK_ENABLE_ELICITATION=true` enables project picker when no project is specified and >1 project exists
+- Uses `server.elicitInput()` with graceful fallback for clients that don't support elicitation
+- Form schema: radio selector for project name from `opengrok_list_projects`
+
+### 🤖 MCP Sampling
+
+- `sampleOrNull()` wrapper calls `server.createMessage()` for two use cases:
+  1. **Error explanation**: translates cryptic sandbox errors into plain English
+  2. **Graph summarization**: converts large dependency maps into readable summaries
+- Graceful no-op when client doesn't support sampling capability
+- Respects `OPENGROK_SAMPLING_MODEL` and `OPENGROK_SAMPLING_MAX_TOKENS` config
+
+### 🔔 tools/list_changed Notification
+
+- Server sends `notifications/tools/list_changed` when Code Mode is toggled via SIGHUP config reload
+- Background connectivity polling every 5 minutes — notifies clients if server becomes unreachable
+- `OPENGROK_HTTP_PORT` config changes trigger notification to reload available tools
+
+### 🔨 New Tools
+
+- **`opengrok_blame`**: full git blame with line range (`start_line`/`end_line`), author/date/commit per line, `outputSchema` with `BlameOutput`, `_meta` field, resource link to file
+- **`opengrok_get_task_result`**: polls async task status by task ID (for long-running `opengrok_execute` sandbox jobs); returns `pending` / `running` / `done` / `failed` states
+
+### 🔒 Security
+
+- **Sandbox error sanitization**: strips file system paths, Node.js stack frames, and internal module names from QuickJS errors before returning to LLM
+- **Structured audit logging**: all 22 tool invocations emit structured JSON to stderr (`{"audit":true,"type":"tool_invoke","tool":"...","durationMs":...}`); optionally written to `OPENGROK_AUDIT_LOG_FILE`
+- **Per-tool rate limiting** (`OPENGROK_PER_TOOL_RATELIMIT`): override RPM per tool using `tool:rpm,tool:rpm` format; enforced by `ToolRateLimiter` class
+- **Credential rotation warnings**: at startup, warns if `OPENGROK_PASSWORD` or `OPENGROK_PASSWORD_FILE` credentials are older than 90 days (`OPENGROK_CREDENTIAL_MAX_AGE_DAYS`)
+- **Request origin validation**: validates `Origin` header on HTTP requests; rejects non-allowlisted origins with 403
+- **`OPENGROK_ALLOWED_CLIENT_IDS`**: config key reserved for future per-client enforcement (enforcement pending SDK client-context API stabilization)
+
+### 🗂️ Task Registry
+
+- `src/server/task-registry.ts`: in-memory async task store for `opengrok_execute`
+- `createTask()`, `completeTask()`, `failTask()`, `getTask()` with 30-minute TTL for running tasks
+- Integrated with `opengrok_execute` handler: long-running sandbox jobs return a task handle, polled via `opengrok_get_task_result`
+
+### 🐛 Bug Fixes (Quality Review)
+
+- Task registry now correctly wired — `opengrok_get_task_result` was always returning "not found" before this fix
+- Path sanitizer broadened to catch `/etc`, `/proc`, relative paths, and UNC paths (switched to broad regex)
+- Running tasks properly cleaned up with TTL to prevent orphaned state
+- `opengrok_blame` `outputSchema` guard added to prevent type mismatch at runtime
+- Health-check polling interval properly cleared on server shutdown
+
+### 📈 Stats
+
+- Tests: 613 (v5.5.0) → 673 → **773** (+100 tests total)
+- New files: `src/server/audit.ts`, `src/server/elicitation.ts`, `src/server/sampling.ts`, `src/server/task-registry.ts`
+
+---
+
+## [5.5.0] - 2026-03-27
+
+### ⚡ Performance
+
+- **Sandbox worker pool** (`src/server/worker-pool.ts`): `SandboxWorkerPool` keeps up to 2 idle workers warm, reusing QuickJS WASM instances across `opengrok_execute` calls; `acquire()`/`release()`/`drain()` lifecycle with `isAlive` flag preventing recycling of terminated workers
+- **HTTP connection pool**: undici pool tuned to `connections: 20`, `keepAliveTimeout: 60_000 ms` for throughput
+- **Cache pre-warming**: `warmCache()` called after successful `opengrok_index_health` check to pre-populate project list and hot search paths
+- **JSON-aware Code Mode truncation** (`capCodeModeResult()`): truncates large sandbox results at JSON array element boundaries instead of byte boundaries, preserving valid JSON
+- **Batch search deduplication** (`deduplicateAcrossQueries()`): removes identical `file:line` hits across parallel query results, eliminating duplicate context tokens
+- **Grep-style line format**: TSV and text output now uses `file.ext:line: content` format instead of tabular `60 | content`, reducing tokens ~15%
+- **TSV format for batch search**: `opengrok_batch_search` now supports `response_format: "tsv"` for compact output
+
+### 🔧 New Tools
+
+- **`opengrok_what_changed`**: shows recent line changes grouped by commit — author, date, commit SHA, and changed lines with context; useful for "what changed around this crash?"
+- **`opengrok_dependency_map`**: BFS traversal of `#include`/`import` chains up to configurable depth (1–3); returns directed graph with `uses`/`used_by` direction; supports `outputSchema`
+- **`opengrok_search_pattern`**: regex code search using OpenGrok's `regexp=true` parameter; returns grep-style `file:line:content` matches with `outputSchema`
+- **Enhanced `opengrok_index_health`**: now returns `latencyMs`, `indexedProjects` count, per-project staleness warnings, and `indexingInProgress` flag in both text and structured output
+
+### 🎨 UI & VS Code Extension
+
+- **Status bar badge**: OpenGrok status bar item now shows `v6.0.0` version tag
+- **Versioned setup prompt key** (`opengrok.setupPrompted.v2`): prevents re-showing setup dialog after upgrades by using a version-scoped key instead of a fixed boolean
+
+### 📖 Skills
+
+- **`skills/opengrok-cpp/SKILL.md`** (new, 489 lines): C++-specialized skill with 7 sections — class/template/macro search, include chain tracing, compiler flag extraction, cross-file impact analysis, and full Code Mode workflow for C++
+- **`skills/opengrok/SKILL.md`**: updated tool count, added `opengrok_what_changed`, `opengrok_dependency_map`, `opengrok_search_pattern`, `opengrok_memory_status` to tool selection table
+
+### 🐛 Bug Fixes (Quality Review)
+
+- `opengrok_dependency_map` `uses` direction now correctly uses `refs` search type instead of `path` search (was returning file paths instead of actual references)
+- Diamond dependency deduplication: BFS graph builder uses `seenUsesPaths` set to prevent duplicate nodes in diamond-shaped dependency graphs
+- `opengrok_search_pattern` `dispatchTool` now correctly passes `response_format` argument (was always returning markdown)
+- Self-skip in `opengrok_dependency_map` now compares full paths instead of basenames (prevented different files with the same name from appearing in results)
+
+### 📈 Stats
+
+- Tests: 613 (v5.4.0) → **673** (+60 tests)
+- New files: `src/server/worker-pool.ts`, `skills/opengrok-cpp/SKILL.md`
+
+---
+
+## [5.4.0] - 2026-03-27
+
+### 🗃️ 2-File Memory Architecture
+
+Complete redesign of the Living Document memory bank from 6 files to 2 focused files:
+
+**Before (6 files):** `AGENTS.md`, `codebase-map.md`, `symbol-index.md`, `known-patterns.md`, `investigation-log.md`, `active-context.md`  
+**After (2 files):** `active-task.md` (≤4 KB, structured task state) + `investigation-log.md` (≤32 KB, append-only log)
+
+Key changes:
+- **Automatic migration**: on first startup with old files, migrates `active-context.md` → `active-task.md`, deletes the 4 deprecated files, logs warnings for files with real content (directs user to VS Code `/memory` command)
+- **`active-task.md` structured format**: YAML-like front matter (`task:`, `started:`, `last_symbol:`, `last_file:`, `next_step:`, `open_questions:`, `status:`) for easy parsing
+- **Auto-timestamp on append**: `investigation-log.md` in append mode automatically adds `## YYYY-MM-DD HH:MM: Session Update` heading when content doesn't start with `## `
+- **Delta encoding**: repeated reads return `[unchanged]` when content hash matches last read, eliminating redundant context tokens
+- **Richness-scored trimming**: when `investigation-log.md` exceeds capacity, entries are scored by symbol count, conclusion markers, and dead-end penalty; lowest-scoring oldest entries trimmed first (always keeps 2 most recent)
+- **Compressed initial read**: when `investigation-log.md` exceeds 8 KB, `readCompressed()` returns last 3 entries + `[N older entries omitted]` header
+- **Non-VS Code note**: documented in SERVER_INSTRUCTIONS that non-VS Code clients must manage general codebase context themselves; our memory bank handles only investigation state
+
+### 🛠️ New Tool
+
+- **`opengrok_memory_status`** (19th tool): shows both memory files with status (`populated` / `empty` / `stub`), byte counts, and 3-line content preview; returns `MemoryStatusOutput` structured output; helps LLM decide whether memory is worth reading
+
+### 🧠 Rewritten SERVER_INSTRUCTIONS
+
+Complete rewrite to v6.2 §4.2 — 310 tokens:
+- **Session startup protocol** (4 steps): health check → memory_status → read active-task.md → proceed
+- **Decision tree**: Code Mode wins for >3-hop investigations; classic tools win for single lookups
+- **Mandatory memory before answer**: LLM must write investigation summary before final response
+- **Memory reminder**: injected every 5th `opengrok_execute` call
+- **Memory write format**: explicit active-task.md front matter format with required fields
+
+### 📦 Code Mode Optimizations
+
+- **Compact tool descriptions** in Code Mode: all 14 legacy tools use condensed ~12-token descriptions when `OPENGROK_CODE_MODE=true`, reducing tool listing from ~500 tokens to ~171 tokens
+- **`desc()` helper**: `desc(full, compact)` utility applied to all 14 legacy tool registrations for clean inline toggling
+
+### 🖥️ VS Code Extension
+
+- **Compile Commands UI field**: new "Compile Commands DB" advanced setting in Configuration Manager maps to `OPENGROK_LOCAL_COMPILE_DB_PATHS` (comma-separated paths to `compile_commands.json`)
+- **currentConfig sync fix**: `currentConfig.codeMode` now correctly updated on every save, preventing stale Code Mode state across multiple saves
+
+### 🔧 Configuration
+
+- **`OPENGROK_ENABLE_CACHE_HINTS`** (`true`/`false`, default `false`): enables `cache-control: immutable` response hints for prompt caching; infrastructure-level flag for future Anthropic prompt cache integration
+- **CLI memory bank path**: now uses `XDG_CONFIG_HOME` (or `~/.config/opengrok-mcp/memory-bank/`) for standalone CLI deployments, giving each project a stable cross-session path
+- **`OPENGROK_LOCAL_COMPILE_DB_PATHS`**: comma-separated list of absolute paths to `compile_commands.json` files for C/C++ compiler flag extraction
+
+### 📖 Skills
+
+Three new/updated skill files:
+- **`skills/opengrok/SKILL.md`**: rewritten with Code Mode decision tree, tool selection table, new 2-file memory architecture, VS Code Copilot memory integration note
+- **`skills/opengrok-investigation/SKILL.md`** (new): investigation loop patterns — bug root cause, module exploration, cross-project impact analysis; when to use Code Mode vs classic
+- **`skills/opengrok-session/SKILL.md`** (new): session startup (4-step protocol), multi-session handoff pattern, mandatory investigation-log writes
+
+### 🐛 Bug Fixes
+
+- `opengrok_memory_status`: skip blank lines in preview, remove dead `.catch()` on non-promise
+- Fixed 11 pre-existing test failures from v5.3.1 related to old 6-file memory architecture
+
+### 📈 Stats
+
+- Tests: 599 (v5.3.2) → **613** (+14 tests, 27 new tests minus 11 fixed failures)
+- New files: `skills/opengrok-investigation/SKILL.md`, `skills/opengrok-session/SKILL.md`
+
+---
+
+## [5.3.2] - 2026-03-27
+
+### 🐛 Bug Fixes
+
+- **`hasPromptedConfig` removed from VS Code settings** (Bug 1.1): the value is managed in `globalState`, not VS Code settings — removing it prevents it from appearing in the user's `settings.json`
+- **Activation events tightened** (§2.4): replaced broad `onStartupFinished` with 6 specific command triggers (`onCommand:opengrok-mcp.configure`, `onCommand:opengrok-mcp.configureUI`, `onCommand:opengrok-mcp.test`, `onCommand:opengrok-mcp.statusMenu`, `onCommand:opengrok-mcp.checkUpdate`, `onExtension:github.copilot-chat`); extension no longer activates on every VS Code startup
+- **SERVER_INSTRUCTIONS dead references fixed** (Bug 1.2): replaced `opengrok_list_memory_files` (non-existent) with `opengrok_memory_status`; replaced old 6-file memory paths (`AGENTS.md`, `active-context.md`) with correct 2-file paths
+- **ObservationMasker injection layer fixed** (Bug 1.7): session history was incorrectly injected as code comments inside the sandboxed JS — now correctly prepended to the tool result text where the LLM can see it
+- **`currentConfig.codeMode` stale state** (Bug 1.5): Code Mode toggle state now correctly synced on every save, not just the first
+- **batchSearch parallelism documentation** (Bug 1.4): clarified in `API_SPEC` and `SKILL.md` that `Promise.all()` inside sandbox does not parallelize — use `env.opengrok.batchSearch()` which runs queries in parallel on the host event loop
+
+### ✨ UI Improvements
+
+- **Configuration panel opens beside**: `ViewColumn.Beside` used for Configuration Manager — opens next to current editor, preserving workspace layout
+- **Silent connection test on save**: `testConnection()` runs silently after config save; no "Reload Window" popup unless a real change requires it
+- **Deferred update check** (Bug 1.6): auto-update check deferred 30 s after activation to avoid blocking extension startup
+- **Code Mode toggle progress feedback**: status bar shows brief "Refreshing tools..." message during Code Mode toggle, then reverts; prevents double-click race conditions
+
+### 📈 Stats
+
+- Tests: 599 (unchanged — pure bug fix release)
 
 ---
 
