@@ -57,6 +57,7 @@ import {
   GetFileContentArgs,
   GetFileHistoryArgs,
   GetFileSymbolsArgs,
+  CallGraphArgs,
   GetSymbolContextArgs,
   IndexHealthArgs,
   ListProjectsArgs,
@@ -81,6 +82,8 @@ import {
 import type {
   FileContent,
   SearchResults,
+  SearchResult,
+  SearchMatch,
   Project,
 } from "./models.js";
 import { BUDGET_LIMITS } from "./config.js";
@@ -228,6 +231,8 @@ You MUST do both of these before responding to the user:
   2. If a significant finding: opengrok_update_memory("investigation-log.md", <summary>, "append")
 
 Memory files: active-task.md (current task) | investigation-log.md (findings log)
+Note: When OPENGROK_ENABLE_FILES_API=true, investigation-log.md is cached by content hash;
+      opengrok_read_memory returns "[unchanged]" when no new entries have been appended.
 `.trim();
 
 // ---------------------------------------------------------------------------
@@ -1047,11 +1052,34 @@ async function dispatchTool(
         warnings.push("Could not retrieve project list");
       }
       
+      // Compute staleness signals (Task 5.8)
+      let latencyTrend: "stable" | "increasing" | "first_check" = "first_check";
+      let stalenessScore: "healthy" | "possibly_stale" | "likely_stale" = "healthy";
+      
+      if (lastHealthCheckLatencyMs !== null) {
+        latencyTrend = latencyMs > lastHealthCheckLatencyMs * 1.5 ? "increasing" : "stable";
+      }
+      lastHealthCheckLatencyMs = latencyMs;
+      
+      // Staleness heuristics:
+      // 1. High latency (>500ms) suggests server load or indexing activity
+      // 2. Increasing latency trend suggests growing load
+      // 3. No projects indexed suggests potential issue
+      if (latencyMs > 500) {
+        stalenessScore = latencyTrend === "increasing" ? "likely_stale" : "possibly_stale";
+      }
+      if (indexedProjects === 0 && ok) {
+        warnings.push("No projects indexed");
+        stalenessScore = "possibly_stale";
+      }
+      
       // Construct the result object
       const health = {
         connected: ok,
         latencyMs,
         indexedProjects,
+        latencyTrend,
+        stalenessScore,
         warnings,
       };
       
@@ -1067,6 +1095,8 @@ async function dispatchTool(
           `connected: ${health.connected}`,
           `latencyMs: ${health.latencyMs}`,
           `indexedProjects: ${health.indexedProjects}`,
+          `latencyTrend: ${health.latencyTrend}`,
+          `stalenessScore: ${health.stalenessScore}`,
           ...(health.warnings.length > 0
             ? [`warnings:\n${health.warnings.map((w) => `  - ${w}`).join("\n")}`]
             : []),
@@ -1080,6 +1110,8 @@ async function dispatchTool(
           `- **Connected:** ${health.connected}`,
           `- **Latency:** ${health.latencyMs}ms`,
           `- **Indexed projects:** ${health.indexedProjects}`,
+          `- **Latency trend:** ${health.latencyTrend}`,
+          `- **Staleness:** ${health.stalenessScore}`,
           ...(health.warnings.length > 0
             ? [`- **Warnings:** ${health.warnings.join(", ")}`]
             : []),
@@ -1165,6 +1197,24 @@ export function createServer(
   // Task 4.6: Register MCP Prompts
   registerInvestigationPrompts(server);
 
+  // Task 5.13: MCP Completions infrastructure ready for SDK v2
+  // When SDK v2 is released with completion support, uncomment this:
+  // server.setCompletionRequestHandler(async (request) => {
+  //   if (request.ref.name === "project" || request.ref.argument?.name === "project") {
+  //     try {
+  //       const projects = await client.listProjects();
+  //       const query = request.argument?.value ?? "";
+  //       const matching = projects
+  //         .filter(p => p.toLowerCase().includes(query.toLowerCase()))
+  //         .slice(0, 10);
+  //       return { completion: { values: matching } };
+  //     } catch {
+  //       return { completion: { values: [] } };
+  //     }
+  //   }
+  //   return { completion: { values: [] } };
+  // });
+
   return server;
 }
 
@@ -1174,7 +1224,8 @@ export function createServer(
 
 function registerMemoryTools(
   server: McpServer,
-  memoryBank: MemoryBank
+  memoryBank: MemoryBank,
+  config: Config
 ): void {
   server.registerTool(
     "opengrok_memory_status",
@@ -1227,6 +1278,17 @@ function registerMemoryTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_read_memory" });
       try {
+        if (config.OPENGROK_ENABLE_FILES_API && args.filename === "investigation-log.md") {
+          const ref = await memoryBank.getFileReference(args.filename);
+          if (ref === null) {
+            return { content: [{ type: "text", text: "[unchanged]" }] };
+          }
+          const content = await memoryBank.read(args.filename);
+          if (!content) {
+            return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
+          }
+          return { content: [{ type: "text", text: capResponse(content) }] };
+        }
         const content = await memoryBank.read(args.filename);
         if (!content) {
           return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
@@ -1270,6 +1332,9 @@ function registerMemoryTools(
 // ---------------------------------------------------------------------------
 
 let executeCallCount = 0;
+
+// Health check state for staleness prediction (Task 5.8)
+let lastHealthCheckLatencyMs: number | null = null;
 
 const workerPool = new SandboxWorkerPool();
 
@@ -1340,7 +1405,8 @@ function registerCodeModeTools(
         "Get the full API specification for Code Mode. " +
         "Call this ONCE at session start before writing any opengrok_execute code.",
       inputSchema: { _ : z.string().optional().describe("(no input required)") },
-      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
+      // x-supports-interleaving: extended thinking hint for Claude (Task 5.9)
+      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false, "x-supports-interleaving": true } as ToolAnnotations,
     },
     async () => {
       auditLog({ type: "tool_invoke", tool: "opengrok_api" });
@@ -1368,7 +1434,8 @@ function registerCodeModeTools(
           "Use the opengrok object to access the API. Return a value."
         ),
       },
-      annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false, destructiveHint: false },
+      // x-supports-interleaving: extended thinking hint for Claude (Task 5.9)
+      annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false, destructiveHint: false, "x-supports-interleaving": true } as ToolAnnotations,
     },
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_execute" });
@@ -1406,7 +1473,7 @@ function registerCodeModeTools(
                   text: `The following JavaScript code failed in a sandbox:\n\`\`\`js\n${args.code}\n\`\`\`\n${result}\n\nBriefly explain what went wrong and suggest a fix.`,
                 },
               },
-            ], { maxTokens: 256, systemPrompt: "You are a helpful code debugger. Be concise." });
+            ], { maxTokens: config.OPENGROK_SAMPLING_MAX_TOKENS, systemPrompt: "You are a code debugging assistant for OpenGrok. Be concise.", model: config.OPENGROK_SAMPLING_MODEL, retries: 2 });
             taskRegistry.completeTask(taskId, suggestion ? `${result}\n\nSuggestion: ${suggestion}` : result);
             return;
           }
@@ -2029,6 +2096,57 @@ function registerLegacyTools(
   );
 
   server.registerTool(
+    "opengrok_call_graph",
+    {
+      title: "Get Call Graph",
+      description: desc(
+        "Find all callers and callees of a function or method symbol (v2 API if configured, v1 fallback).\n\n" +
+        "**When to use**: To understand function call relationships and dependencies.\n\n" +
+        "**Args**: `project` and `symbol` (required).\n\n" +
+        "**Example**: Use to trace how a function is called through the codebase.",
+        "(fallback) callers and callees of a symbol"
+      ),
+      inputSchema: CallGraphArgs.shape,
+      outputSchema: SearchResultsOutput.shape,
+      annotations: READ_ONLY_OPEN,
+    },
+    async (args) => {
+      auditLog({ type: "tool_invoke", tool: "opengrok_call_graph" });
+      try {
+        const parsed = CallGraphArgs.parse(args as unknown as Record<string, unknown>);
+        const results = await client.getCallGraph(parsed.project, parsed.symbol);
+        const fmt = selectFormat("search", parsed.response_format as ResponseFormat | undefined);
+        const text = fmt === "tsv" ? formatSearchResultsTSV(results) : formatSearchResults(results);
+        const structured = {
+          _meta: {
+            tool: "opengrok_call_graph",
+            project: parsed.project,
+            symbol: parsed.symbol,
+            fetchedAt: new Date().toISOString(),
+            version: __VERSION__,
+          },
+          results: results.results.map((r: SearchResult) => ({
+            file: r.path,
+            project: r.project,
+            lines: r.matches.map((m: SearchMatch) => ({
+              number: m.lineNumber,
+              content: m.lineContent,
+            })),
+          })),
+        };
+        return {
+          content: [{ type: "text", text }],
+          isError: false,
+          _meta: structured._meta,
+          _results: structured.results,
+        };
+      } catch (err) {
+        return makeToolError("opengrok_call_graph", err);
+      }
+    }
+  );
+
+  server.registerTool(
     "opengrok_what_changed",
     {
       title: "What Changed",
@@ -2216,7 +2334,7 @@ function registerLegacyTools(
 
   // Memory bank tools — available when a MemoryBank is provided
   if (memoryBank) {
-    registerMemoryTools(server, memoryBank);
+    registerMemoryTools(server, memoryBank, config);
   }
   // registerLegacyTools intentionally returns void — server is mutated in place
 }

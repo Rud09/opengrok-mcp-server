@@ -322,6 +322,7 @@ export function buildSafeUrl(baseUrl: URL, ...segments: string[]): URL {
 
 export class OpenGrokClient {
   private readonly baseUrl: URL;
+  private readonly apiPath: string;
   private readonly authHeader: string | undefined;
   private readonly verifySsl: boolean;
   private readonly rateLimiter: RateLimiter | undefined;
@@ -339,6 +340,7 @@ export class OpenGrokClient {
       ? config.OPENGROK_BASE_URL
       : /* v8 ignore next -- tested in client-extended L294 with no trailing slash */ config.OPENGROK_BASE_URL + "/";
     this.baseUrl = new URL(raw);
+    this.apiPath = config.OPENGROK_API_VERSION === "v2" ? "api/v2" : "api/v1";
     this.verifySsl = config.OPENGROK_VERIFY_SSL;
     const agentOptions = {
       connections: 20,
@@ -503,7 +505,7 @@ export class OpenGrokClient {
       return results;
     }
 
-    const url = buildSafeUrl(this.baseUrl, "api/v1/search");
+    const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/search`);
     url.searchParams.set(searchType, query);
     url.searchParams.set("maxresults", String(maxResults));
     if (projects?.length) {
@@ -560,7 +562,7 @@ export class OpenGrokClient {
     maxResults?: number;
   }): Promise<SearchResults> {
     const { pattern, projects, fileType, maxResults = 20 } = opts;
-    const url = buildSafeUrl(this.baseUrl, "api/v1/search");
+    const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/search`);
     url.searchParams.set("full", pattern);
     url.searchParams.set("regexp", "true");
     url.searchParams.set("maxresults", String(maxResults));
@@ -581,7 +583,7 @@ export class OpenGrokClient {
     project?: string,
     field: string = "full"
   ): Promise<{ suggestions: string[]; time: number; partialResult: boolean }> {
-    const url = buildSafeUrl(this.baseUrl, "api/v1/suggest");
+    const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/suggest`);
     url.searchParams.set(field, query);
     url.searchParams.set("field", field);
     url.searchParams.set("caret", String(query.length));
@@ -712,7 +714,7 @@ export class OpenGrokClient {
       return JSON.parse(cached) as FileSymbols;
     }
     /* v8 ignore stop */
-    const url = buildSafeUrl(this.baseUrl, "api/v1/file/defs");
+    const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/file/defs`);
     url.searchParams.set("path", "/" + normalizedPath);
     try {
       const response = await this.request(url, TIMEOUTS.file, "application/json");
@@ -805,7 +807,7 @@ export class OpenGrokClient {
 
   async testConnection(): Promise<boolean> {
     try {
-      const url = buildSafeUrl(this.baseUrl, "api/v1/projects");
+      const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/projects`);
       const response = await this.request(url, TIMEOUTS.suggest);
       if (!response.ok) return false;
       const json = await response.json() as unknown;
@@ -813,6 +815,41 @@ export class OpenGrokClient {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Get call graph for a symbol (API v2 only, with v1 fallback).
+   * v2 endpoint: GET /api/v2/symbol/{symbol}/callgraph?project={project}
+   * v1 fallback: search for refs to construct a basic dependency view
+   */
+  async getCallGraph(
+    project: string,
+    symbol: string
+  ): Promise<SearchResults> {
+    if (!project.trim()) throw new Error("project must not be empty");
+    if (!symbol.trim()) throw new Error("symbol must not be empty");
+
+    // If v2 API is configured, try the dedicated endpoint
+    if (this.config.OPENGROK_API_VERSION === "v2") {
+      try {
+        const url = buildSafeUrl(
+          this.baseUrl,
+          this.apiPath,
+          "symbol",
+          encodeURIComponent(symbol),
+          "callgraph"
+        );
+        url.searchParams.set("project", project);
+        const response = await this.request(url, TIMEOUTS.search, "application/json");
+        const data = (await response.json()) as Record<string, unknown>;
+        return parseSearchResponse(data, "refs", symbol);
+      } catch (err) {
+        // Fall through to v1 fallback on any error
+      }
+    }
+
+    // Fallback: search for symbol refs (v1 compatible)
+    return this.search(symbol, "refs", [project]);
   }
 
   /**

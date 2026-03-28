@@ -45,6 +45,7 @@ export const SearchCodeArgs = z.object({
   max_results: z.number().int().min(1).max(100).default(10),
   start_index: z.number().int().min(0).default(0),
   file_type: z.string().optional().describe(FILE_TYPE_DESC),
+  stream: z.boolean().default(false).describe("Stream results progressively (HTTP transport only). When true, results are sent via SSE as they arrive."),
   response_format: RESPONSE_FORMAT,
 });
 
@@ -194,6 +195,12 @@ export const GetCompileInfoArgs = z.object({
 export const GetFileSymbolsArgs = z.object({
   project: z.string().min(1).describe("OpenGrok project name"),
   path: z.string().min(1).describe("Path to the file within the project (e.g. GridNode/EventLoop.cpp)"),
+  response_format: RESPONSE_FORMAT,
+});
+
+export const CallGraphArgs = z.object({
+  project: z.string().min(1).describe("OpenGrok project name"),
+  symbol: z.string().min(1).describe("Symbol name (function or method name) to get call graph for"),
   response_format: RESPONSE_FORMAT,
 });
 

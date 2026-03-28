@@ -100,14 +100,36 @@ const ConfigSchema = z.object({
   OPENGROK_MEMORY_BANK_DIR: z.string().default(""),
   // Global response format override (empty = auto per-call)
   OPENGROK_RESPONSE_FORMAT_OVERRIDE: z.string().default(""),
+  // Audit log file path (appended to, in addition to stderr)
+  OPENGROK_AUDIT_LOG_FILE: z.string().default(""),
   // Prompt caching hints (reserved for future explicit cache-control headers)
   OPENGROK_ENABLE_CACHE_HINTS: z.coerce.boolean().default(false),
   // MCP Elicitation — ask user for input during tool execution (e.g., pick project)
   OPENGROK_ENABLE_ELICITATION: z.coerce.boolean().default(false),
+  // Files API cache layer — tracks investigation-log.md uploads to avoid re-sending unchanged content
+  OPENGROK_ENABLE_FILES_API: z.coerce.boolean().default(false)
+    .describe("Use Files API cache for investigation-log.md (when supported by SDK)"),
   // Per-tool rate limiting (comma-separated tool=rpm pairs, e.g. "opengrok_batch_search=5,opengrok_execute=10")
   OPENGROK_PER_TOOL_RATELIMIT: z.string().default(""),
   // Allowed client IDs for request origin validation (comma-separated, empty = no restriction)
   OPENGROK_ALLOWED_CLIENT_IDS: z.string().default(""),
+  // OpenGrok REST API version (Task 5.7)
+  OPENGROK_API_VERSION: z.enum(["v1", "v2"]).default("v1")
+    .describe("OpenGrok REST API version (v1 or v2, default: v1)"),
+  // Sampling — token budget and model preference (Task 5.5)
+  OPENGROK_SAMPLING_MAX_TOKENS: z.coerce.number().int().min(64).max(4096).default(256),
+  OPENGROK_SAMPLING_MODEL: z.string().default(""),
+  // HTTP transport OAuth 2.1 (Task 5.3)
+  // Shared-secret Bearer token for HTTP transport auth (empty = no auth required)
+  OPENGROK_HTTP_AUTH_TOKEN: z.string().default(""),
+  // client_credentials OAuth 2.1 client ID and secret (empty = no OAuth token endpoint)
+  OPENGROK_HTTP_CLIENT_ID: z.string().default(""),
+  OPENGROK_HTTP_CLIENT_SECRET: z.string().default(""),
+  // HTTP transport — max concurrent sessions (Task 5.2)
+  OPENGROK_HTTP_MAX_SESSIONS: zIntString("100"),
+  // RBAC for multi-user HTTP deployments (Task 5.10)
+  OPENGROK_RBAC_TOKENS: z.string().default("")
+    .describe("RBAC token config: 'token1:admin,token2:readonly' format"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

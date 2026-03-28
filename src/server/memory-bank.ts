@@ -15,6 +15,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { logger } from "./logger.js";
+import { FileReferenceCache } from "./file-cache.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -62,6 +63,7 @@ status: idle
 export class MemoryBank {
   private readonly dir: string;
   private lastReadHash = new Map<string, string>();
+  readonly fileRefCache = new FileReferenceCache();
 
   /**
    * @param dir — absolute path to the memory-bank directory.
@@ -69,6 +71,20 @@ export class MemoryBank {
    */
   constructor(dir: string) {
     this.dir = dir;
+  }
+
+  /**
+   * Returns a hash-based file reference for the given file, registering it in
+   * the FileReferenceCache. If the content is unchanged since last call, returns
+   * null so callers can short-circuit and emit "[unchanged]" instead.
+   *
+   * When MCP SDK gains Files API support, this method becomes the upload layer.
+   */
+  async getFileReference(filename: string): Promise<string | null> {
+    const content = await this.read(filename);
+    if (content === undefined) return null;
+    if (this.fileRefCache.isUnchanged(filename, content)) return null;
+    return this.fileRefCache.register(filename, content);
   }
 
   /** Create the directory and stub files if they don't exist. */

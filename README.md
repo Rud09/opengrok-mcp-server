@@ -223,8 +223,13 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | `OPENGROK_MEMORY_BANK_DIR` | path | Directory for Living Document persistent files |
 | `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | `tsv` / `yaml` / `text` / `markdown` | Force a response format globally |
 | `OPENGROK_LOG_LEVEL` | `debug` / `info` | Verbose logging |
+| `OPENGROK_AUDIT_LOG_FILE` | path | File path for audit log compliance export |
 
 VS Code users can set `opengrok-mcp.codeMode`, `opengrok-mcp.contextBudget`, and `opengrok-mcp.memoryBankDir` in VS Code settings instead.
+
+> **MCP SDK Note:** This version uses `@modelcontextprotocol/sdk` v1.28.0.
+> MCP SDK v2 is in pre-alpha; we will migrate when stable (expected Q3-Q4 2026).
+> v2 will enable enhanced completions for tool parameters and resource templates.
 
 ---
 
