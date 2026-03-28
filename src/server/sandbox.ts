@@ -107,6 +107,12 @@ export const API_SPEC = {
     "env.opengrok.readMemory() returns undefined for uninitialized files — handle gracefully.",
   ],
 
+  return_rules: [
+    "Never return raw API result objects — always map to the minimum string representation the caller needs.",
+    "Always set maxResults to the minimum you need — the default is too high and wastes tokens.",
+    "Return early with a short string when results are empty instead of returning an empty structure.",
+  ],
+
   methods: {
     search: {
       signature: "env.opengrok.search(query, opts?)",
@@ -183,8 +189,7 @@ export const API_SPEC = {
     },
     readMemory: {
       signature: "env.opengrok.readMemory(filename)",
-      allowed:
-        "'AGENTS.md' | 'codebase-map.md' | 'symbol-index.md' | 'known-patterns.md' | 'investigation-log.md' | 'active-context.md'",
+      allowed: "'active-task.md' | 'investigation-log.md'",
       returns: "string | undefined — undefined means file is uninitialized stub",
     },
     writeMemory: {

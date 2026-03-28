@@ -323,3 +323,48 @@ describe('Legacy Mode — memory tools available when memoryBank provided', () =
     await client.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// API_SPEC structure tests
+// ---------------------------------------------------------------------------
+import { API_SPEC } from '../server/sandbox.js';
+
+describe('API_SPEC — return_rules and memory filenames', () => {
+  it('API_SPEC has return_rules with 3 micro-optimization rules', () => {
+    expect(API_SPEC).toHaveProperty('return_rules');
+    expect(Array.isArray(API_SPEC.return_rules)).toBe(true);
+    expect(API_SPEC.return_rules).toHaveLength(3);
+  });
+
+  it('return_rules[0] advises against returning raw objects', () => {
+    const rule = API_SPEC.return_rules[0];
+    expect(typeof rule).toBe('string');
+    expect(rule.toLowerCase()).toMatch(/raw|map|string/);
+  });
+
+  it('return_rules[1] advises setting maxResults conservatively', () => {
+    const rule = API_SPEC.return_rules[1];
+    expect(typeof rule).toBe('string');
+    expect(rule.toLowerCase()).toContain('maxresults');
+  });
+
+  it('return_rules[2] advises returning early when results are empty', () => {
+    const rule = API_SPEC.return_rules[2];
+    expect(typeof rule).toBe('string');
+    expect(rule.toLowerCase()).toMatch(/early|empty/);
+  });
+
+  it('readMemory allowed filenames are the 2-file architecture names', () => {
+    const allowed = API_SPEC.methods.readMemory.allowed;
+    expect(allowed).toContain('active-task.md');
+    expect(allowed).toContain('investigation-log.md');
+    expect(allowed).not.toContain('AGENTS.md');
+    expect(allowed).not.toContain('active-context.md');
+  });
+
+  it('opengrok_api tool response includes return_rules in spec text', async () => {
+    const yaml = await import('js-yaml');
+    const specText = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
+    expect(specText).toContain('return_rules');
+  });
+});
