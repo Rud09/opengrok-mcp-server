@@ -34,3 +34,7 @@ test-output.txt
 plans/
 # Git worktrees
 .worktrees/
+
+# MCP Registry
+.mcpregistry_github_token
+.mcpregistry_registry_token
