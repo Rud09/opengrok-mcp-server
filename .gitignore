@@ -39,7 +39,7 @@ plans/
 .mcpregistry_github_token
 .mcpregistry_registry_token
 
-# Internal planning docs (never commit)
-MASTER_PLAN*.md
-implementation_plan.md
-some questions.md
+# Internal docs
+*plan*.md
+*review*.md
+*questions*.md
