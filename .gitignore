@@ -30,8 +30,10 @@ coverage/
 # Test output
 test-output.txt
 
-# Plans
+# Plans and specs
 plans/
+specs/
+
 # Git worktrees
 .worktrees/
 
