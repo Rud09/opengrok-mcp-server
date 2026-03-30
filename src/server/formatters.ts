@@ -17,6 +17,8 @@ import type {
   FileHistory,
   FileSymbols,
   Project,
+  SearchMatch,
+  SearchResult,
   SearchResults,
 } from "./models.js";
 import type { CompileInfo } from "./local/compile-info.js";
@@ -902,6 +904,55 @@ export function formatSearchResultsTSV(results: SearchResults): string {
   }
 
   return rows.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Context-aware search result capping (truncate rows before encoding)
+// ---------------------------------------------------------------------------
+
+/**
+ * Trim a SearchResults object so that its encoded representation fits within
+ * maxBytes. We estimate row sizes without encoding and drop trailing rows,
+ * preserving header lines and structural validity regardless of format.
+ *
+ * This is the correct approach for TOON (binary-like encoding) and TSV
+ * (structured rows): truncating the *encoded* bytes mid-row produces
+ * malformed output. Truncating the data array before encoding guarantees
+ * the formatter always receives a structurally complete dataset.
+ *
+ * @param results   Full SearchResults from the API
+ * @param maxBytes  Budget ceiling in bytes (UTF-8)
+ * @returns A new SearchResults whose results array fits within the budget
+ */
+export function capSearchResultsToBytes(
+  results: SearchResults,
+  maxBytes: number
+): SearchResults {
+  // Reserve ~15% for header lines, footer, and encoding overhead
+  const capBytes = Math.floor(maxBytes * 0.85);
+  let used = 0;
+  const capped: SearchResult[] = [];
+
+  for (const result of results.results) {
+    const cappedMatches: SearchMatch[] = [];
+    for (const match of result.matches.slice(0, 5)) {
+      // Estimate: path + project + line number + content + separators (~4 chars)
+      const rowBytes = Buffer.byteLength(
+        result.path + result.project + String(match.lineNumber) +
+          stripHtmlTags(match.lineContent),
+        "utf8"
+      ) + 4;
+      if (used + rowBytes > capBytes) break;
+      cappedMatches.push(match);
+      used += rowBytes;
+    }
+    if (cappedMatches.length > 0) {
+      capped.push({ ...result, matches: cappedMatches });
+    }
+    if (used >= capBytes) break;
+  }
+
+  return { ...results, results: capped };
 }
 
 // ---------------------------------------------------------------------------

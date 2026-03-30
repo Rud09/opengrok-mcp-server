@@ -19,6 +19,7 @@ import { extractLineRange } from "./client.js";
 import type { Config } from "./config.js";
 import { parsePerToolLimits, parseAllowedClientIds, getConfigDirectory, checkCredentialAge, loadConfig } from "./config.js";
 import {
+  capSearchResultsToBytes,
   formatAnnotate,
   formatBatchSearchResults,
   formatBatchSearchResultsTOON,
@@ -198,7 +199,7 @@ const VERSION = (typeof __VERSION__ !== "undefined"
 // Server instructions (opengrok_ prefixed tool names)
 // ---------------------------------------------------------------------------
 
-const SERVER_INSTRUCTIONS = `
+const SERVER_INSTRUCTIONS_STANDARD = `
 OpenGrok MCP — Code intelligence for large, multi-language codebases.
 
 ## SESSION STARTUP (do this once, in order)
@@ -221,18 +222,10 @@ NEVER: search_code + get_file_content → use search_and_read
 NEVER: multiple search_code calls → use batch_search
 NEVER: get_file_content on file > 50 lines without start_line + end_line
 
-## LEGACY TOOL RULES
+## TOOL RULES
 - ALWAYS call get_file_symbols before get_file_content to find line ranges cheaply
 - ALWAYS pass file_type to narrow results (cxx, java, python, etc.)
 - LIMIT max_results to 5 unless asked for more
-
-## CODE MODE — opengrok_execute
-- Call opengrok_api ONCE at session start for the API spec
-- All env.opengrok.* calls are synchronous from your code's perspective
-- Results are returned directly — no polling required
-- Use env.opengrok.batchSearch([...]) for parallel searches — do NOT write Promise.all()
-- Filter data inside the sandbox — only return what is needed
-- Return strings, not objects (see return_rules in the API spec)
 
 ## MEMORY — MANDATORY BEFORE FINAL ANSWER
 You MUST do both of these before responding to the user:
@@ -243,6 +236,43 @@ Memory files: active-task.md (current task) | investigation-log.md (findings log
 Note: When OPENGROK_ENABLE_FILES_API=true, investigation-log.md is cached by content hash;
       opengrok_read_memory returns "[unchanged]" when no new entries have been appended.
 `.trim();
+
+/**
+ * Code Mode uses a shorter instruction set — only 5 tools are exposed so the full
+ * standard decision tree is not needed. This saves ~80-100 tokens per turn vs
+ * the standard instructions.
+ */
+const SERVER_INSTRUCTIONS_CODE_MODE = `
+OpenGrok MCP — Code intelligence via sandbox execution.
+
+## SESSION STARTUP (do this once, in order)
+1. opengrok_memory_status → check for prior investigation state
+2. opengrok_read_memory("active-task.md") → if populated, read it (restores last task)
+3. opengrok_api → call ONCE to get the full API spec
+
+## YOUR ONLY TOOLS
+- opengrok_api: get the full OpenGrok API spec (call once per session)
+- opengrok_execute: run JavaScript with env.opengrok.* to query the codebase
+- opengrok_memory_status / opengrok_read_memory / opengrok_update_memory: session state
+
+## ALL QUERIES GO THROUGH opengrok_execute
+Even simple lookups. Single-line scripts are fine:
+  return env.opengrok.search("X", {searchType:"defs", maxResults:3})
+         .results.map(r => r.path+":"+r.matches[0].lineNumber).join("\\n");
+
+- All env.opengrok.* calls are synchronous from your code's perspective
+- Use env.opengrok.batchSearch([...]) for parallel searches — do NOT write Promise.all()
+- Filter data inside the sandbox — only return what is needed
+- Return strings, not objects (see return_rules in the API spec)
+
+## MEMORY — MANDATORY BEFORE FINAL ANSWER
+You MUST do both of these before responding to the user:
+  1. opengrok_update_memory("active-task.md", <current state>, "overwrite")
+  2. If a significant finding: opengrok_update_memory("investigation-log.md", <summary>, "append")
+`.trim();
+
+// For backward compatibility in tests and legacy references
+const SERVER_INSTRUCTIONS = SERVER_INSTRUCTIONS_STANDARD;
 
 // ---------------------------------------------------------------------------
 // Tool annotations
@@ -487,8 +517,11 @@ function makeToolError(name: string, err: unknown): ToolResult {
 
 /**
  * Shared helper: format a tool response, routing to compact formats via selectFormat.
- * Applies capResponse to protect LLM context windows. structuredContent is
- * always returned for programmatic consumers regardless of response_format.
+ * Applies capResponse to protect LLM context windows.
+ *
+ * structuredContent is ONLY included when response_format="json" is explicitly
+ * set (or forced via global override). LLMs see both content and structuredContent,
+ * so always including it wastes 200–800 tokens per call with duplicate data.
  */
 function formatResponse(
   textMarkdown: string,
@@ -507,14 +540,28 @@ function formatResponse(
   }
   return {
     content: [{ type: "text", text }],
-    structuredContent: structured,
+    // Only include structuredContent for programmatic consumers (explicit json format)
+    ...(effective === "json" ? { structuredContent: structured } : {}),
   };
 }
 
-/** Pick the best search formatter based on the resolved format. */
-function pickSearchFormatter(fmt: ResponseFormat): (r: SearchResults) => string {
-  if (fmt === "toon") return formatSearchResultsTOON;
-  if (fmt === "tsv") return formatSearchResultsTSV;
+/**
+ * Pick the best search formatter based on the resolved format.
+ *
+ * When maxBytes is provided (and the format is TOON or TSV), the results
+ * array is trimmed *before* encoding to guarantee structurally valid output.
+ * Raw byte-truncation of TOON breaks the encoded structure; TSV is safer but
+ * loses the "N more rows" footer. Pre-truncation is always correct.
+ */
+function pickSearchFormatter(
+  fmt: ResponseFormat,
+  maxBytes?: number
+): (r: SearchResults) => string {
+  const cap = maxBytes
+    ? (r: SearchResults) => capSearchResultsToBytes(r, maxBytes)
+    : (r: SearchResults) => r;
+  if (fmt === "toon") return (r) => formatSearchResultsTOON(cap(r));
+  if (fmt === "tsv") return (r) => formatSearchResultsTSV(cap(r));
   return formatSearchResults;
 }
 
@@ -557,7 +604,8 @@ async function executeSearchCode(
     args.file_type
   );
   const fmt = selectFormat("search", args.response_format);
-  const text = pickSearchFormatter(fmt)(results);
+  const maxBytes = MAX_RESPONSE_BYTES_OVERRIDE ?? BUDGET_LIMITS[getActiveBudget()].maxResponseBytes;
+  const text = pickSearchFormatter(fmt, maxBytes)(results);
   return { text, structured: results };
 }
 
@@ -1007,7 +1055,8 @@ async function dispatchTool(
         maxResults: args.max_results,
       });
       const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
-      return pickSearchFormatter(fmt)(results);
+      const maxBytes = MAX_RESPONSE_BYTES_OVERRIDE ?? BUDGET_LIMITS[getActiveBudget()].maxResponseBytes;
+      return pickSearchFormatter(fmt, maxBytes)(results);
     }
 
     case "opengrok_get_file_content": {
@@ -1210,7 +1259,7 @@ export function createServer(
 
   const server = new McpServer(
     { name: "opengrok-mcp", version: VERSION },
-    { instructions: SERVER_INSTRUCTIONS }
+    { instructions: codeMode ? SERVER_INSTRUCTIONS_CODE_MODE : SERVER_INSTRUCTIONS_STANDARD }
   );
 
   const local = buildLocalLayer(config);
@@ -1219,12 +1268,16 @@ export function createServer(
   const perToolLimits = parsePerToolLimits(config.OPENGROK_PER_TOOL_RATELIMIT);
   const toolRateLimiter = new ToolRateLimiter(perToolLimits);
 
-  // Always register legacy tools — useful for simple lookups
-  registerLegacyTools(server, client, config, local, codeMode, memoryBank, toolRateLimiter);
-
-  // Also register Code Mode tools when enabled — LLM chooses best approach
   if (codeMode && memoryBank) {
+    // Code Mode: only 5 tools exposed (api + execute + 3 memory tools).
+    // ~130 token cost vs ~1,900 with all legacy tools — 93% savings per turn.
+    // LLM cannot see or call legacy tools in this mode; all queries go through the sandbox.
     registerCodeModeTools(server, client, config, memoryBank, local, toolRateLimiter);
+    registerMemoryTools(server, memoryBank, config);
+  } else {
+    // Standard mode: all individual tools + memory tools.
+    // registerLegacyTools internally calls registerMemoryTools when memoryBank is provided.
+    registerLegacyTools(server, client, config, local, false, memoryBank, toolRateLimiter);
   }
 
   // Task 4.5: Register memory files as MCP Resources
@@ -1372,9 +1425,9 @@ function registerMemoryTools(
 // Code Mode tools: opengrok_api + opengrok_execute
 // ---------------------------------------------------------------------------
 
-let executeCallCount = 0;
-
 // Health check state for staleness prediction (Task 5.8)
+// Note: only used in dispatchTool (test/sandbox dispatch path); production HTTP
+// sessions each get their own createServer() closure so there is no bleed there.
 let lastHealthCheckLatencyMs: number | null = null;
 
 const workerPool = new SandboxWorkerPool();
@@ -1387,6 +1440,8 @@ function registerCodeModeTools(
   local: LocalLayer,
   toolRateLimiter: ToolRateLimiter
 ): void {
+  // Per-session counters — scoped to this server instance to prevent HTTP session bleed.
+  let executeCallCount = 0;
   // Per-session masker (created once per server, tracks all turns)
   const masker = new ObservationMasker();
   let turn = 0;
@@ -1540,14 +1595,17 @@ function registerCodeModeTools(
     }
   );
 
-  // Tool 3: opengrok_get_task_result — poll for task completion (Task 4.16)
+  // Tool 3: opengrok_get_task_result — retained for backward compatibility.
+  // opengrok_execute now returns results synchronously; this tool will always
+  // return "not found" unless an external caller pre-populates the task registry.
   server.registerTool(
     "opengrok_get_task_result",
     {
       title: "Get Task Result",
       description:
-        "Poll for the result of a long-running opengrok_execute task. " +
-        "Returns the task status (running/completed/error) and result if available.",
+        "Retained for backward compatibility. opengrok_execute now returns results " +
+        "synchronously — polling is no longer required. This tool will return " +
+        "'task not found' for any ID produced by the current server.",
       inputSchema: {
         taskId: z.string().describe("Task ID returned by a previous opengrok_execute call"),
       },
@@ -1683,7 +1741,8 @@ function registerLegacyTools(
           args.start_index
         );
         const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
-        const text = pickSearchFormatter(fmt)(results);
+        const maxBytes = MAX_RESPONSE_BYTES_OVERRIDE ?? BUDGET_LIMITS[getActiveBudget()].maxResponseBytes;
+        const text = pickSearchFormatter(fmt, maxBytes)(results);
         return { content: [{ type: "text", text: capResponse(text) }] };
       } catch (err) {
         return makeToolError("opengrok_find_file", err);
@@ -1713,7 +1772,8 @@ function registerLegacyTools(
           maxResults: parsed.max_results,
         });
         const fmt = selectFormat("search", parsed.response_format as ResponseFormat | undefined);
-        const text = pickSearchFormatter(fmt)(results);
+        const maxBytes = MAX_RESPONSE_BYTES_OVERRIDE ?? BUDGET_LIMITS[getActiveBudget()].maxResponseBytes;
+        const text = pickSearchFormatter(fmt, maxBytes)(results);
         return { content: [{ type: "text", text: capResponse(text) }] };
       } catch (err) {
         return makeToolError("opengrok_search_pattern", err);
@@ -1933,6 +1993,17 @@ function registerLegacyTools(
         }
         return { content: [{ type: "text", text: capResponse(text) }] };
       } catch (err) {
+        // 404/405 means the suggester endpoint is not available on this server
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("404") || msg.includes("405")) {
+          return {
+            content: [{
+              type: "text",
+              text: "Search suggestions are not supported by this OpenGrok instance. " +
+                "Use opengrok_search_code instead.",
+            }],
+          };
+        }
         return makeToolError("opengrok_search_suggest", err);
       }
     }
@@ -2191,7 +2262,8 @@ function registerLegacyTools(
         const parsed = CallGraphArgs.parse(args as unknown as Record<string, unknown>);
         const results = await client.getCallGraph(parsed.project, parsed.symbol);
         const fmt = selectFormat("search", parsed.response_format as ResponseFormat | undefined);
-        const text = pickSearchFormatter(fmt)(results);
+        const maxBytes = MAX_RESPONSE_BYTES_OVERRIDE ?? BUDGET_LIMITS[getActiveBudget()].maxResponseBytes;
+        const text = pickSearchFormatter(fmt, maxBytes)(results);
         const structured = {
           _meta: {
             tool: "opengrok_call_graph",
@@ -2211,9 +2283,7 @@ function registerLegacyTools(
         };
         return {
           content: [{ type: "text", text }],
-          isError: false,
-          _meta: structured._meta,
-          _results: structured.results,
+          ...(fmt === "json" ? { structuredContent: structured as unknown as Record<string, unknown> } : {}),
         };
       } catch (err) {
         return makeToolError("opengrok_call_graph", err);

@@ -810,10 +810,11 @@ export class OpenGrokClient {
   async testConnection(): Promise<boolean> {
     try {
       const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/projects`);
-      const response = await this.request(url, TIMEOUTS.suggest);
+      const response = await this.request(url, TIMEOUTS.default);
       if (!response.ok) return false;
       const json = await response.json() as unknown;
-      return Array.isArray(json);
+      // Accept both array (API v1) and object (API v2) responses
+      return Array.isArray(json) || (typeof json === "object" && json !== null);
     } catch {
       return false;
     }

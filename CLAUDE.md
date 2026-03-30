@@ -10,7 +10,7 @@ npm run package          # build (production, minified)
 npm run watch            # build in watch mode
 npm test                 # run all tests (vitest)
 npm run test:watch       # vitest interactive watch
-npm run test:coverage    # coverage report (thresholds: 90% lines/functions, 85% branches)
+npm run test:coverage    # coverage report (thresholds: 69% lines/functions/statements/branches)
 npm run test:sandbox     # sandbox integration tests (requires npm run compile first)
 npm run typecheck        # tsc --noEmit only
 npm run lint             # tsc --noEmit + eslint src/

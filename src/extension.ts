@@ -870,6 +870,7 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
     const codeMode = config.get<boolean>('codeMode') ?? true;
     const memoryBankDir = config.get<string>('memoryBankDir') || '';
     const compileDbPaths = config.get<string>('compileDbPaths') || '';
+    const apiVersion = config.get<string>('apiVersion') || 'v1';
 
     let hasPassword = false;
     if (username) {
@@ -879,14 +880,16 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
 
     webview.postMessage({
         type: 'loadConfig',
-        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths }
+        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, apiVersion }
     });
 }
 
 async function _handleTestConnection(webview: vscode.Webview, data: { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string }): Promise<void> {
+    // Read apiVersion from VS Code settings to match the actual client configuration
+    const apiVersion = vscode.workspace.getConfiguration('opengrok-mcp').get<string>('apiVersion') || 'v1';
     await handleWebviewTestConnection(
         (msg: Record<string, unknown>) => { void webview.postMessage(msg); },
-        data
+        { ...data, apiVersion }
     );
 }
 
@@ -903,6 +906,7 @@ async function _handleSaveConfiguration(webview: vscode.Webview, data: {
     memoryBankDir?: string;
     compileDbPaths?: string;
     codeModeChanged?: boolean;
+    apiVersion?: string;
 }): Promise<void> {
     await handleSaveConfiguration(
         (msg: Record<string, unknown>) => { void webview.postMessage(msg); },
@@ -912,31 +916,89 @@ async function _handleSaveConfiguration(webview: vscode.Webview, data: {
 
 async function handleWebviewTestConnection(
     postMessage: (msg: Record<string, unknown>) => void,
-    data: { baseUrl: string; username: string; password: string; verifySsl: boolean }
+    data: { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string; apiVersion?: string }
 ): Promise<void> {
-    const { baseUrl, username, password, verifySsl } = data;
+    const { baseUrl, username, password, verifySsl, proxy, apiVersion = 'v1' } = data;
 
     postMessage({ type: 'testing', message: 'Testing connection...' });
 
     try {
         const parsed = new URL(baseUrl);
         const base = parsed.href.replace(/\/+$/, '');
-        const apiUrl = new URL(`${base}/api/v1/projects`);
+        // Use the configured API version — hardcoding v1 fails when server uses v2
+        const apiUrl = new URL(`${base}/api/${apiVersion}/projects`);
         const b64 = Buffer.from(`${username}:${password}`).toString('base64');
 
-        const options = {
-            hostname: apiUrl.hostname,
-            port: apiUrl.port || (apiUrl.protocol === 'https:' ? 443 : 80),
-            path: apiUrl.pathname + apiUrl.search,
-            method: 'GET',
-            headers: { 'Authorization': `Basic ${b64}`, 'Accept': 'application/json' },
-            rejectUnauthorized: verifySsl
-        };
-
-        const protocol = apiUrl.protocol === 'https:' ? https : http;
-
         await new Promise<void>((resolve, reject) => {
-            const req = protocol.request(options, (res) => {
+            const makeRequest = (targetUrl: URL, proxyUrl?: URL): void => {
+                const isHttps = targetUrl.protocol === 'https:';
+                const protocol = isHttps ? https : http;
+
+                // Proxy-aware request options
+                // Use a wide type to accommodate both http and https-specific options
+                let options: http.RequestOptions & { rejectUnauthorized?: boolean };
+                if (proxyUrl) {
+                    if (isHttps) {
+                        // HTTPS target via proxy: use CONNECT tunnel
+                        const connectReq = http.request({
+                            hostname: proxyUrl.hostname,
+                            port: Number(proxyUrl.port) || 8080,
+                            method: 'CONNECT',
+                            path: `${targetUrl.hostname}:${Number(targetUrl.port) || 443}`,
+                        });
+                        connectReq.on('connect', (_res, socket) => {
+                            // socket comes from the CONNECT tunnel — cast is required since Node.js
+                            // typings don't expose the `socket` injection option in RequestOptions
+                            const tunnelOpts = {
+                                hostname: targetUrl.hostname,
+                                port: Number(targetUrl.port) || 443,
+                                path: targetUrl.pathname + targetUrl.search,
+                                method: 'GET',
+                                headers: { 'Authorization': `Basic ${b64}`, 'Accept': 'application/json' },
+                                rejectUnauthorized: verifySsl,
+                                socket,
+                            };
+                            const tunnelReq = https.request(
+                                tunnelOpts as unknown as https.RequestOptions,
+                                handleResponse
+                            );
+                            tunnelReq.on('error', (err: Error) => reject(err));
+                            tunnelReq.end();
+                        });
+                        connectReq.on('error', (err: Error) => reject(err));
+                        connectReq.end();
+                        return;
+                    } else {
+                        // HTTP target via proxy: use absolute URL as path
+                        options = {
+                            hostname: proxyUrl.hostname,
+                            port: Number(proxyUrl.port) || 8080,
+                            path: targetUrl.href,
+                            method: 'GET',
+                            headers: { 'Authorization': `Basic ${b64}`, 'Accept': 'application/json' },
+                        };
+                    }
+                } else {
+                    options = {
+                        hostname: targetUrl.hostname,
+                        port: targetUrl.port || (isHttps ? 443 : 80),
+                        path: targetUrl.pathname + targetUrl.search,
+                        method: 'GET',
+                        headers: { 'Authorization': `Basic ${b64}`, 'Accept': 'application/json' },
+                        rejectUnauthorized: verifySsl,
+                    };
+                }
+
+                const req = protocol.request(options, handleResponse);
+                req.on('error', (err: Error) => reject(err));
+                req.setTimeout(10000, () => {
+                    req.destroy();
+                    reject(new Error('Connection timed out'));
+                });
+                req.end();
+            };
+
+            const handleResponse = (res: http.IncomingMessage): void => {
                 let body = '';
                 res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
                 res.on('end', () => {
@@ -949,8 +1011,10 @@ async function handleWebviewTestConnection(
                     } else {
                         try {
                             const json = JSON.parse(body);
-                            if (!Array.isArray(json)) {
-                                reject(new Error('Unexpected response — is this an OpenGrok server?'));
+                            // Accept both array (API v1) and object (API v2) responses
+                            const isValid = Array.isArray(json) || (typeof json === 'object' && json !== null);
+                            if (!isValid) {
+                                reject(new Error('Unexpected response format — is this an OpenGrok server?'));
                             } else {
                                 resolve();
                             }
@@ -959,13 +1023,10 @@ async function handleWebviewTestConnection(
                         }
                     }
                 });
-            });
-            req.on('error', (err: Error) => reject(err));
-            req.setTimeout(10000, () => {
-                req.destroy();
-                reject(new Error('Connection timed out'));
-            });
-            req.end();
+            };
+
+            const proxyUrl = proxy ? (() => { try { return new URL(proxy); } catch { return undefined; } })() : undefined;
+            makeRequest(apiUrl, proxyUrl);
         });
 
         log('✓ Webview test connection successful');
@@ -992,9 +1053,10 @@ async function handleSaveConfiguration(
         memoryBankDir?: string;
         compileDbPaths?: string;
         codeModeChanged?: boolean;
+        apiVersion?: string;
     }
 ): Promise<void> {
-    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged } = data;
+    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged, apiVersion } = data;
 
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const oldUsername = config.get<string>('username');
@@ -1019,6 +1081,7 @@ async function handleSaveConfiguration(
     if (codeMode !== undefined) await config.update('codeMode', codeMode, vscode.ConfigurationTarget.Global);
     if (memoryBankDir !== undefined) await config.update('memoryBankDir', memoryBankDir || undefined, vscode.ConfigurationTarget.Global);
     if (compileDbPaths !== undefined) await config.update('compileDbPaths', compileDbPaths || undefined, vscode.ConfigurationTarget.Global);
+    if (apiVersion !== undefined) await config.update('apiVersion', apiVersion || 'v1', vscode.ConfigurationTarget.Global);
 
     await secretStorage.store(`opengrok-password-${username}`, finalPassword);
 

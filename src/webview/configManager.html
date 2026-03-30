@@ -442,9 +442,22 @@
                     <label>Response Format</label>
                     <select id="responseFormatOverride">
                         <option value="">Auto — let each tool choose</option>
-                        <option value="markdown">Force Markdown</option>
-                        <option value="json">Force JSON (programmatic)</option>
+                        <option value="tsv">TSV — compact tabular (recommended)</option>
+                        <option value="toon">TOON — token-optimized JSON</option>
+                        <option value="markdown">Markdown — verbose but readable</option>
+                        <option value="json">JSON — programmatic use</option>
+                        <option value="yaml">YAML — hierarchical data</option>
+                        <option value="text">Text — raw code, no framing</option>
                     </select>
+                </div>
+
+                <div class="field">
+                    <label>API Version</label>
+                    <select id="apiVersion">
+                        <option value="v1">v1 — Default (OpenGrok 1.x)</option>
+                        <option value="v2">v2 — OpenGrok 2.x servers</option>
+                    </select>
+                    <div class="hint">Use v2 only if your OpenGrok server explicitly supports the v2 REST API</div>
                 </div>
 
                 <div class="field" style="margin-top: 12px;">
@@ -522,6 +535,7 @@
             document.getElementById('verifySsl').checked = true;
             document.getElementById('contextBudget').value = 'minimal';
             document.getElementById('responseFormatOverride').value = '';
+            document.getElementById('apiVersion').value = 'v1';
         }
 
         function setLoading(btnId, isLoading, label, iconSvg) {
@@ -560,6 +574,7 @@
             const defaultProject = document.getElementById('defaultProject').value.trim();
             const contextBudget = document.getElementById('contextBudget').value;
             const responseFormatOverride = document.getElementById('responseFormatOverride').value;
+            const apiVersion = document.getElementById('apiVersion').value;
             const codeMode = document.getElementById('codeMode').checked;
             const memoryBankDir = document.getElementById('memoryBankDir').value.trim();
             const compileDbPaths = document.getElementById('compileDbPaths').value.trim();
@@ -572,7 +587,7 @@
             setLoading('saveBtn', true, 'Save', SAVE_ICON);
             vscode.postMessage({
                 type: 'saveConfiguration',
-                data: { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged }
+                data: { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, apiVersion, codeMode, memoryBankDir, compileDbPaths, codeModeChanged }
             });
         }
 
@@ -588,6 +603,7 @@
                     document.getElementById('verifySsl').checked = currentConfig.verifySsl !== false;
                     document.getElementById('contextBudget').value = currentConfig.contextBudget || 'minimal';
                     document.getElementById('responseFormatOverride').value = currentConfig.responseFormatOverride || '';
+                    document.getElementById('apiVersion').value = currentConfig.apiVersion || 'v1';
                     document.getElementById('codeMode').checked = currentConfig.codeMode !== false;
                     document.getElementById('memoryBankDir').value = currentConfig.memoryBankDir || '';
                     document.getElementById('compileDbPaths').value = currentConfig.compileDbPaths || '';
@@ -607,7 +623,8 @@
                     const hasAdvanced = (currentConfig.proxy || currentConfig.defaultProject ||
                         (currentConfig.contextBudget && currentConfig.contextBudget !== 'minimal') ||
                         currentConfig.responseFormatOverride ||
-                        currentConfig.codeMode === false || 
+                        (currentConfig.apiVersion && currentConfig.apiVersion !== 'v1') ||
+                        currentConfig.codeMode === false ||
                         currentConfig.memoryBankDir ||
                         currentConfig.compileDbPaths);
                     if (hasAdvanced) {

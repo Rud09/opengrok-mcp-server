@@ -416,7 +416,7 @@ npm install
 npm run lint           # Strict TypeScript & ESLint validation
 npm test               # Execute the Vitest test suite (919 tests)
 npm run test:sandbox   # Sandbox integration tests (requires compile first)
-npm run test:coverage  # Coverage report (≥90% threshold)
+npm run test:coverage  # Coverage report (≥69% threshold)
 
 # Packaging
 npm run compile   # Generate the esbuild artifact (includes sandbox-worker.js)
