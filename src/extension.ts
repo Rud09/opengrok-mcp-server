@@ -838,6 +838,7 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
     const memoryBankDir = config.get<string>('memoryBankDir') || '';
     const compileDbPaths = config.get<string>('compileDbPaths') || '';
     const apiVersion = config.get<string>('apiVersion') || 'v1';
+    const enableElicitation = config.get<boolean>('enableElicitation') ?? false;
 
     let hasPassword = false;
     if (username) {
@@ -847,7 +848,7 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
 
     webview.postMessage({
         type: 'loadConfig',
-        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, apiVersion }
+        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, apiVersion, enableElicitation }
     });
 }
 

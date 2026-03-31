@@ -6,77 +6,44 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
     <title>OpenGrok Configuration</title>
     <style>
-        :root {
-            --bg-base:   var(--vscode-editor-background);
-            --bg-panel:  var(--vscode-sideBar-background, var(--vscode-editor-background));
-            --bg-card:   var(--vscode-list-hoverBackground, rgba(128,128,128,0.07));
-            --bg-input:  var(--vscode-input-background);
-
-            --border-subtle: var(--vscode-input-border, rgba(128,128,128,0.2));
-            --border-hover:  var(--vscode-focusBorder);
-
-            --text-main:  var(--vscode-foreground);
-            --text-muted: var(--vscode-descriptionForeground);
-
-            --accent:       var(--vscode-button-background);
-            --accent-hover: var(--vscode-button-hoverBackground, var(--vscode-button-background));
-            --accent-fg:    var(--vscode-button-foreground);
-
-            --btn2-bg:    var(--vscode-button-secondaryBackground, var(--bg-card));
-            --btn2-fg:    var(--vscode-button-secondaryForeground, var(--text-main));
-            --btn2-hover: var(--vscode-button-secondaryHoverBackground, var(--bg-input));
-
-            --focus-ring: var(--vscode-focusBorder);
-            --error-fg:   var(--vscode-errorForeground, #f48771);
-            --success-fg: var(--vscode-terminal-ansiGreen, #4daa57);
-            --transition-speed: 0.2s;
-        }
-
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-            font-family: var(--vscode-font-family), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            font-size: var(--vscode-font-size, 13px);
-            color: var(--text-main);
-            background: var(--bg-panel);
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background: transparent;
+            padding: 0 16px 16px;
+            margin: 0;
             overflow-y: auto;
             overflow-x: hidden;
         }
 
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
-
-        .container {
-            padding: 16px 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
+        ::-webkit-scrollbar-thumb { background: var(--vscode-input-border, rgba(128,128,128,0.2)); border-radius: 3px; }
 
         /* Header */
         .header {
             display: flex;
             align-items: center;
             gap: 10px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid var(--border-subtle);
+            padding: 12px 0;
+            border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-shadow));
+            margin-bottom: 4px;
         }
         .header-icon {
             width: 28px;
             height: 28px;
             border-radius: 8px;
-            background: var(--accent);
+            background: var(--vscode-button-background);
             display: flex;
             align-items: center;
             justify-content: center;
-            color: var(--accent-fg);
+            color: var(--vscode-button-foreground);
             flex-shrink: 0;
         }
-        .header-text {
-            flex: 1;
-            min-width: 0;
-        }
+        .header-text { flex: 1; min-width: 0; }
         .header-title {
             font-size: 13px;
             font-weight: 700;
@@ -86,7 +53,7 @@
         }
         .header-subtitle {
             font-size: 11px;
-            color: var(--text-muted);
+            color: var(--vscode-descriptionForeground);
             margin-top: 1px;
         }
 
@@ -100,16 +67,16 @@
             font-size: 11px;
             font-weight: 600;
             letter-spacing: 0.3px;
-            background: var(--bg-card);
-            color: var(--text-muted);
-            border: 1px solid var(--border-subtle);
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            border: 1px solid var(--vscode-input-border, transparent);
             transition: all 0.3s ease;
             white-space: nowrap;
         }
         .status-pill.active {
-            background: color-mix(in srgb, var(--accent) 15%, transparent);
-            color: var(--accent);
-            border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border-color: var(--vscode-button-background);
         }
         .status-dot {
             width: 6px;
@@ -119,201 +86,125 @@
             opacity: 0.6;
             flex-shrink: 0;
         }
-        .status-pill.active .status-dot { opacity: 1; box-shadow: 0 0 5px currentColor; }
+        .status-pill.active .status-dot { opacity: 1; }
 
         /* Section label */
         .section-label {
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--text-muted);
+            color: var(--vscode-descriptionForeground);
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
             text-transform: uppercase;
-            letter-spacing: 0.7px;
-            margin-bottom: 6px;
+            margin: 20px 0 8px;
+            display: block;
         }
 
         /* Form fields */
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
+        .field { margin-bottom: 12px; }
+        .field label { display: block; margin-bottom: 4px; font-size: 12px; }
 
-        .field {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-
-        .field label {
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .field input[type="text"],
-        .field input[type="password"],
-        .field input[type="url"],
-        .field select {
-            font-family: var(--vscode-font-family), sans-serif;
-            font-size: var(--vscode-font-size, 13px);
-            background: var(--bg-input);
-            border: 1px solid var(--border-subtle);
-            border-radius: 4px;
-            padding: 6px 8px;
-            color: var(--text-main);
-            transition: border-color 0.15s;
-            outline: none;
+        input[type="text"], input[type="url"], input[type="password"], select {
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border, transparent);
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            padding: 4px 8px;
             width: 100%;
-        }
-        .field select {
-            cursor: pointer;
-        }
-        .field input:hover, .field select:hover {
-            border-color: var(--border-hover);
-        }
-        .field input:focus, .field select:focus {
-            border-color: var(--focus-ring);
-            outline: 1px solid var(--focus-ring);
-        }
-        .field input::placeholder {
-            color: var(--text-muted);
-            opacity: 0.5;
+            box-sizing: border-box;
+            border-radius: 2px;
         }
 
-        .hint {
-            font-size: 11px;
-            color: var(--text-muted);
-            display: flex;
-            align-items: flex-start;
-            gap: 4px;
-            line-height: 1.4;
-        }
-        .hint svg { flex-shrink: 0; margin-top: 1px; }
-
-        /* Checkbox */
-        .checkbox-field {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 10px;
-            background: var(--bg-card);
-            border: 1px solid var(--border-subtle);
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        .checkbox-field:hover { border-color: var(--border-hover); }
-        .checkbox-field input[type="checkbox"] {
-            width: 14px;
-            height: 14px;
-            accent-color: var(--accent);
-            cursor: pointer;
-            flex-shrink: 0;
-        }
-        .checkbox-label-wrap {
-            display: flex;
-            flex-direction: column;
-        }
-        .checkbox-label-text {
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            user-select: none;
-        }
-        .checkbox-subtext {
-            font-size: 11px;
-            color: var(--text-muted);
-            margin-top: 1px;
+        input:focus, select:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+            border-color: var(--vscode-focusBorder);
         }
 
-        /* Advanced collapsible */
-        .advanced-section {
-            border: 1px solid var(--border-subtle);
-            border-radius: 4px;
-            overflow: hidden;
-        }
-        .advanced-section summary {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 10px;
-            cursor: pointer;
-            user-select: none;
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--text-muted);
-            background: var(--bg-card);
-            outline: none;
-            list-style: none;
-        }
-        .advanced-section summary::-webkit-details-marker { display: none; }
-        .advanced-section summary:hover { color: var(--text-main); }
-        .advanced-section summary svg {
-            flex-shrink: 0;
-            transition: transform 0.2s;
-        }
-        .advanced-section[open] summary svg.chevron {
-            transform: rotate(90deg);
-        }
-        .advanced-content {
-            padding: 12px 10px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            border-top: 1px solid var(--border-subtle);
-        }
+        input::placeholder { color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground)); }
 
-        /* Divider */
-        .divider {
-            height: 1px;
-            background: var(--border-subtle);
-        }
+        select { cursor: pointer; }
+
+        .hint { color: var(--vscode-descriptionForeground); font-size: 11px; margin-top: 3px; }
+        .hint svg { vertical-align: middle; margin-right: 3px; }
+
+        /* Checkbox fields */
+        .checkbox-field { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
+        .checkbox-field input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; accent-color: var(--vscode-button-background); }
+        .checkbox-field .checkbox-content { flex: 1; }
+        .checkbox-field label { font-size: 12px; cursor: pointer; display: block; font-weight: 600; }
+        .checkbox-field .checkbox-subtext { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 1px; }
+
+        hr { border: none; border-top: 1px solid var(--vscode-panel-border, var(--vscode-widget-shadow)); margin: 16px 0; }
 
         /* Buttons */
-        .btn-row {
-            display: flex;
-            gap: 8px;
-        }
-        .btn {
-            font-family: inherit;
-            font-size: 12px;
-            font-weight: 600;
-            padding: 6px 12px;
-            border-radius: 4px;
+        button {
             border: none;
             cursor: pointer;
-            transition: all 0.15s;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            white-space: nowrap;
+            padding: 5px 14px;
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            border-radius: 2px;
         }
-        .btn:active { opacity: 0.8; }
-        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
         .btn-primary {
-            background: var(--accent);
-            color: var(--accent-fg);
-            flex: 1;
-            justify-content: center;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
         }
-        .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+        .btn-primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+        .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
         .btn-secondary {
-            background: var(--btn2-bg);
-            color: var(--btn2-fg);
-            border: 1px solid var(--border-subtle);
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
         }
-        .btn-secondary:hover:not(:disabled) { border-color: var(--border-hover); background: var(--btn2-hover); }
+        .btn-secondary:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground)); }
+        .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 
         .btn-ghost {
             background: transparent;
-            color: var(--text-muted);
-            padding: 6px 8px;
-            border: 1px solid transparent;
+            color: var(--vscode-descriptionForeground);
+            border: 1px solid var(--vscode-input-border, transparent);
+            padding: 5px 8px;
         }
-        .btn-ghost:hover:not(:disabled) { color: var(--text-main); border-color: var(--border-subtle); }
+        .btn-ghost:hover:not(:disabled) { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
+
+        /* Status bar */
+        #statusBar { font-size: 11px; margin-top: 8px; min-height: 16px; }
+        #statusBar.success { color: var(--vscode-testing-iconPassed, #4ec9b0); }
+        #statusBar.error { color: var(--vscode-errorForeground); }
+        #statusBar.info { color: var(--vscode-descriptionForeground); }
+
+        /* Advanced collapsible */
+        details > summary {
+            cursor: pointer;
+            color: var(--vscode-textLink-foreground);
+            font-size: 12px;
+            user-select: none;
+            padding: 4px 0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            list-style: none;
+        }
+        details > summary::-webkit-details-marker { display: none; }
+        details > summary:hover { text-decoration: underline; }
+        details > summary svg.chevron { transition: transform 0.2s; flex-shrink: 0; }
+        details[open] > summary svg.chevron { transform: rotate(90deg); }
+        details > div { padding-top: 8px; }
+
+        /* Badge */
+        .badge {
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 10px;
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+
+        /* Action row */
+        .actions { display: flex; gap: 8px; margin-top: 16px; }
+        .actions .btn-primary { flex: 1; }
 
         /* Toast */
         .toast-container {
@@ -328,172 +219,177 @@
             pointer-events: none;
         }
         .toast {
-            background: var(--vscode-notifications-background, var(--bg-panel));
-            border: 1px solid var(--border-subtle);
-            border-radius: 4px;
+            background: var(--vscode-notifications-background, var(--vscode-editor-background));
+            border: 1px solid var(--vscode-input-border, transparent);
+            border-radius: 2px;
             padding: 8px 12px;
             font-size: 12px;
-            font-weight: 500;
             line-height: 1.4;
-            color: var(--text-main);
+            color: var(--vscode-foreground);
             transform: translateY(40px);
             opacity: 0;
             transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
         .toast.show { transform: translateY(0); opacity: 1; }
-        .toast.error { border-left: 3px solid var(--error-fg); }
-        .toast.success { border-left: 3px solid var(--success-fg); }
-        .toast.info { border-left: 3px solid var(--accent); }
+        .toast.error { border-left: 3px solid var(--vscode-errorForeground); }
+        .toast.success { border-left: 3px solid var(--vscode-testing-iconPassed, #4ec9b0); }
+        .toast.info { border-left: 3px solid var(--vscode-button-background); }
 
         @keyframes spin { 100% { transform: rotate(360deg); } }
         .spin { animation: spin 1s linear infinite; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="header-icon">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                </svg>
-            </div>
-            <div class="header-text">
-                <div class="header-title">OpenGrok MCP</div>
-                <div class="header-subtitle">Server Configuration</div>
-            </div>
-            <div class="status-pill" id="statusPill">
-                <div class="status-dot"></div>
-                <span id="statusText">Not Configured</span>
-            </div>
+    <!-- Header -->
+    <div class="header">
+        <div class="header-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
         </div>
-
-        <!-- Core Settings -->
-        <div>
-            <div class="section-label">Connection</div>
-            <div class="form-group">
-                <div class="field">
-                    <label>Server URL</label>
-                    <input type="url" id="baseUrl" placeholder="https://opengrok.example.com/source/">
-                </div>
-
-                <div class="field">
-                    <label>Username</label>
-                    <input type="text" id="username" placeholder="e.g. jdoe" autocomplete="username">
-                </div>
-
-                <div class="field">
-                    <label>Password</label>
-                    <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password">
-                    <div class="hint" id="passwordHint">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                        Stored securely in the OS keychain
-                    </div>
-                </div>
-
-                <label class="checkbox-field">
-                    <input type="checkbox" id="verifySsl" checked>
-                    <div class="checkbox-label-wrap">
-                        <span class="checkbox-label-text">Verify SSL Certificate</span>
-                        <span class="checkbox-subtext">Disable for self-signed / internal CA</span>
-                    </div>
-                </label>
-            </div>
+        <div class="header-text">
+            <div class="header-title">OpenGrok MCP</div>
+            <div class="header-subtitle">Server Configuration</div>
         </div>
-
-        <!-- Advanced Settings -->
-        <details class="advanced-section" id="advancedSection">
-            <summary>
-                <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                Advanced Settings
-            </summary>
-            <div class="advanced-content">
-                <label class="checkbox-field" style="margin-bottom: 12px; padding: 10px;">
-                    <input type="checkbox" id="codeMode" checked>
-                    <div class="checkbox-label-wrap">
-                        <span class="checkbox-label-text">Enable Code Mode</span>
-                        <span class="checkbox-subtext" style="color: var(--text-muted);">Use the JavaScript sandbox for multi-step investigations. Huge token savings.</span>
-                    </div>
-                </label>
-
-                <div class="field">
-                    <label>Default Project</label>
-                    <input type="text" id="defaultProject" placeholder="e.g. myproject">
-                    <div class="hint">Scopes all searches to this project when none is specified</div>
-                </div>
-
-                <div class="field">
-                    <label>HTTP Proxy</label>
-                    <input type="text" id="proxy" placeholder="http://proxy.company.com:8080">
-                    <div class="hint">Leave blank for direct connection</div>
-                </div>
-
-                <div class="field">
-                    <label>Context Budget</label>
-                    <select id="contextBudget">
-                        <option value="minimal">Minimal (4 KB) — lowest token usage</option>
-                        <option value="standard">Standard (8 KB) — balanced</option>
-                        <option value="generous">Generous (16 KB) — more context</option>
-                    </select>
-                </div>
-
-                <div class="field">
-                    <label>Response Format</label>
-                    <select id="responseFormatOverride">
-                        <option value="">Auto — let each tool choose</option>
-                        <option value="tsv">TSV — compact tabular (recommended)</option>
-                        <option value="toon">TOON — token-optimized JSON</option>
-                        <option value="markdown">Markdown — verbose but readable</option>
-                        <option value="json">JSON — programmatic use</option>
-                        <option value="yaml">YAML — hierarchical data</option>
-                        <option value="text">Text — raw code, no framing</option>
-                    </select>
-                </div>
-
-                <div class="field">
-                    <label>API Version</label>
-                    <select id="apiVersion">
-                        <option value="v1">v1 — Default (OpenGrok 1.x)</option>
-                        <option value="v2">v2 — OpenGrok 2.x servers</option>
-                    </select>
-                    <div class="hint">Use v2 only if your OpenGrok server explicitly supports the v2 REST API</div>
-                </div>
-
-                <div class="field" style="margin-top: 12px;">
-                    <label>Memory Bank Directory</label>
-                    <input type="text" id="memoryBankDir" placeholder="<workspace>/.opengrok/memory-bank/">
-                    <div class="hint">Absolute path to store Living Document files. Leave blank for default.</div>
-                </div>
-
-                <div class="field" style="margin-top: 12px;">
-                    <label for="compileDbPaths">Compile Commands Path(s)</label>
-                    <input type="text" id="compileDbPaths" placeholder="Auto-detected from workspace">
-                    <div class="hint">Comma-separated paths to compile_commands.json files. Leave blank for workspace auto-discovery (C/C++ only).</div>
-                </div>
-            </div>
-        </details>
-
-        <!-- Action Buttons -->
-        <div class="btn-row">
-            <button class="btn btn-ghost" onclick="clearForm()" title="Clear credentials">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-            </button>
-            <button class="btn btn-secondary" onclick="testConnection()" id="testBtn">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
-                Test
-            </button>
-            <button class="btn btn-primary" onclick="saveConfiguration()" id="saveBtn">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                Save
-            </button>
-        </div>
-
-        <div class="hint" style="justify-content: center; opacity: 0.6; font-size: 11px;">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
-            Changes apply immediately to Copilot
+        <div class="status-pill" id="statusPill">
+            <div class="status-dot"></div>
+            <span id="statusText">Not Configured</span>
         </div>
     </div>
+
+    <!-- CONNECTION section -->
+    <span class="section-label">Connection</span>
+
+    <div class="field">
+        <label for="baseUrl">Server URL</label>
+        <input type="url" id="baseUrl" placeholder="https://opengrok.example.com/source/">
+    </div>
+
+    <div class="field">
+        <label for="username">Username</label>
+        <input type="text" id="username" placeholder="e.g. jdoe" autocomplete="username">
+    </div>
+
+    <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password">
+        <div class="hint" id="passwordHint">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            Stored securely in the OS keychain
+        </div>
+    </div>
+
+    <div class="checkbox-field">
+        <input type="checkbox" id="verifySsl" checked>
+        <div class="checkbox-content">
+            <label for="verifySsl">Verify SSL Certificate</label>
+            <div class="checkbox-subtext">Disable for self-signed / internal CA</div>
+        </div>
+    </div>
+
+    <hr>
+
+    <!-- PREFERENCES section -->
+    <span class="section-label">Preferences</span>
+
+    <div class="field">
+        <label for="defaultProject">Default Project</label>
+        <input type="text" id="defaultProject" placeholder="e.g. myproject">
+        <div class="hint">Scopes all searches to this project when none is specified</div>
+    </div>
+
+    <div class="field">
+        <label for="contextBudget">Context Budget</label>
+        <select id="contextBudget">
+            <option value="minimal">Minimal (4 KB) &mdash; lowest token usage</option>
+            <option value="standard">Standard (8 KB) &mdash; balanced</option>
+            <option value="generous">Generous (16 KB) &mdash; more context</option>
+        </select>
+    </div>
+
+    <div class="checkbox-field">
+        <input type="checkbox" id="codeMode" checked>
+        <div class="checkbox-content">
+            <label for="codeMode">Enable Code Mode <span class="badge">98% fewer tokens</span></label>
+            <div class="checkbox-subtext">Use the JavaScript sandbox for multi-step investigations. Huge token savings.</div>
+        </div>
+    </div>
+
+    <div class="checkbox-field">
+        <input type="checkbox" id="enableElicitation">
+        <div class="checkbox-content">
+            <label for="enableElicitation">Project Picker Prompt</label>
+            <div class="checkbox-subtext">Show an interactive project picker when no default project is set</div>
+        </div>
+    </div>
+
+    <hr>
+
+    <!-- Advanced Settings -->
+    <details id="advancedSection">
+        <summary>
+            <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            Advanced Settings
+        </summary>
+        <div>
+            <div class="field" style="margin-top: 8px;">
+                <label for="proxy">Proxy URL</label>
+                <input type="text" id="proxy" placeholder="http://proxy.company.com:8080">
+                <div class="hint">Leave blank for direct connection</div>
+            </div>
+
+            <div class="field">
+                <label for="apiVersion">API Version</label>
+                <select id="apiVersion">
+                    <option value="v1">v1 &mdash; Default (OpenGrok 1.x)</option>
+                    <option value="v2">v2 &mdash; OpenGrok 2.x servers</option>
+                </select>
+                <div class="hint">Use v2 only if your OpenGrok server explicitly supports the v2 REST API</div>
+            </div>
+
+            <div class="field">
+                <label for="responseFormatOverride">Response Format</label>
+                <select id="responseFormatOverride">
+                    <option value="">Auto &mdash; let each tool choose</option>
+                    <option value="tsv">TSV &mdash; compact tabular (recommended)</option>
+                    <option value="toon">TOON &mdash; token-optimized JSON</option>
+                    <option value="markdown">Markdown &mdash; verbose but readable</option>
+                    <option value="json">JSON &mdash; programmatic use</option>
+                    <option value="yaml">YAML &mdash; hierarchical data</option>
+                    <option value="text">Text &mdash; raw code, no framing</option>
+                </select>
+            </div>
+
+            <div class="field">
+                <label for="memoryBankDir">Memory Bank Directory</label>
+                <input type="text" id="memoryBankDir" placeholder="&lt;workspace&gt;/.opengrok/memory-bank/">
+                <div class="hint">Absolute path to store Living Document files. Leave blank for default.</div>
+            </div>
+
+            <div class="field">
+                <label for="compileDbPaths">Compile Commands Path(s)</label>
+                <input type="text" id="compileDbPaths" placeholder="Auto-detected from workspace">
+                <div class="hint">Comma-separated paths to compile_commands.json files. Leave blank for workspace auto-discovery (C/C++ only).</div>
+            </div>
+        </div>
+    </details>
+
+    <hr>
+
+    <!-- Action buttons -->
+    <div class="actions">
+        <button class="btn-secondary" onclick="testConnection()" id="testBtn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+            Test Connection
+        </button>
+        <button class="btn-primary" onclick="saveConfiguration()" id="saveBtn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+            Save
+        </button>
+    </div>
+
+    <div id="statusBar"></div>
 
     <div class="toast-container" id="toastContainer"></div>
 
@@ -504,14 +400,26 @@
         function showToast(type, text) {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
+            toast.className = 'toast ' + type;
             toast.textContent = text;
             container.appendChild(toast);
-            requestAnimationFrame(() => { toast.classList.add('show'); });
-            setTimeout(() => {
+            requestAnimationFrame(function() { toast.classList.add('show'); });
+            setTimeout(function() {
                 toast.classList.remove('show');
-                setTimeout(() => toast.remove(), 350);
+                setTimeout(function() { toast.remove(); }, 350);
             }, 4000);
+        }
+
+        function setStatusBar(type, text) {
+            var bar = document.getElementById('statusBar');
+            bar.className = type;
+            bar.textContent = text;
+        }
+
+        function clearStatusBar() {
+            var bar = document.getElementById('statusBar');
+            bar.className = '';
+            bar.textContent = '';
         }
 
         function updateStatusDisplay(configured) {
@@ -536,13 +444,14 @@
             document.getElementById('contextBudget').value = 'minimal';
             document.getElementById('responseFormatOverride').value = '';
             document.getElementById('apiVersion').value = 'v1';
+            document.getElementById('enableElicitation').checked = false;
         }
 
         function setLoading(btnId, isLoading, label, iconSvg) {
             const btn = document.getElementById(btnId);
             btn.disabled = isLoading;
             if (isLoading) {
-                btn.innerHTML = `<svg class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg> ${label}...`;
+                btn.textContent = label + '...';
             } else {
                 btn.innerHTML = iconSvg + ' ' + label;
             }
@@ -561,7 +470,8 @@
             if (!baseUrl || !username) { showToast('error', 'URL and Username are required'); return; }
             if (!password && !currentConfig.hasPassword) { showToast('error', 'Password is required'); return; }
 
-            setLoading('testBtn', true, 'Test', TEST_ICON);
+            setLoading('testBtn', true, 'Test Connection', TEST_ICON);
+            setStatusBar('info', 'Testing connection...');
             vscode.postMessage({ type: 'testConnection', data: { baseUrl, username, password, proxy, verifySsl } });
         }
 
@@ -578,20 +488,22 @@
             const codeMode = document.getElementById('codeMode').checked;
             const memoryBankDir = document.getElementById('memoryBankDir').value.trim();
             const compileDbPaths = document.getElementById('compileDbPaths').value.trim();
+            const enableElicitation = document.getElementById('enableElicitation').checked;
 
             if (!baseUrl || !username) { showToast('error', 'URL and Username are required'); return; }
             if (!password && !currentConfig.hasPassword) { showToast('error', 'Password required for new connection'); return; }
-            try { new URL(baseUrl); } catch { showToast('error', 'Please enter a valid URL'); return; }
+            try { new URL(baseUrl); } catch(e) { showToast('error', 'Please enter a valid URL'); return; }
 
             const codeModeChanged = (currentConfig.codeMode !== false) !== codeMode;
             setLoading('saveBtn', true, 'Save', SAVE_ICON);
+            clearStatusBar();
             vscode.postMessage({
                 type: 'saveConfiguration',
-                data: { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, apiVersion, codeMode, memoryBankDir, compileDbPaths, codeModeChanged }
+                data: { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, apiVersion, codeMode, memoryBankDir, compileDbPaths, codeModeChanged, enableElicitation }
             });
         }
 
-        window.addEventListener('message', event => {
+        window.addEventListener('message', function(event) {
             const message = event.data;
             switch (message.type) {
                 case 'loadConfig': {
@@ -608,23 +520,23 @@
                     document.getElementById('memoryBankDir').value = currentConfig.memoryBankDir || '';
                     document.getElementById('compileDbPaths').value = currentConfig.compileDbPaths || '';
                     document.getElementById('password').value = '';
+                    if (currentConfig.enableElicitation !== undefined) {
+                        document.getElementById('enableElicitation').checked = currentConfig.enableElicitation;
+                    }
 
                     const pInput = document.getElementById('password');
                     const pHint = document.getElementById('passwordHint');
                     if (currentConfig.hasPassword) {
                         pInput.placeholder = 'Leave empty to keep existing password';
-                        pHint.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg> Existing password stored securely';
+                        pHint.textContent = 'Existing password stored securely';
                     } else {
                         pInput.placeholder = 'Enter your password';
-                        pHint.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> Stored securely in OS keychain';
+                        pHint.textContent = 'Stored securely in OS keychain';
                     }
 
                     // Auto-open advanced if non-default values present
-                    const hasAdvanced = (currentConfig.proxy || currentConfig.defaultProject ||
-                        (currentConfig.contextBudget && currentConfig.contextBudget !== 'minimal') ||
-                        currentConfig.responseFormatOverride ||
+                    const hasAdvanced = (currentConfig.proxy || currentConfig.responseFormatOverride ||
                         (currentConfig.apiVersion && currentConfig.apiVersion !== 'v1') ||
-                        currentConfig.codeMode === false ||
                         currentConfig.memoryBankDir ||
                         currentConfig.compileDbPaths);
                     if (hasAdvanced) {
@@ -636,24 +548,27 @@
                 }
                 case 'error':
                     showToast('error', message.message);
-                    setLoading('testBtn', false, 'Test', TEST_ICON);
+                    setStatusBar('error', message.message);
+                    setLoading('testBtn', false, 'Test Connection', TEST_ICON);
                     setLoading('saveBtn', false, 'Save', SAVE_ICON);
                     break;
                 case 'success':
                     showToast('success', message.message);
+                    setStatusBar('success', message.message);
                     currentConfig.hasPassword = true;
-                    // Sync codeMode so repeated saves don't spuriously detect a "toggle"
                     currentConfig.codeMode = document.getElementById('codeMode').checked;
                     updateStatusDisplay(true);
                     setLoading('saveBtn', false, 'Save', SAVE_ICON);
-                    setTimeout(() => testConnection(), 600);
+                    setTimeout(function() { testConnection(); }, 600);
                     break;
                 case 'testSuccess':
                     showToast('success', message.message);
-                    setLoading('testBtn', false, 'Test', TEST_ICON);
+                    setStatusBar('success', message.message);
+                    setLoading('testBtn', false, 'Test Connection', TEST_ICON);
                     break;
                 case 'testing':
                     showToast('info', message.message);
+                    setStatusBar('info', message.message);
                     break;
             }
         });
