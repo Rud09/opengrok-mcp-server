@@ -1,7 +1,8 @@
 # Using OpenGrok MCP with Any Client
 
 This guide covers how to connect the standalone OpenGrok MCP server to popular AI clients.
-The **wrapper script** is the recommended approach — it handles credentials securely (OS keychain or encrypted file) so you never paste a password into a config file.
+The interactive setup wizard (v7.0+) is the recommended approach — it handles credentials
+securely via the OS keychain and writes the correct config for your client automatically.
 
 > **VS Code / Google Antigravity users:** install the VSIX extension instead.
 > It handles everything automatically. See [README.md](README.md).
@@ -22,26 +23,27 @@ The **wrapper script** is the recommended approach — it handles credentials se
 
 For non-VS Code clients:
 - **Claude Code:** Put general context in `.claude.md` at project root
-- **Cursor:** Put conventions in `.cursorrules`  
+- **Cursor:** Put conventions in `.cursorrules`
 - **Standalone CLI:** OpenGrok memory bank at `~/.config/opengrok-mcp/memory-bank/`
 
 ---
 
 ## Quick Start
 
-### Option A — Interactive Setup Wizard (Recommended, v7.0+)
+### Interactive Setup Wizard (Recommended, v7.0+)
 
 Run the guided wizard — it configures your MCP client and stores credentials securely:
 
 ```sh
-npx opengrok-mcp setup
+npx opengrok-mcp-server setup
 ```
 
 Supports **Claude Code CLI**, **VS Code/Copilot CLI**, and **Codex CLI**. The wizard:
 - Prompts for your OpenGrok URL, username, and password
 - Tests the connection
-- Writes the MCP config to the right file for the detected client
-- Stores credentials in the OS keychain (`@napi-rs/keyring`) with AES-256-GCM encrypted file fallback for headless/CI environments
+- Writes the correct MCP config file for the detected client
+- Stores credentials in the OS keychain (`@napi-rs/keyring`) with an AES-256-GCM encrypted
+  file fallback for headless/CI environments
 
 Your password is **never** stored in any MCP client config file.
 
@@ -51,45 +53,20 @@ Check installation health at any time:
 opengrok-mcp status
 ```
 
-### Option B — Legacy Wrapper Scripts
-
-**Linux / macOS (one command):**
-```sh
-curl -fsSL https://raw.githubusercontent.com/IcyHot09/opengrok-mcp-server/main/scripts/install.sh | bash
-```
-
-**Windows:** Download the latest `opengrok-mcp-*-win.zip` from the
-[Releases page](https://github.com/IcyHot09/opengrok-mcp-server/releases),
-extract it to a permanent location (e.g., `C:\tools\opengrok-mcp\`).
-
-Then run the setup wizard:
-```sh
-# Linux / macOS
-~/.local/bin/opengrok-mcp-wrapper.sh --setup
-
-# Windows (PowerShell or cmd)
-C:\tools\opengrok-mcp\opengrok-mcp-wrapper.cmd --setup
-```
-
-| Platform | Primary store | Fallback |
-| :------- | :------------ | :------- |
-| macOS | macOS Keychain | AES-256-GCM encrypted file |
-| Linux (desktop) | GNOME Keyring / KDE Wallet | AES-256-GCM encrypted file |
-| Linux (headless/SSH) | AES-256-GCM encrypted file (machine-id key) | `.env` file |
-| Windows | Windows Credential Manager | DPAPI encrypted file |
-
-### Configure your client
-
-Point your client at the wrapper (the path printed by `--setup`).
-Snippets for each client are below.
-
 ---
 
 ## Client Configurations
 
+After running the wizard, your client config is written automatically. The examples below
+show the canonical config format for each client if you need to set it up manually.
+
+All configs use `npx opengrok-mcp-server` as the command — no global install required.
+For a global install (`npm install -g opengrok-mcp-server`), replace `npx opengrok-mcp-server`
+with just `opengrok-mcp`.
+
 ### Claude Code
 
-> **Quickest setup:** `npx opengrok-mcp setup` — detects Claude Code CLI and writes the config automatically.
+> **Quickest setup:** `npx opengrok-mcp-server setup` — detects Claude Code and writes the config.
 
 Scope options:
 - **Project** (team-shared, no secrets): `.mcp.json` in project root
@@ -99,15 +76,41 @@ Scope options:
 {
   "mcpServers": {
     "opengrok": {
-      "command": "/home/YOU/.local/bin/opengrok-mcp-wrapper.sh"
+      "command": "npx",
+      "args": ["opengrok-mcp-server"]
     }
   }
 }
 ```
 
-> **Windows:** use `C:\\tools\\opengrok-mcp\\opengrok-mcp-wrapper.cmd` (double backslashes).
+Credentials are read from the OS keychain automatically on startup — no env vars needed.
 
-The Claude Code VS Code Extension reads the same `.mcp.json` — no extra config needed.
+---
+
+### VS Code Copilot CLI
+
+Run the wizard:
+
+```sh
+npx opengrok-mcp-server setup
+```
+
+Select **VS Code / Copilot** when prompted. The wizard writes the config to your
+`settings.json` or workspace `.vscode/mcp.json` as appropriate.
+
+Manual config in `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "opengrok": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["opengrok-mcp-server"]
+    }
+  }
+}
+```
 
 ---
 
@@ -119,13 +122,12 @@ Edit `.cursor/mcp.json` in your project root, or open **Cursor Settings → Feat
 {
   "mcpServers": {
     "opengrok": {
-      "command": "/home/YOU/.local/bin/opengrok-mcp-wrapper.sh"
+      "command": "npx",
+      "args": ["opengrok-mcp-server"]
     }
   }
 }
 ```
-
-> **Windows:** `"command": "C:\\tools\\opengrok-mcp\\opengrok-mcp-wrapper.cmd"`
 
 ---
 
@@ -137,7 +139,8 @@ Edit `~/.codeium/windsurf/mcp_config.json`.
 {
   "mcpServers": {
     "opengrok": {
-      "command": "/home/YOU/.local/bin/opengrok-mcp-wrapper.sh"
+      "command": "npx",
+      "args": ["opengrok-mcp-server"]
     }
   }
 }
@@ -156,7 +159,8 @@ Edit `~/.codeium/windsurf/mcp_config.json`.
 {
   "mcpServers": {
     "opengrok": {
-      "command": "/home/YOU/.local/bin/opengrok-mcp-wrapper.sh"
+      "command": "npx",
+      "args": ["opengrok-mcp-server"]
     }
   }
 }
@@ -166,7 +170,7 @@ Restart Claude Desktop after saving.
 
 ---
 
-### OpenCode (opencode.ai by Anomaly)
+### OpenCode (opencode.ai)
 
 Config files: `opencode.json` / `opencode.jsonc` (project) or `~/.config/opencode/opencode.json` (global).
 
@@ -175,17 +179,15 @@ Config files: `opencode.json` / `opencode.jsonc` (project) or `~/.config/opencod
   "mcp": {
     "opengrok": {
       "type": "local",
-      "command": ["/home/YOU/.local/bin/opengrok-mcp-wrapper.sh"]
+      "command": ["npx", "opengrok-mcp-server"]
     }
   }
 }
 ```
 
-> **Windows:** `"command": ["C:\\tools\\opengrok-mcp\\opengrok-mcp-wrapper.cmd"]`
-
 ---
 
-### Crush (formerly opencode-ai/opencode on GitHub)
+### Crush
 
 Config: `~/.config/crush/config.yaml` or project-level `crush.yaml`.
 
@@ -193,76 +195,106 @@ Config: `~/.config/crush/config.yaml` or project-level `crush.yaml`.
 mcp:
   servers:
     opengrok:
-      command: /home/YOU/.local/bin/opengrok-mcp-wrapper.sh
+      command: npx
+      args:
+        - opengrok-mcp-server
 ```
 
 ---
 
 ### Google Antigravity
 
-**Recommended:** Install the VSIX extension — Gemini discovers tools automatically, no config needed.
+**Recommended:** Install the VSIX extension — Gemini discovers tools automatically.
 
 **Manual MCP config** (if you prefer not to use the extension):
-Use the MCP Store in Antigravity → *View raw config* and add the `mcpServers` snippet above (same format as Claude Code / Cursor).
+Use the MCP Store in Antigravity → *View raw config* and add:
 
-> Since Antigravity runs in the cloud, the wrapper must be reachable from your workspace environment.
+```json
+{
+  "mcpServers": {
+    "opengrok": {
+      "command": "npx",
+      "args": ["opengrok-mcp-server"]
+    }
+  }
+}
+```
+
+> Since Antigravity runs in the cloud, `npx` must be available in your workspace environment.
 > Consult the [Antigravity docs](https://antigravity.google/docs/mcp) for workspace-specific details.
 
 ---
 
 ## Advanced: CI / Service Accounts
 
-For CI pipelines, inject credentials via environment variables — the wrapper passes them straight through:
+For CI pipelines, pass credentials via environment variables — the server reads them directly:
 
 ```sh
 export OPENGROK_BASE_URL="https://opengrok.example.com/source/"
 export OPENGROK_USERNAME="ci-bot"
-export OPENGROK_PASSWORD="$SECRET_FROM_VAULT"   # set by your CI system
-opengrok-mcp-wrapper.sh                          # or exec directly: opengrok-mcp
+export OPENGROK_PASSWORD="$SECRET_FROM_VAULT"   # injected by your CI secrets manager
+npx opengrok-mcp-server
 ```
 
-`OPENGROK_PASSWORD` in the environment always takes precedence over any stored credentials.
+`OPENGROK_PASSWORD` in the environment takes precedence over any keychain entry.
+
+Or in a client config (e.g., Claude Code `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "opengrok": {
+      "command": "npx",
+      "args": ["opengrok-mcp-server"],
+      "env": {
+        "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
+        "OPENGROK_USERNAME": "ci-bot",
+        "OPENGROK_PASSWORD": "${OPENGROK_PASSWORD}"
+      }
+    }
+  }
+}
+```
+
+Claude Code supports `${VAR}` expansion in `env` blocks — set the variable in your shell before launching.
 
 ---
 
 ## Manual Setup (Advanced)
 
-> Use this if you cannot or prefer not to use the installer and wrapper scripts.
-> **The approach below stores credentials as environment variables, which may be visible in process listings.**
-> A dedicated service account with read-only access is strongly recommended.
+> Use this if you need full control over the server binary and environment.
+> **Credentials in env vars may be visible in process listings** — use a service account
+> with read-only access and prefer the keychain approach for interactive use.
 
 ### Prerequisites
 
-Build the server yourself:
-
 ```bash
-git clone https://github.com/IcyHot09/opengrok-mcp-server.git
-cd opengrok-mcp-server
-npm install
-npm run compile
+npm install -g opengrok-mcp-server   # global install
+# OR: use npx for one-off runs without installing
 ```
 
-The server binary is then `./out/server/main.js` (requires Node.js ≥ 18).
-
-### Environment Variables
+### Key Environment Variables
 
 | Variable | Required | Description |
 | :------- | :------- | :---------- |
-| `OPENGROK_BASE_URL` | Yes | Your OpenGrok server URL (e.g., `https://opengrok.example.com/source/`) |
-| `OPENGROK_USERNAME` | Yes | Your OpenGrok username |
-| `OPENGROK_PASSWORD` | Yes | Your OpenGrok password |
-| `OPENGROK_VERIFY_SSL` | No | Set to `false` for self-signed certificates (default: `true`) |
+| `OPENGROK_BASE_URL` | Yes | OpenGrok server URL (e.g., `https://opengrok.example.com/source/`) |
+| `OPENGROK_USERNAME` | Yes | OpenGrok username |
+| `OPENGROK_PASSWORD` | Yes | OpenGrok password (overrides keychain) |
+| `OPENGROK_VERIFY_SSL` | No | `false` for self-signed certificates (default: `true`) |
+| `OPENGROK_CODE_MODE` | No | `true` to enable Code Mode (5-tool sandbox interface) |
+| `OPENGROK_DEFAULT_PROJECT` | No | Default project to scope all searches |
+| `OPENGROK_ENABLE_ELICITATION` | No | `true` to enable interactive project picker and `env.opengrok.elicit()` |
 
-### Claude Desktop (manual)
+Full env var reference: see [README.md — Configuration Guide](README.md#configuration-guide).
 
-Config file: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
+### Example: Claude Desktop with explicit env vars
 
 ```json
 {
   "mcpServers": {
     "opengrok": {
-      "command": "node",
-      "args": ["/absolute/path/to/opengrok-mcp-server/out/server/main.js"],
+      "command": "npx",
+      "args": ["opengrok-mcp-server"],
       "env": {
         "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
         "OPENGROK_USERNAME": "your-username",
@@ -274,124 +306,58 @@ Config file: `~/Library/Application Support/Claude/claude_desktop_config.json` (
 }
 ```
 
-Restart Claude Desktop after saving.
-
-### Claude Code (manual, env var expansion)
-
-Claude Code supports `${VAR}` expansion in env blocks. Set `OPENGROK_PASSWORD` in your shell before launching.
-
-```json
-{
-  "mcpServers": {
-    "opengrok": {
-      "command": "node",
-      "args": ["/absolute/path/to/opengrok-mcp-server/out/server/main.js"],
-      "env": {
-        "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
-        "OPENGROK_USERNAME": "your-username",
-        "OPENGROK_PASSWORD": "${OPENGROK_PASSWORD}",
-        "OPENGROK_VERIFY_SSL": "true"
-      }
-    }
-  }
-}
-```
-
-### Cursor (manual)
-
-Edit `.cursor/mcp.json` in your project root or open **Cursor Settings → Features → MCP**.
-
-```json
-{
-  "mcpServers": {
-    "opengrok": {
-      "command": "node",
-      "args": ["/absolute/path/to/opengrok-mcp-server/out/server/main.js"],
-      "env": {
-        "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
-        "OPENGROK_USERNAME": "your-username",
-        "OPENGROK_PASSWORD": "your-password",
-        "OPENGROK_VERIFY_SSL": "true"
-      }
-    }
-  }
-}
-```
-
-### OpenCode (manual)
-
-Config: `opencode.json` / `opencode.jsonc` in project root or `~/.config/opencode/opencode.json`.
-
-```json
-{
-  "mcp": {
-    "opengrok": {
-      "type": "local",
-      "command": ["node", "/absolute/path/to/opengrok-mcp-server/out/server/main.js"],
-      "environment": {
-        "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
-        "OPENGROK_USERNAME": "your-username",
-        "OPENGROK_PASSWORD": "your-password"
-      }
-    }
-  }
-}
-```
-
-### Google Antigravity (manual)
-
-Use the MCP Store → *Manage MCP Servers* → *View raw config* and add:
-
-```json
-{
-  "mcpServers": {
-    "opengrok": {
-      "command": "node",
-      "args": ["/path/to/opengrok-mcp-server/out/server/main.js"],
-      "env": {
-        "OPENGROK_BASE_URL": "https://opengrok.example.com/source/",
-        "OPENGROK_USERNAME": "your-username",
-        "OPENGROK_PASSWORD": "your-password"
-      }
-    }
-  }
-}
-```
+---
 
 ## Troubleshooting
 
 ### `No credentials found` on server start
-You haven't run `--setup` in your terminal yet, or the keychain is unreachable.
+
+Run the setup wizard to store credentials in the OS keychain:
+
 ```sh
-~/.local/bin/opengrok-mcp-wrapper.sh --setup
+npx opengrok-mcp-server setup
 ```
 
-### `binary not found` error
-The `opengrok-mcp` binary is missing from the same directory as the wrapper.
-Re-run the installer, or set `OPENGROK_BIN=/full/path/to/opengrok-mcp`.
+Or pass `OPENGROK_PASSWORD` as an environment variable in your client config.
+
+### `command not found: opengrok-mcp`
+
+Use `npx opengrok-mcp-server` instead, or install globally:
+
+```sh
+npm install -g opengrok-mcp-server
+```
 
 ### SSL certificate errors
-During `--setup`, answer `n` to "Verify SSL certificates?" when prompted.
-This writes `OPENGROK_VERIFY_SSL=false` to `~/.config/opengrok-mcp/config`.
 
-### Connection test fails during --setup
+During `npx opengrok-mcp-server setup`, answer **No** when asked "Verify SSL certificates?".
+This configures `OPENGROK_VERIFY_SSL=false`. Or set it in your client config env block.
+
+### Connection test fails during setup
+
 1. Check VPN / network access to the OpenGrok server.
 2. Verify the base URL ends with `/source/`.
 3. Test manually: `curl -u username https://opengrok.example.com/source/api/v1/projects`
 
-### Viewing server logs
-Start the wrapper directly in a terminal; MCP JSON-RPC traffic goes to stdout, logs to stderr.
+### Checking server logs
+
+Add `"--verbose"` to the args or run the server directly in a terminal:
+
 ```sh
-~/.local/bin/opengrok-mcp-wrapper.sh 2>&1 | less
+OPENGROK_BASE_URL=https://... OPENGROK_USERNAME=... OPENGROK_PASSWORD=... npx opengrok-mcp-server 2>&1 | less
 ```
+
+MCP JSON-RPC traffic goes to stdout; server logs go to stderr.
 
 ---
 
 ## Prompt Caching
 
-Claude Code and Claude.ai automatically cache the MCP server's system prompt (SERVER_INSTRUCTIONS), which is ~310 tokens. This means:
+Claude Code and Claude.ai automatically cache the MCP server's system prompt
+(SERVER_INSTRUCTIONS, ~310 tokens). This means:
 - The first call in a session pays the full token cost for SERVER_INSTRUCTIONS
 - Subsequent calls in the same session reuse the cached version at ~10% of the cost
-- No configuration needed — this is automatic for supported clients
+- No configuration needed — automatic for supported clients
 
-`OPENGROK_ENABLE_CACHE_HINTS=true` is reserved for future explicit cache-control headers (not yet implemented by any client).
+`OPENGROK_ENABLE_CACHE_HINTS=true` is reserved for future explicit cache-control headers
+(not yet implemented by any client).

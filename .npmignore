@@ -20,3 +20,20 @@ vitest.config.ts
 *.tgz
 release-body.md
 package-lock.json
+
+# VS Code extension UI — not needed for npm/npx MCP server
+out/webview/
+out/extension.js
+out/extension.js.map
+
+# Evaluation / skills / local docs
+evaluation.xml
+skills/
+docs/
+CLAUDE.md
+server.json
+vitest.sandbox.config.ts
+scripts/
+
+# Local tool directories
+.opengrok/

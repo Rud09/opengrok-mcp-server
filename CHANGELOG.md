@@ -5,6 +5,58 @@ All notable changes to the OpenGrok MCP extension will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## Highlights
+
+### 💬 v9.0 — Code Mode Interactive Prompts & LLM Sampling
+
+`env.opengrok.elicit()` and `env.opengrok.sample()` bring interactive user prompts and AI-powered query reformulation directly into the Code Mode sandbox. Zero-result searches auto-inject `_suggestions` when sampling is available. `opengrok_api` gains a session-start project picker. `elicitOrFallback` migrated from deprecated `Server` to `McpServer`. **1,115 tests, ≥89% coverage.**
+
+### 🔑 v8.0 — Security Hardening & OS Keychain Integration
+
+Extension writes credentials to the OS keychain instead of temp files, eliminating env-var credential exposure. Server reads the keychain on startup with an encrypted file fallback for headless Linux. `verifySsl` default corrected to `true`. Memory tools moved to Code Mode only. Wrapper scripts and tarball distribution removed — npm/npx and VSIX only. **1,079 tests, ≥89% coverage.**
+
+### 🛡️ v7.0 — Security Audit, OAuth Resource Server & CLI Setup Wizard
+
+Comprehensive security audit across all attack surfaces: SSRF hardening, Unicode path traversal, HTML/prompt injection, timing-safe token comparison, AES-256-GCM credential encryption, integer rate limiter, and CORS allowlist. OAuth 2.1 migrated to resource server model (bring your own IdP). New `npx opengrok-mcp setup` interactive wizard for Claude Code CLI, VS Code/Copilot CLI, and Codex CLI. **1079 tests, ≥89% coverage.**
+
+### 🚀 v6.0 — Enterprise MCP: HTTP Transport, OAuth 2.1 & RBAC
+
+Streamable HTTP transport for team deployments, OAuth 2.1 with `client_credentials` grant, role-based access control (admin/developer/readonly), OpenGrok API v2 support, and full MCP 2025-06-18 spec compliance: structured tool output (`outputSchema` + `structuredContent`), MCP Resources, Prompts, Elicitation, and Sampling. **26 tools total, 919 tests.**
+
+- 🔧 **v6.2** — 4 bug fixes: sync-first `opengrok_execute` (halves Code Mode tool calls), sandbox `getFileDiff` wire-up, delta/compressed memory reads, API_SPEC example alignment. TOON format support (~40% fewer tokens than JSON for search results).
+- 🔍 **v6.1** — `opengrok_get_file_diff` (tool 26): unified diff with context lines via `?format=u` HTML parsing; Code Mode `return_rules` micro-optimizations; typed `CodeModeAnnotations` for interleaved thinking.
+
+### 🧬 v5.0 — Code Mode: Pure-WASM Sandbox + Token Optimization
+
+Code Mode sandbox built on `@sebastianwessel/quickjs` — pure JS + WASM, zero native compilation, no `node-gyp`, works everywhere including `npx` and enterprise Linux. Full token optimization suite: three context budget tiers, compact TSV/YAML/text formats, Living Document memory bank, and session observation masker for long investigations.
+
+- 🔬 **v5.6** — MCP SDK 1.28.0, `outputSchema` + `structuredContent` on 10 tools, MCP Resources/Prompts/Elicitation/Sampling, `opengrok_blame`, per-tool rate limiting, structured audit logging, sandbox sanitization.
+- ⚡ **v5.5** — Sandbox worker pool, 4 new tools (`opengrok_what_changed`, `opengrok_dependency_map`, `opengrok_search_pattern`, enhanced `opengrok_index_health`), C++ specialized skill (489 lines), TSV batch format.
+- 🗃️ **v5.4** — 2-file memory bank (active-task.md + investigation-log.md), rewritten SERVER_INSTRUCTIONS, `opengrok_memory_status` tool, compact Code Mode descriptions, new session/investigation skills.
+- 🐛 **v5.3.2** — P0 bug fixes: activation events, ObservationMasker injection layer, SERVER_INSTRUCTIONS dead references, UI polish.
+
+### 🏗️ v4.0 — Modern MCP SDK & Breaking Tool Rename
+
+McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, structured output, `response_format` parameter, security hardening. Full protocol compliance.
+
+### 🧠 v3.0 — Code Intelligence Engine
+
+6 new compound tools, ~92% fewer tokens, full OpenGrok 1.7.x support, and a zero-config local source layer that knows your compiler flags. The largest update since the original rewrite.
+
+- 🛡️ **v3.3** — Security hardening, 100% code coverage, Node 24, enterprise-grade quality. 476 tests, zero audit findings.
+- 🌐 **v3.2** — Standalone MCP server. One-command installer, cross-platform credential wrappers, no VS Code required.
+- 🚀 **v3.1** — Auto-update notifications. One click in VS Code, no manual downloads.
+
+### 🔐 v2.0 — Full TypeScript Rewrite
+
+Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
+
+- 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
 ## [9.0.0] - 2026-03-31
 
 ### Features — Code Mode Interactive Prompts & LLM Sampling
@@ -72,48 +124,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Tool Count: 26 total
 - Standard mode: 23 tools (no memory tools)
 - Code Mode: 5 tools (opengrok_api + opengrok_execute + 3 memory tools)
-
----
-
-## Highlights
-
-### 🛡️ v7.0 — Security Audit, OAuth Resource Server & CLI Setup Wizard
-
-Comprehensive security audit across all attack surfaces: SSRF hardening, Unicode path traversal, HTML/prompt injection, timing-safe token comparison, AES-256-GCM credential encryption, integer rate limiter, and CORS allowlist. OAuth 2.1 migrated to resource server model (bring your own IdP). New `npx opengrok-mcp setup` interactive wizard for Claude Code CLI, VS Code/Copilot CLI, and Codex CLI. **1079 tests, ≥89% coverage.**
-
-### 🚀 v6.0 — Enterprise MCP: HTTP Transport, OAuth 2.1 & RBAC
-
-Streamable HTTP transport for team deployments, OAuth 2.1 with `client_credentials` grant, role-based access control (admin/developer/readonly), OpenGrok API v2 support, and full MCP 2025-06-18 spec compliance: structured tool output (`outputSchema` + `structuredContent`), MCP Resources, Prompts, Elicitation, and Sampling. **26 tools total, 919 tests.**
-
-- 🔧 **v6.2** — 4 bug fixes: sync-first `opengrok_execute` (halves Code Mode tool calls), sandbox `getFileDiff` wire-up, delta/compressed memory reads, API_SPEC example alignment. TOON format support (~40% fewer tokens than JSON for search results).
-- 🔍 **v6.1** — `opengrok_get_file_diff` (tool 26): unified diff with context lines via `?format=u` HTML parsing; Code Mode `return_rules` micro-optimizations; typed `CodeModeAnnotations` for interleaved thinking.
-
-### 🧬 v5.0 — Code Mode: Pure-WASM Sandbox + Token Optimization
-
-Code Mode sandbox built on `@sebastianwessel/quickjs` — pure JS + WASM, zero native compilation, no `node-gyp`, works everywhere including `npx` and enterprise Linux. Full token optimization suite: three context budget tiers, compact TSV/YAML/text formats, Living Document memory bank, and session observation masker for long investigations.
-
-- 🔬 **v5.6** — MCP SDK 1.28.0, `outputSchema` + `structuredContent` on 10 tools, MCP Resources/Prompts/Elicitation/Sampling, `opengrok_blame`, per-tool rate limiting, structured audit logging, sandbox sanitization.
-- ⚡ **v5.5** — Sandbox worker pool, 4 new tools (`opengrok_what_changed`, `opengrok_dependency_map`, `opengrok_search_pattern`, enhanced `opengrok_index_health`), C++ specialized skill (489 lines), TSV batch format.
-- 🗃️ **v5.4** — 2-file memory bank (active-task.md + investigation-log.md), rewritten SERVER_INSTRUCTIONS, `opengrok_memory_status` tool, compact Code Mode descriptions, new session/investigation skills.
-- 🐛 **v5.3.2** — P0 bug fixes: activation events, ObservationMasker injection layer, SERVER_INSTRUCTIONS dead references, UI polish.
-
-### 🏗️ v4.0 — Modern MCP SDK & Breaking Tool Rename
-
-McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, structured output, `response_format` parameter, security hardening. Full protocol compliance.
-
-### 🧠 v3.0 — Code Intelligence Engine
-
-6 new compound tools, ~92% fewer tokens, full OpenGrok 1.7.x support, and a zero-config local source layer that knows your compiler flags. The largest update since the original rewrite.
-
-- 🛡️ **v3.3** — Security hardening, 100% code coverage, Node 24, enterprise-grade quality. 476 tests, zero audit findings.
-- 🌐 **v3.2** — Standalone MCP server. One-command installer, cross-platform credential wrappers, no VS Code required.
-- 🚀 **v3.1** — Auto-update notifications. One click in VS Code, no manual downloads.
-
-### 🔐 v2.0 — Full TypeScript Rewrite
-
-Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
-
-- 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
 
 ---
 

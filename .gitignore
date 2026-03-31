@@ -45,3 +45,6 @@ specs/
 *plan*.md
 *review*.md
 *questions*.md
+
+# Local OpenGrok tool state
+.opengrok/

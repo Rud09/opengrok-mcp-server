@@ -45,9 +45,18 @@ eslint.config.mjs
 # Exclude standalone scripts
 scripts/
 
-# Include only production files
-# out/
-# images/
-# package.json
-# README.md
-# LICENSE
+# Exclude evaluation / skills / local docs
+evaluation.xml
+skills/
+docs/
+CLAUDE.md
+server.json
+
+# Exclude sandbox vitest config
+vitest.sandbox.config.ts
+
+# Exclude local tool directories
+.opengrok/
+
+# Include only production files:
+# out/, images/, package.json, README.md, LICENSE
