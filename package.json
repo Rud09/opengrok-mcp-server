@@ -2,7 +2,7 @@
   "name": "opengrok-mcp-server",
   "displayName": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases",
-  "version": "7.0.0",
+  "version": "8.0.0",
   "mcpName": "io.github.IcyHot09/opengrok-mcp-server",
   "license": "PolyForm-Noncommercial-1.0.0",
   "publisher": "IcyHot09",
@@ -184,7 +184,10 @@
         },
         "opengrok-mcp.apiVersion": {
           "type": "string",
-          "enum": ["v1", "v2"],
+          "enum": [
+            "v1",
+            "v2"
+          ],
           "enumDescriptions": [
             "v1 — Default (OpenGrok 1.x)",
             "v2 — OpenGrok 2.x servers (explicit opt-in only)"

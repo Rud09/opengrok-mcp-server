@@ -90,7 +90,13 @@ async function main() {
     ...sharedOptions,
     entryPoints: ['src/extension.ts'],
     outfile: 'out/extension.js',
-    external: ['vscode'],  // provided at runtime by VS Code
+    // vscode: provided at runtime by VS Code
+    // @napi-rs/keyring: prebuilt native .node binaries, must stay external
+    external: [
+      'vscode',
+      '@napi-rs/keyring', '@napi-rs/keyring-linux-x64-gnu', '@napi-rs/keyring-linux-x64-musl',
+      '@napi-rs/keyring-darwin-x64', '@napi-rs/keyring-darwin-arm64', '@napi-rs/keyring-win32-x64-msvc',
+    ],
   });
 
   // ---- MCP Server (standalone Node.js bundle) ----

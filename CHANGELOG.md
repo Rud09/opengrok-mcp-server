@@ -5,6 +5,50 @@ All notable changes to the OpenGrok MCP extension will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.0.0] - 2026-03-31
+
+### Breaking Changes
+- Memory tools (`opengrok_read_memory`, `opengrok_update_memory`, `opengrok_memory_status`) removed from standard mode — available in Code Mode only
+- `OPENGROK_ALLOWED_CLIENT_IDS` removed (enforcement was never active; use RBAC tokens for access control)
+- Standalone tarball downloads removed — npm/npx and VSIX only
+- `verifySsl` now defaults to `true` in VS Code extension (previously `false`)
+- `OPENGROK_PASSWORD_KEY` / `OPENGROK_PASSWORD_FILE` deprecated; server auto-reads from OS keychain
+
+### Security
+- Extension writes credentials to OS keychain instead of temp file — eliminates `OPENGROK_PASSWORD_KEY` env var exposure
+- Server reads password from OS keychain on startup via `resolveConfig()` (macOS/Windows/Linux, with encrypted file fallback for headless Linux)
+- `verifySsl` default corrected to `true`
+- HTTP URL warning added in setup wizard and VS Code config UI
+- Keychain credential files now written with `mode: 0o600` (previously world-readable on default umask)
+
+### Bug Fixes
+- VS Code extension save no longer fails with "apiVersion is not a registered configuration"
+- Password now persists even if a config update throws (save order fixed: `secretStorage.store` runs first)
+- `OPENGROK_API_VERSION` and `OPENGROK_ENABLE_ELICITATION` now correctly passed to server process
+- `OPENGROK_USERNAME` included in generated MCP client configs (Claude Code, VS Code, Codex)
+- `verifySsl` default inconsistency resolved
+
+### Features
+- Compact tool descriptions automatically enabled when `OPENGROK_CONTEXT_BUDGET=minimal` (~1,400 token savings)
+- `OPENGROK_ENABLE_CACHE_HINTS=true` now logs informational note (previously silently unused)
+- VS Code config UI: added Elicitation toggle; modern `--vscode-*` CSS tokens (fully theme-adaptive)
+- CLI wizard: added SSL verification prompt
+- Quick configure and WebView save unified — same validation and credential handling
+- `enableElicitation` setting added to VS Code extension config
+
+### Removals
+- Wrapper scripts deleted: `opengrok-mcp-wrapper.sh/cmd/ps1`, `install.sh`, `package-server.js`, `release.ps1`
+- `package.json`: `package-server`, `release:patch/minor/major` scripts removed
+- `x-supports-interleaving` custom annotation removed (not a real MCP spec field)
+- `validateOrigin()` dead function removed
+- `OPENGROK_ALLOWED_CLIENT_IDS` config removed
+
+### Tool Count: 26 total
+- Standard mode: 23 tools (no memory tools)
+- Code Mode: 5 tools (opengrok_api + opengrok_execute + 3 memory tools)
+
+---
+
 ## Highlights
 
 ### 🛡️ v7.0 — Security Audit, OAuth Resource Server & CLI Setup Wizard
