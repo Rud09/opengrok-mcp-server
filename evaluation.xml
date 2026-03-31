@@ -1,88 +1,209 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Evaluation file for the OpenGrok MCP Server.
-  10 complex read-only questions exercising multi-tool compositions.
-  Use with MCP Inspector or automated evaluation harness.
+  Evaluation file for the OpenGrok MCP Server v9.0.
+  20 questions covering standard mode (26 tools) and Code Mode (5 tools + sandbox API).
+  Use with MCP Inspector or an automated evaluation harness.
+
+  Tool inventory:
+    Standard mode (23 tools):
+      opengrok_search_code, opengrok_find_file, opengrok_search_pattern,
+      opengrok_get_file_content, opengrok_get_file_history, opengrok_get_file_diff,
+      opengrok_browse_directory, opengrok_list_projects, opengrok_get_file_annotate,
+      opengrok_search_suggest, opengrok_batch_search, opengrok_search_and_read,
+      opengrok_get_symbol_context, opengrok_index_health, opengrok_get_compile_info,
+      opengrok_get_file_symbols, opengrok_call_graph, opengrok_what_changed,
+      opengrok_blame, opengrok_dependency_map, opengrok_get_task_result,
+      opengrok_search_pattern, opengrok_get_file_diff
+    Code Mode (5 tools + sandbox methods):
+      opengrok_api, opengrok_execute, opengrok_read_memory,
+      opengrok_update_memory, opengrok_memory_status
+      sandbox: env.opengrok.elicit(), env.opengrok.sample(), _suggestions auto-injection
 -->
 <evaluation>
   <meta>
     <name>OpenGrok MCP Server v9.0 Evaluation</name>
     <version>9.0.0</version>
     <description>
-      Tests for multi-tool composition, structured output, response_format,
-      error handling, and compound tool usage across all 14 opengrok_ tools.
+      20 questions covering standard mode (23 tools), Code Mode (5 tools + sandbox API),
+      multi-tool compositions, structured output, response_format, error handling,
+      and v9.0 sandbox features: env.opengrok.elicit(), env.opengrok.sample(),
+      and _suggestions zero-result auto-injection.
     </description>
   </meta>
 
   <questions>
+
+    <!-- ===================================================================== -->
+    <!-- STANDARD MODE — Core tool compositions (Q1–Q10)                       -->
+    <!-- ===================================================================== -->
+
     <!-- Q1: Basic search + file content composition -->
-    <question id="1" difficulty="medium">
+    <question id="1" difficulty="medium" mode="standard">
       <prompt>Find the definition of the EventLoop class and show me the first 30 lines of the file where it's defined.</prompt>
       <expected_tools>opengrok_search_code, opengrok_get_file_content</expected_tools>
       <verify>Response includes file path, line numbers, and code block with class definition</verify>
     </question>
 
     <!-- Q2: Compound tool — get_symbol_context replaces multi-step -->
-    <question id="2" difficulty="easy">
+    <question id="2" difficulty="easy" mode="standard">
       <prompt>What is the GridNode::processMessage function? Show me its definition, any header declaration, and where it's called from.</prompt>
       <expected_tools>opengrok_get_symbol_context</expected_tools>
       <verify>Response includes definition context, header (if .cpp), and reference samples</verify>
     </question>
 
     <!-- Q3: Compound tool — batch_search for parallel investigation -->
-    <question id="3" difficulty="medium">
+    <question id="3" difficulty="medium" mode="standard">
       <prompt>Search for all definitions of "ConnectionPool", all references to "ConnectionPool", and all path matches for files named "*connection*" — do it in one call.</prompt>
       <expected_tools>opengrok_batch_search</expected_tools>
       <verify>Response contains three query results with match counts for each</verify>
     </question>
 
     <!-- Q4: Compound tool — search_and_read for contextual results -->
-    <question id="4" difficulty="easy">
+    <question id="4" difficulty="easy" mode="standard">
       <prompt>Find where "SIGTERM" is handled in the codebase and show me the surrounding code.</prompt>
       <expected_tools>opengrok_search_and_read</expected_tools>
       <verify>Response includes code context around SIGTERM matches without full-file fetch</verify>
     </question>
 
     <!-- Q5: File exploration pipeline -->
-    <question id="5" difficulty="hard">
+    <question id="5" difficulty="hard" mode="standard">
       <prompt>List all projects, then browse the root directory of the first project, then show me the symbols in its main entry file.</prompt>
       <expected_tools>opengrok_list_projects, opengrok_browse_directory, opengrok_get_file_symbols</expected_tools>
       <verify>Pipeline: projects → directory listing → symbol list with function/class names</verify>
     </question>
 
     <!-- Q6: History + blame composition -->
-    <question id="6" difficulty="medium">
+    <question id="6" difficulty="medium" mode="standard">
       <prompt>Show me the last 5 commits for EventLoop.cpp and then show blame annotations for lines 50-80.</prompt>
       <expected_tools>opengrok_get_file_history, opengrok_get_file_annotate</expected_tools>
       <verify>History entries with revisions + blame annotations with author/revision per line</verify>
     </question>
 
     <!-- Q7: response_format=json structured output -->
-    <question id="7" difficulty="medium">
+    <question id="7" difficulty="medium" mode="standard">
       <prompt>Search for "mutex" with response_format set to "json" and verify the output is valid JSON with totalCount and results array.</prompt>
       <expected_tools>opengrok_search_code</expected_tools>
       <verify>Text content is valid JSON; structuredContent contains totalCount, results array, hasMore</verify>
     </question>
 
     <!-- Q8: Error handling — invalid arguments -->
-    <question id="8" difficulty="easy">
+    <question id="8" difficulty="easy" mode="standard">
       <prompt>Call opengrok_search_code with an empty query string and verify the error response has isError=true.</prompt>
       <expected_tools>opengrok_search_code</expected_tools>
       <verify>Response has isError: true and contains "Invalid arguments" message</verify>
     </question>
 
     <!-- Q9: Local layer — compile_commands.json -->
-    <question id="9" difficulty="hard">
+    <question id="9" difficulty="hard" mode="standard">
       <prompt>Get the compiler flags and include paths for GridNode/EventLoop.cpp using the local compile info tool.</prompt>
       <expected_tools>opengrok_get_compile_info</expected_tools>
       <verify>Response includes compiler, flags, includes, and defines (or "not enabled" message)</verify>
     </question>
 
     <!-- Q10: Multi-step investigation with narrowing -->
-    <question id="10" difficulty="hard">
+    <question id="10" difficulty="hard" mode="standard">
       <prompt>Find all files matching "*Config*.java", then get the symbols from the first result, then read the constructor definition using the line number from the symbols list.</prompt>
       <expected_tools>opengrok_find_file, opengrok_get_file_symbols, opengrok_get_file_content</expected_tools>
       <verify>Three-step pipeline: find_file → get_file_symbols → targeted get_file_content with start_line/end_line</verify>
     </question>
+
+    <!-- ===================================================================== -->
+    <!-- STANDARD MODE — Tools added after v4.0 (Q11–Q15)                     -->
+    <!-- ===================================================================== -->
+
+    <!-- Q11: opengrok_blame — line-level attribution -->
+    <question id="11" difficulty="medium" mode="standard">
+      <prompt>Show me who last modified lines 100-150 of EventLoop.cpp — I need author, commit hash, and date for each line.</prompt>
+      <expected_tools>opengrok_blame</expected_tools>
+      <verify>Response contains per-line blame entries with author, revision hash, and date for lines 100-150</verify>
+    </question>
+
+    <!-- Q12: opengrok_what_changed — recent change detection -->
+    <question id="12" difficulty="easy" mode="standard">
+      <prompt>What changed in EventLoop.cpp in the last 14 days? Show me commits, authors, and which lines were modified.</prompt>
+      <expected_tools>opengrok_what_changed</expected_tools>
+      <verify>Response lists commits within 14-day window with author, date, and affected line ranges</verify>
+    </question>
+
+    <!-- Q13: opengrok_dependency_map — architecture investigation -->
+    <question id="13" difficulty="hard" mode="standard">
+      <prompt>Build a dependency map for GridNode/EventLoop.cpp showing what it imports and what imports it, 2 levels deep.</prompt>
+      <expected_tools>opengrok_dependency_map</expected_tools>
+      <verify>Response contains uses and used_by dependency nodes with depth levels; large graphs include LLM-generated summary</verify>
+    </question>
+
+    <!-- Q14: opengrok_get_file_diff — revision comparison -->
+    <question id="14" difficulty="medium" mode="standard">
+      <prompt>Show me what changed in EventLoop.cpp between its two most recent commits.</prompt>
+      <expected_tools>opengrok_get_file_history, opengrok_get_file_diff</expected_tools>
+      <verify>Pipeline: get_file_history retrieves rev hashes → get_file_diff shows unified diff with added/removed line counts</verify>
+    </question>
+
+    <!-- Q15: opengrok_search_pattern — regex search -->
+    <question id="15" difficulty="medium" mode="standard">
+      <prompt>Find all function definitions that follow the pattern "void handle[A-Z]\w+\(" across the codebase using regex search.</prompt>
+      <expected_tools>opengrok_search_pattern</expected_tools>
+      <verify>Response lists file paths and matching line content for the regex pattern; results are scoped to definitions</verify>
+    </question>
+
+    <!-- ===================================================================== -->
+    <!-- CODE MODE — Basic sandbox workflow (Q16–Q17)                          -->
+    <!-- ===================================================================== -->
+
+    <!-- Q16: Code Mode baseline — opengrok_api + opengrok_execute -->
+    <question id="16" difficulty="medium" mode="code">
+      <prompt>Using Code Mode: get the API spec, then write a script that searches for the top 3 callers of "handleCrash", reads 10 lines around each match, and returns a summary of what each caller does.</prompt>
+      <expected_tools>opengrok_api, opengrok_execute</expected_tools>
+      <verify>opengrok_api called once; opengrok_execute JS uses env.opengrok.search() + env.opengrok.getFileContent() with line ranges; returns structured summary of 3 callers</verify>
+    </question>
+
+    <!-- Q17: Code Mode memory bank — persist investigation state -->
+    <question id="17" difficulty="hard" mode="code">
+      <prompt>Using Code Mode: investigate the ConnectionPool class, record your findings in the memory bank (active-task.md and investigation-log.md), then read back the memory status to confirm the files are non-empty.</prompt>
+      <expected_tools>opengrok_api, opengrok_execute, opengrok_memory_status</expected_tools>
+      <verify>opengrok_execute JS uses env.opengrok.getSymbolContext() + env.opengrok.writeMemory() to persist; opengrok_memory_status confirms both files have content; log entry has ## YYYY-MM-DD timestamp</verify>
+    </question>
+
+    <!-- ===================================================================== -->
+    <!-- CODE MODE — v9.0 sandbox features: elicit, sample, _suggestions       -->
+    <!-- ===================================================================== -->
+
+    <!-- Q18: env.opengrok.elicit() — file disambiguation -->
+    <question id="18" difficulty="medium" mode="code" requires="OPENGROK_ENABLE_ELICITATION=true">
+      <prompt>Using Code Mode: find the correct "AuthService" file to fetch — there are multiple matches across projects. Write sandbox JS that searches for it, and if more than one result is found, asks the user to choose before fetching the file content.</prompt>
+      <expected_tools>opengrok_api, opengrok_execute</expected_tools>
+      <verify>
+        Sandbox JS calls env.opengrok.findFile("AuthService*");
+        If results.length > 1: calls env.opengrok.elicit() with enum of top file paths;
+        Handles action !== "accept" gracefully (returns cancellation message);
+        On accept: fetches and returns the selected file content.
+        If elicitation is unsupported, falls back to returning the first result with a note.
+      </verify>
+    </question>
+
+    <!-- Q19: env.opengrok.sample() + _suggestions — zero-result reformulation -->
+    <question id="19" difficulty="medium" mode="code">
+      <prompt>Using Code Mode: search for "handelCrash" (intentional typo) — it will return zero results. The sandbox should detect the zero-result case, check for auto-injected _suggestions, and if absent call sample() to get reformulation candidates. Return the suggestions to the user.</prompt>
+      <expected_tools>opengrok_api, opengrok_execute</expected_tools>
+      <verify>
+        Sandbox JS calls env.opengrok.search("handelCrash");
+        totalCount === 0 triggers zero-result branch;
+        Checks result._suggestions first (may be auto-injected when sampling available);
+        Falls back to env.opengrok.sample() if _suggestions absent;
+        Returns "No results found. Try: &lt;suggestions&gt;" message;
+        Never crashes when sample() returns null (client sampling unsupported).
+      </verify>
+    </question>
+
+    <!-- Q20: opengrok_api project picker (v9.0) -->
+    <question id="20" difficulty="easy" mode="code" requires="OPENGROK_ENABLE_ELICITATION=true">
+      <prompt>Using Code Mode with OPENGROK_ENABLE_ELICITATION=true and no OPENGROK_DEFAULT_PROJECT configured: call opengrok_api and verify that the response includes a "Working project:" hint indicating which project the user selected.</prompt>
+      <expected_tools>opengrok_api</expected_tools>
+      <verify>
+        opengrok_api response text contains "**Working project: &lt;name&gt;**" hint prepended before the YAML API spec;
+        If the user cancels the picker, the response contains the full API spec without the hint and does not error.
+      </verify>
+    </question>
+
   </questions>
 </evaluation>
