@@ -24,6 +24,26 @@ import type {
 import type { CompileInfo } from "./local/compile-info.js";
 
 // ---------------------------------------------------------------------------
+// Prompt-injection helpers — applied to all user-controlled strings in output
+// ---------------------------------------------------------------------------
+
+/** Escape a user-controlled field for safe inclusion in markdown (tables, inline text). */
+export function escapeMarkdownField(value: string): string {
+  return value
+    .replace(/\r?\n/g, ' ')        // collapse newlines to space
+    .replace(/\|/g, '\\|')          // escape table cell breaks
+    .replace(/`/g, "'")             // prevent inline code injection
+    .slice(0, 500);                  // cap length
+}
+
+/** Wrap code in a fenced block using a fence that can't be broken by the content. */
+export function fenceCode(code: string, lang = ''): string {
+  const maxRun = Math.max(3, ...[...code.matchAll(/`+/g)].map((m) => m[0].length + 1));
+  const fence = '`'.repeat(maxRun);
+  return `${fence}${lang}\n${code}\n${fence}`;
+}
+
+// ---------------------------------------------------------------------------
 // Response format type + global format selector
 // ---------------------------------------------------------------------------
 
@@ -256,13 +276,14 @@ export function formatFileHistory(
   for (const entry of history.entries) {
     const revShort =
       entry.revision.length > 8 ? entry.revision.slice(0, 8) : entry.revision;
-    const author = entry.author.split("<")[0].trim();
-    const msg =
+    const author = escapeMarkdownField(entry.author.split("<")[0].trim());
+    const rawMsg =
       entry.message.length > 72
         ? entry.message.slice(0, 72) + "..."
         : entry.message;
+    const msg = escapeMarkdownField(rawMsg);
     lines.push(
-      `[${revShort}] ${author} (${entry.date}): "${msg.replace(/\n/g, " ")}"`
+      `[${revShort}] ${author} (${entry.date}): "${msg}"`
     );
   }
 
@@ -446,9 +467,9 @@ export function formatBlame(
   lines.push("|------|--------|--------|------|---------|");
   for (const line of displayLines) {
     const commit = line.revision ? line.revision.slice(0, 7) : "unknown";
-    const author = line.author ?? "";
+    const author = escapeMarkdownField(line.author ?? "");
     const date = line.date ?? "";
-    const content = line.content.trimEnd().replace(/\|/g, "\\|");
+    const content = escapeMarkdownField(line.content.trimEnd());
     lines.push(`| ${line.lineNumber} | ${commit} | ${author} | ${date} | ${content} |`);
   }
 
@@ -509,7 +530,7 @@ export function formatWhatChanged(
 
   for (const [rev, { author, date, lineNumbers }] of sorted) {
     const revShort = rev.length > 8 ? rev.slice(0, 8) : rev;
-    const authorShort = author.split("<")[0].trim();
+    const authorShort = escapeMarkdownField(author.split("<")[0].trim());
     lines.push(`\n## ${revShort} — ${authorShort} (${date})`);
     lines.push(`Lines: ${compactLineRanges(lineNumbers)}`);
   }

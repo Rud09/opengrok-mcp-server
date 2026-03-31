@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import type { IncomingMessage } from 'node:http';
 import { buildSafeUrl, isPrivateIp, assertSafePath } from '../server/client.js';
 import { parseWebSearchResults, parseDirectoryListing } from '../server/parsers.js';
+import { escapeMarkdownField, fenceCode } from '../server/formatters.js';
+import { validateBearerToken } from '../server/http-transport.js';
 
 describe('buildSafeUrl SSRF protection', () => {
   const base = new URL('https://opengrok.company.com/source/');
@@ -150,5 +153,92 @@ describe('parsers HTML entity decoding', () => {
     </tbody></table></body></html>`;
     // Should not throw
     expect(() => parseDirectoryListing(html, 'proj', '')).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C5 — formatters prompt injection prevention
+// ---------------------------------------------------------------------------
+
+describe('formatters prompt injection prevention', () => {
+  it('collapses newlines in markdown fields', () => {
+    const nasty = 'line1\n## Injected heading\nline2';
+    const escaped = escapeMarkdownField(nasty);
+    // Newlines are removed so the ## can't start a new markdown heading line
+    expect(escaped).not.toContain('\n');
+    // The ## is now inline (not at line-start) so cannot be rendered as a heading
+    expect(escaped).toContain('##'); // still present but neutralised (no leading newline)
+    expect(escaped).toBe('line1 ## Injected heading line2');
+  });
+
+  it('collapses Windows-style CRLF newlines', () => {
+    const nasty = 'before\r\nafter';
+    const escaped = escapeMarkdownField(nasty);
+    expect(escaped).not.toContain('\r');
+    expect(escaped).not.toContain('\n');
+  });
+
+  it('escapes pipe characters', () => {
+    expect(escapeMarkdownField('cell1|cell2')).toContain('\\|');
+  });
+
+  it('replaces backticks with single quotes', () => {
+    expect(escapeMarkdownField('some `code` here')).not.toContain('`');
+  });
+
+  it('caps length at 500 characters', () => {
+    const long = 'a'.repeat(600);
+    expect(escapeMarkdownField(long).length).toBe(500);
+  });
+
+  it('fenceCode produces valid fenced block', () => {
+    const code = 'console.log("hello")';
+    const fenced = fenceCode(code, 'js');
+    expect(fenced).toMatch(/^```js\n/);
+    expect(fenced).toMatch(/\n```$/);
+  });
+
+  it('fenceCode uses longer fence when content has backticks', () => {
+    const code = '```\ninner fence\n```';
+    const fenced = fenceCode(code);
+    expect(fenced.split('\n')[0].length).toBeGreaterThan(3);
+  });
+
+  it('fenceCode without lang argument produces plain fence', () => {
+    const code = 'plain text';
+    const fenced = fenceCode(code);
+    expect(fenced).toMatch(/^```\n/);
+    expect(fenced).toMatch(/\n```$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H2 — validateBearerToken timing-safe
+// ---------------------------------------------------------------------------
+
+describe('validateBearerToken timing-safe', () => {
+  it('returns true for matching token', () => {
+    const req = { headers: { authorization: 'Bearer secret123' } } as unknown as IncomingMessage;
+    expect(validateBearerToken(req, 'secret123')).toBe(true);
+  });
+
+  it('returns false for wrong token', () => {
+    const req = { headers: { authorization: 'Bearer wrong' } } as unknown as IncomingMessage;
+    expect(validateBearerToken(req, 'secret123')).toBe(false);
+  });
+
+  it('returns false for missing header', () => {
+    const req = { headers: {} } as unknown as IncomingMessage;
+    expect(validateBearerToken(req, 'secret123')).toBe(false);
+  });
+
+  it('returns false for non-Bearer scheme', () => {
+    const req = { headers: { authorization: 'Basic dXNlcjpwYXNz' } } as unknown as IncomingMessage;
+    expect(validateBearerToken(req, 'dXNlcjpwYXNz')).toBe(false);
+  });
+
+  it('returns false when token length differs', () => {
+    const req = { headers: { authorization: 'Bearer short' } } as unknown as IncomingMessage;
+    expect(validateBearerToken(req, 'muchlongersecret')).toBe(false);
   });
 });

@@ -85,18 +85,33 @@ describe("startHttpTransport", () => {
 
   it("includes CORS headers on OPTIONS preflight", async () => {
     const res = await httpRequest({ port: BASE_PORT, method: "OPTIONS" });
-    expect(res.headers["access-control-allow-origin"]).toBe("*");
+    // No Origin header in the request → no ACAO header (allowlist behaviour)
+    // But the method and headers allow-lists should still be set
     expect(res.headers["access-control-allow-methods"]).toMatch(/POST/);
     expect(res.headers["access-control-allow-headers"]).toMatch(/Mcp-Session-Id/i);
+    // Security headers should be present
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["x-frame-options"]).toBe("DENY");
   });
 
-  it("includes CORS headers on regular responses", async () => {
+  it("sets Access-Control-Allow-Origin for loopback Origin on OPTIONS preflight", async () => {
+    const res = await httpRequest({
+      port: BASE_PORT,
+      method: "OPTIONS",
+      headers: { Origin: "http://localhost:3000" },
+    });
+    expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+    expect(res.headers["vary"]).toBe("Origin");
+  });
+
+  it("includes CORS method headers on regular responses without Origin", async () => {
     const res = await httpRequest({
       port: BASE_PORT,
       method: "POST",
       body: JSON.stringify({ jsonrpc: "2.0", method: "unknownMethod", id: 1 }),
     });
-    expect(res.headers["access-control-allow-origin"]).toBe("*");
+    // No Origin → no ACAO, but other security headers are still set
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
   });
 
   // --- Routing ------------------------------------------------------------

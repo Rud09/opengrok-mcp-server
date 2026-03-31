@@ -11,7 +11,7 @@
  */
 
 import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -60,11 +60,19 @@ const SESSION_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 // Auth helpers
 // ---------------------------------------------------------------------------
 
-/** Returns true when the request carries a valid Bearer token. */
+/** Returns true when the request carries a valid Bearer token (timing-safe). */
 export function validateBearerToken(req: IncomingMessage, secret: string): boolean {
   const auth = req.headers.authorization;
-  if (!auth?.startsWith("Bearer ")) return false;
-  return auth.slice(7) === secret;
+  if (!auth?.startsWith('Bearer ')) return false;
+  const provided = auth.slice(7);
+  try {
+    const a = Buffer.from(provided, 'utf8');
+    const b = Buffer.from(secret, 'utf8');
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 /** Send a 401 Unauthorized response with a WWW-Authenticate challenge. */
@@ -170,25 +178,40 @@ export async function startHttpTransport(
   }, SESSION_SWEEP_INTERVAL_MS);
   sweepInterval.unref?.(); // don't keep Node alive for the timer alone
 
-  const setCorsHeaders = (res: ServerResponse): void => {
-    // RFC 8252 §8.3: relax CORS for loopback bindings so native apps on any
-    // port can reach the server.
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Authorization");
+  const allowedOrigins = (process.env.OPENGROK_ALLOWED_ORIGINS ?? '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
+  const setCorsHeaders = (req: IncomingMessage, res: ServerResponse): void => {
+    const origin = req.headers.origin ?? '';
+    const isLoopback = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+    const isAllowed = isLoopback || allowedOrigins.includes(origin);
+
+    if (isAllowed && origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id, Authorization');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "default-src 'none'");
   };
 
-  /** Extract bearer token from Authorization header and return role (or "admin" if no RBAC configured). */
-  const extractRole = (req: IncomingMessage): Role => {
+  /** Extract bearer token from Authorization header and return role (or null for unknown/denied). */
+  const extractRole = (req: IncomingMessage): Role | null => {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
-      // No token: open deployment (no RBAC configured) → admin; RBAC active → readonly (safe default)
-      return rbacConfig.tokens.size > 0 ? "readonly" : "admin";
+    if (!auth?.startsWith('Bearer ')) {
+      // No token — fail-safe: if RBAC active, deny; if no RBAC, allow as admin (local dev)
+      return rbacConfig.tokens.size > 0 ? null : 'admin';
     }
     const token = auth.slice(7);
+
+    // Static auth token check (local dev only)
+    if (authToken && token === authToken) return rbacConfig.tokens.get(token) ?? 'admin';
+
     const role = rbacConfig.tokens.get(token);
-    // Unknown token should have been rejected by auth guard; fail safe to readonly
-    return role ?? "readonly";
+    if (!role && rbacConfig.tokens.size > 0) return null; // unknown token + RBAC active = deny
+    return role ?? 'admin';
   };
 
   /** Check if a request body is an MCP tool call, and validate RBAC if so. Returns null if permission denied. */
@@ -264,6 +287,11 @@ export async function startHttpTransport(
 
         // Extract role from bearer token (RBAC)
         const role = extractRole(req);
+        if (role === null) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'forbidden', error_description: 'Unknown or missing token' }));
+          return;
+        }
 
         // New client — create a fresh server + transport for this session.
         const now = new Date();
@@ -371,7 +399,7 @@ export async function startHttpTransport(
   };
 
   const httpServer = createHttpServer((req, res) => {
-    setCorsHeaders(res);
+    setCorsHeaders(req, res);
 
     if (req.method === "OPTIONS") {
       res.writeHead(204).end();
