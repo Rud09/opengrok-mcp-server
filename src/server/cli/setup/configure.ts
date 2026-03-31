@@ -13,24 +13,26 @@ export interface McpConfig {
 
 export function configureClaudeCode(config: McpConfig): void {
   const scope = config.scope ?? 'user';
-  const result = spawnSync(
-    'claude',
-    ['mcp', 'add', '--transport', 'stdio', '--scope', scope,
-     '--env', `OPENGROK_BASE_URL=${config.url}`,
-     'opengrok-mcp', '--', 'npx', '-y', 'opengrok-mcp-server'],
-    { stdio: 'pipe', encoding: 'utf8', shell: false }
-  );
+  const args: string[] = [
+    'mcp', 'add', '--transport', 'stdio', '--scope', scope,
+    '--env', `OPENGROK_BASE_URL=${config.url}`,
+  ];
+  if (config.username) args.push('--env', `OPENGROK_USERNAME=${config.username}`);
+  args.push('opengrok-mcp', '--', 'npx', '-y', 'opengrok-mcp-server');
+  const result = spawnSync('claude', args, { stdio: 'pipe', encoding: 'utf8', shell: false });
   if (result.status !== 0) {
     throw new Error(`claude mcp add failed: ${String(result.stderr ?? '')}`);
   }
 }
 
 export function configureVSCode(config: McpConfig): void {
+  const env: Record<string, string> = { OPENGROK_BASE_URL: config.url };
+  if (config.username) env['OPENGROK_USERNAME'] = config.username;
   const mcpDef = JSON.stringify({
     name: 'opengrok-mcp',
     command: 'npx',
     args: ['-y', 'opengrok-mcp-server'],
-    env: { OPENGROK_BASE_URL: config.url },
+    env,
   });
   const result = spawnSync('code', ['--add-mcp', mcpDef], {
     stdio: 'pipe',
@@ -65,7 +67,10 @@ export function configureCodex(config: McpConfig): void {
     name: 'opengrok-mcp',
     command: 'npx',
     args: ['-y', 'opengrok-mcp-server'],
-    env: { OPENGROK_BASE_URL: config.url },
+    env: {
+      OPENGROK_BASE_URL: config.url,
+      ...(config.username ? { OPENGROK_USERNAME: config.username } : {}),
+    },
   } as unknown as Record<string, AnyJson>);
 
   existing['mcp_servers'] = filtered as unknown as AnyJson;

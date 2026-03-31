@@ -123,6 +123,28 @@ describe('configureClaudeCode', () => {
       expect.anything()
     );
   });
+
+  it('includes OPENGROK_USERNAME in args when username is provided', async () => {
+    mocks.spawnSyncStatus = 0;
+    const cp = await import('child_process');
+    const { configureClaudeCode } = await import('../../server/cli/setup/configure.js');
+    configureClaudeCode({ url: 'https://og.example.com', username: 'alice' });
+    expect(cp.spawnSync).toHaveBeenCalledWith(
+      'claude',
+      expect.arrayContaining(['--env', 'OPENGROK_USERNAME=alice']),
+      expect.anything()
+    );
+  });
+
+  it('omits OPENGROK_USERNAME in args when username is not provided', async () => {
+    mocks.spawnSyncStatus = 0;
+    const cp = await import('child_process');
+    const { configureClaudeCode } = await import('../../server/cli/setup/configure.js');
+    configureClaudeCode({ url: 'https://og.example.com' });
+    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
+    const usernameIndex = callArgs.findIndex((a) => a.startsWith('OPENGROK_USERNAME'));
+    expect(usernameIndex).toBe(-1);
+  });
 });
 
 describe('configureVSCode', () => {
@@ -149,6 +171,29 @@ describe('configureVSCode', () => {
     mocks.spawnSyncStatus = 1;
     const { configureVSCode } = await import('../../server/cli/setup/configure.js');
     expect(() => configureVSCode({ url: 'https://og.example.com' })).toThrow(/failed/);
+  });
+
+  it('includes OPENGROK_USERNAME in MCP definition when username is provided', async () => {
+    mocks.spawnSyncStatus = 0;
+    const cp = await import('child_process');
+    const { configureVSCode } = await import('../../server/cli/setup/configure.js');
+    configureVSCode({ url: 'https://og.example.com', username: 'bob' });
+    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
+    // The second arg to spawnSync is ['--add-mcp', JSON_STRING]
+    const mcpJson = callArgs.find((a) => a.includes('OPENGROK_BASE_URL')) ?? '';
+    const parsed = JSON.parse(mcpJson) as { env: Record<string, string> };
+    expect(parsed.env['OPENGROK_USERNAME']).toBe('bob');
+  });
+
+  it('omits OPENGROK_USERNAME from MCP definition when username is not provided', async () => {
+    mocks.spawnSyncStatus = 0;
+    const cp = await import('child_process');
+    const { configureVSCode } = await import('../../server/cli/setup/configure.js');
+    configureVSCode({ url: 'https://og.example.com' });
+    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
+    const mcpJson = callArgs.find((a) => a.includes('OPENGROK_BASE_URL')) ?? '';
+    const parsed = JSON.parse(mcpJson) as { env: Record<string, string> };
+    expect(parsed.env['OPENGROK_USERNAME']).toBeUndefined();
   });
 });
 
@@ -198,5 +243,26 @@ OPENGROK_BASE_URL = "https://old.example.com"
     expect(written).toContain('https://new.example.com');
     // Old URL should be gone
     expect(written).not.toContain('https://old.example.com');
+  });
+
+  it('includes OPENGROK_USERNAME in TOML when username is provided', async () => {
+    mocks.existsResult = false;
+    const { configureCodex } = await import('../../server/cli/setup/configure.js');
+    configureCodex({ url: 'https://og.example.com', username: 'carol' });
+
+    const fs = await import('fs');
+    const written = String((fs.writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]);
+    expect(written).toContain('OPENGROK_USERNAME');
+    expect(written).toContain('carol');
+  });
+
+  it('omits OPENGROK_USERNAME from TOML when username is not provided', async () => {
+    mocks.existsResult = false;
+    const { configureCodex } = await import('../../server/cli/setup/configure.js');
+    configureCodex({ url: 'https://og.example.com' });
+
+    const fs = await import('fs');
+    const written = String((fs.writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]);
+    expect(written).not.toContain('OPENGROK_USERNAME');
   });
 });
