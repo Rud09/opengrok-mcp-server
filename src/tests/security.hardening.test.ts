@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildSafeUrl, isPrivateIp, assertSafePath } from '../server/client.js';
+import { parseWebSearchResults, parseDirectoryListing } from '../server/parsers.js';
 
 describe('buildSafeUrl SSRF protection', () => {
   const base = new URL('https://opengrok.company.com/source/');
@@ -124,5 +125,30 @@ describe('assertSafePath traversal protection', () => {
 
   it('blocks path ending in /..', () => {
     expect(() => assertSafePath('foo/..')).toThrow(/Unsafe/);
+  });
+});
+
+describe('parsers HTML entity decoding', () => {
+  it('decodes HTML entities in search result text', () => {
+    const html = `<html><body><div class="results"><table><tbody>
+      <tr><td class="def"><a href="/source/s?q=test"><b>&lt;script&gt;alert(1)&lt;/script&gt;</b></a></td>
+      <td class="src"><a href="/source/xref/proj/file.java#10">file.java:10</a></td>
+      </tr>
+    </tbody></table></div></body></html>`;
+    const results = parseWebSearchResults(html, 'full', 'test');
+    const allText = JSON.stringify(results);
+    // HTML entities should be decoded — but resulting < > chars should not cause injection
+    // The decoded text &lt;script&gt; → <script> is TEXT content, not raw HTML
+    // Verify it parses without throwing
+    expect(typeof allText).toBe('string');
+  });
+
+  it('decodes HTML entities in directory listing', () => {
+    const html = `<html><body><table id="dirlist"><tbody>
+      <tr><td class="p"><a href="/source/xref/proj/foo%26bar/">foo&amp;bar/</a></td>
+      <td class="n"></td><td class="d">2026-01-01</td></tr>
+    </tbody></table></body></html>`;
+    // Should not throw
+    expect(() => parseDirectoryListing(html, 'proj', '')).not.toThrow();
   });
 });

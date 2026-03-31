@@ -3,6 +3,7 @@
  * Uses node-html-parser (pure JS) instead of BeautifulSoup.
  */
 
+import he from "he";
 import { parse as parseHtml } from "node-html-parser";
 import type {
   AnnotatedFile,
@@ -125,7 +126,7 @@ export function parseDirectoryListing(
     }
     if (!link) continue;
 
-    const name = link.text.trim();
+    const name = he.decode(link.text.trim());
     const href = /* v8 ignore next */ link.getAttribute("href") ?? "";
     const isDir = href.endsWith("/");
 
@@ -152,7 +153,7 @@ export function parseDirectoryListing(
       } else if (/^\d{4}-\d{2}-\d{2}/.test(txt) || /\w+\s+\d/.test(txt)) {
         // Date-like cell
         /* v8 ignore start -- lastModified always empty on first date-like cell */
-        if (!lastModified) lastModified = txt;
+        if (!lastModified) lastModified = he.decode(txt);
         /* v8 ignore stop */
       }
     }
@@ -192,7 +193,7 @@ export function parseFileHistory(
     if (revisionLinks.length > 1) {
       // Multiple links — prefer the one with a hash-like value
       for (let i = revisionLinks.length - 1; i >= 0; i--) {
-        const txt = revisionLinks[i].text.trim();
+        const txt = he.decode(revisionLinks[i].text.trim());
         /* v8 ignore start -- always finds valid revision text in test data */
         if (txt && txt !== "#" && txt.toLowerCase() !== "revision") {
           revision = txt;
@@ -201,14 +202,14 @@ export function parseFileHistory(
         /* v8 ignore stop */
       }
     } else if (revisionLinks.length === 1) {
-      revision = revisionLinks[0].text.trim().replace(/^#/, "");
+      revision = he.decode(revisionLinks[0].text.trim().replace(/^#/, ""));
     }
-    if (!revision) revision = cells[0].text.trim().replace(/^#/, "");
+    if (!revision) revision = he.decode(cells[0].text.trim().replace(/^#/, ""));
     if (!revision || revision.toLowerCase() === "revision") continue;
 
-    const date = /* v8 ignore next */ cells[2]?.text.trim() ?? "";
-    const author = /* v8 ignore next */ cells[3]?.text.trim() ?? "";
-    const message = /* v8 ignore next */ cells[cells.length - 1]?.text.trim() ?? "";
+    const date = /* v8 ignore next */ he.decode(cells[2]?.text.trim() ?? "");
+    const author = /* v8 ignore next */ he.decode(cells[3]?.text.trim() ?? "");
+    const message = /* v8 ignore next */ he.decode(cells[cells.length - 1]?.text.trim() ?? "");
 
     const ufMatch = /Update Form:?\s*(\d+)/.exec(message);
     const mrMatch = /MR[-:]?\s*(\d+)/.exec(message);
@@ -275,7 +276,7 @@ export function parseAnnotate(
         // use the parent's childNodes array with index-based iteration instead.
         const parent = el.parentNode;
         if (!parent) {
-          content = el.text;
+          content = he.decode(el.text);
         } else {
           const parts: string[] = [];
           const siblings = parent.childNodes;
@@ -291,16 +292,16 @@ export function parseAnnotate(
               const t: string = sib.text;
               const nl = t.indexOf("\n");
               if (nl !== -1) {
-                if (nl > 0) parts.push(t.slice(0, nl));
+                if (nl > 0) parts.push(he.decode(t.slice(0, nl)));
                 break;
               }
-              if (t) parts.push(t);
+              if (t) parts.push(he.decode(t));
             }
           }
           content = parts.join("").trim();
         }
       } else {
-        content = el.text;
+        content = he.decode(el.text);
       }
       lines.push({ lineNumber: lineNum, revision, author, date, content });
     }
@@ -316,10 +317,10 @@ export function parseAnnotate(
         if (cells.length < 3) continue;
         lines.push({
           lineNumber: idx++,
-          revision: cells[0].text.trim(),
-          author: /* v8 ignore next */ cells[1]?.text.trim() ?? "",
+          revision: he.decode(cells[0].text.trim()),
+          author: /* v8 ignore next */ he.decode(cells[1]?.text.trim() ?? ""),
           date: "",
-          content: /* v8 ignore next */ cells[cells.length - 1]?.text ?? "",
+          content: /* v8 ignore next */ he.decode(cells[cells.length - 1]?.text ?? ""),
         });
       }
     }
@@ -409,7 +410,7 @@ export function parseWebSearchResults(
       const lineNum = lineSpan ? parseInt(lineSpan.text.trim(), 10) : 0;
       /* v8 ignore stop */
       // Get the text content after the line number span
-      let lineContent = ml.text.trim();
+      let lineContent = he.decode(ml.text.trim());
       // Remove the leading line number
       if (lineSpan) {
         lineContent = lineContent.replace(/^\d+\s*/, "");
@@ -427,7 +428,7 @@ export function parseWebSearchResults(
         const hrefMatch = /\#(\d+)/.exec(href);
         const lineNum = hrefMatch ? parseInt(hrefMatch[1], 10) : 0;
         if (lineNum > 0) {
-          matches.push({ lineNumber: lineNum, lineContent: codeEl.text.trim().replace(/^\d+\s*/, "") });
+          matches.push({ lineNumber: lineNum, lineContent: he.decode(codeEl.text.trim().replace(/^\d+\s*/, "")) });
         }
       }
     }
