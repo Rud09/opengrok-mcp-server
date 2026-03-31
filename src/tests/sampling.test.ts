@@ -260,10 +260,10 @@ describe('sampleOrNull — production features', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Task 5.9 — opengrok_execute / opengrok_api interleaving annotation
+// Tests: Code Mode tool annotations (Task 8 — x-supports-interleaving removed)
 // ---------------------------------------------------------------------------
 
-describe('Code Mode tools — interleaving annotation (Task 5.9)', () => {
+describe('Code Mode tools — standard MCP annotations', () => {
   let tmpDir: string;
   let bank: MemoryBank;
 
@@ -277,20 +277,26 @@ describe('Code Mode tools — interleaving annotation (Task 5.9)', () => {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('opengrok_execute has x-supports-interleaving annotation in registered tools', async () => {
+  it('opengrok_execute is registered with standard MCP annotations (no custom fields)', async () => {
     const { server } = await createConnectedClient({ OPENGROK_CODE_MODE: true }, bank);
-    // The MCP SDK strips unknown fields during listTools serialization, so we
-    // inspect the server's internal _registeredTools map directly.
     const internal = (server as unknown as { _registeredTools: Record<string, { annotations?: Record<string, unknown> }> })._registeredTools;
     expect(internal['opengrok_execute']).toBeDefined();
-    expect(internal['opengrok_execute'].annotations?.['x-supports-interleaving']).toBe(true);
+    // x-supports-interleaving was a custom annotation not in the MCP spec — removed in Task 8
+    expect(internal['opengrok_execute'].annotations?.['x-supports-interleaving']).toBeUndefined();
+    // Standard MCP annotations should be present
+    expect(internal['opengrok_execute'].annotations?.['readOnlyHint']).toBe(false);
+    expect(internal['opengrok_execute'].annotations?.['idempotentHint']).toBe(false);
   });
 
-  it('opengrok_api has x-supports-interleaving annotation in registered tools', async () => {
+  it('opengrok_api is registered with standard MCP annotations (no custom fields)', async () => {
     const { server } = await createConnectedClient({ OPENGROK_CODE_MODE: true }, bank);
     const internal = (server as unknown as { _registeredTools: Record<string, { annotations?: Record<string, unknown> }> })._registeredTools;
     expect(internal['opengrok_api']).toBeDefined();
-    expect(internal['opengrok_api'].annotations?.['x-supports-interleaving']).toBe(true);
+    // x-supports-interleaving was a custom annotation not in the MCP spec — removed in Task 8
+    expect(internal['opengrok_api'].annotations?.['x-supports-interleaving']).toBeUndefined();
+    // Standard MCP annotations should be present
+    expect(internal['opengrok_api'].annotations?.['readOnlyHint']).toBe(true);
+    expect(internal['opengrok_api'].annotations?.['idempotentHint']).toBe(true);
   });
 });
 

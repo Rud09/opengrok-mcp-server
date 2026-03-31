@@ -283,7 +283,7 @@ describe('createSandboxAPI — getCompileInfo', () => {
   });
 });
 
-describe('Legacy Mode — memory tools available when memoryBank provided', () => {
+describe('Standard Mode — memory tools are Code Mode only (Task 8)', () => {
   let tmpDir: string;
   let bank: MemoryBank;
 
@@ -297,9 +297,9 @@ describe('Legacy Mode — memory tools available when memoryBank provided', () =
     await fsp.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('registers opengrok_read_memory and opengrok_update_memory in legacy mode', async () => {
+  it('does NOT register memory tools in standard mode (CODE_MODE=false)', async () => {
     const ogClient = makeMockClient();
-    // CODE_MODE is false — this forces legacy mode
+    // CODE_MODE is false — standard mode, memory tools should NOT be registered
     const config = makeConfig({ OPENGROK_CODE_MODE: false });
     const server = createServer(ogClient as never, config, bank);
 
@@ -311,9 +311,11 @@ describe('Legacy Mode — memory tools available when memoryBank provided', () =
 
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name);
-    expect(names).toContain('opengrok_read_memory');
-    expect(names).toContain('opengrok_update_memory');
-    // Legacy tools should also be present
+    // Memory tools are Code Mode only — not available in standard mode
+    expect(names).not.toContain('opengrok_read_memory');
+    expect(names).not.toContain('opengrok_update_memory');
+    expect(names).not.toContain('opengrok_memory_status');
+    // Legacy tools should be present
     expect(names).toContain('opengrok_search_code');
 
     await client.close();

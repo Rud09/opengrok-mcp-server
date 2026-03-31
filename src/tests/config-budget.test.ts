@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BUDGET_LIMITS, loadConfig, resetConfig } from '../server/config.js';
+import { createServer } from '../server/server.js';
+import type { Config } from '../server/config.js';
 
 // ---------------------------------------------------------------------------
 // BUDGET_LIMITS constants
@@ -146,5 +148,93 @@ describe('loadConfig', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
     delete process.env.HTTPS_PROXY;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compactDescriptions — minimal budget triggers compact tool descriptions
+// ---------------------------------------------------------------------------
+
+describe('compactDescriptions — budget-driven tool description selection', () => {
+  function makeMockClient() {
+    return {
+      search: vi.fn(),
+      suggest: vi.fn(),
+      getFileContent: vi.fn(),
+      getFileHistory: vi.fn(),
+      browseDirectory: vi.fn(),
+      listProjects: vi.fn(),
+      getAnnotate: vi.fn(),
+      getFileSymbols: vi.fn(),
+      testConnection: vi.fn(),
+      close: vi.fn(),
+    };
+  }
+
+  function makeConfig(overrides: Partial<Config> = {}): Config {
+    return {
+      OPENGROK_BASE_URL: 'https://example.com/source/',
+      OPENGROK_USERNAME: '',
+      OPENGROK_PASSWORD: '',
+      OPENGROK_PASSWORD_FILE: '',
+      OPENGROK_PASSWORD_KEY: '',
+      OPENGROK_VERIFY_SSL: true,
+      OPENGROK_TIMEOUT: 30,
+      OPENGROK_DEFAULT_MAX_RESULTS: 10,
+      OPENGROK_CACHE_ENABLED: false,
+      OPENGROK_CACHE_SEARCH_TTL: 300,
+      OPENGROK_CACHE_FILE_TTL: 600,
+      OPENGROK_CACHE_HISTORY_TTL: 1800,
+      OPENGROK_CACHE_PROJECTS_TTL: 3600,
+      OPENGROK_CACHE_MAX_SIZE: 500,
+      OPENGROK_CACHE_MAX_BYTES: 52428800,
+      OPENGROK_RATELIMIT_ENABLED: false,
+      OPENGROK_RATELIMIT_RPM: 60,
+      HTTP_PROXY: '',
+      HTTPS_PROXY: '',
+      OPENGROK_LOCAL_COMPILE_DB_PATHS: '',
+      OPENGROK_DEFAULT_PROJECT: '',
+      OPENGROK_CODE_MODE: false,
+      OPENGROK_MEMORY_BANK_DIR: '',
+      OPENGROK_RESPONSE_FORMAT_OVERRIDE: '',
+      ...overrides,
+    } as Config;
+  }
+
+  type RegisteredTool = { description?: string; annotations?: Record<string, unknown> };
+  type ServerInternal = { _registeredTools: Record<string, RegisteredTool> };
+
+  it('uses compact descriptions when OPENGROK_CONTEXT_BUDGET=minimal and Code Mode is OFF', () => {
+    const client = makeMockClient();
+    const config = makeConfig({ OPENGROK_CONTEXT_BUDGET: 'minimal' });
+    const server = createServer(client as never, config);
+
+    const internal = (server as unknown as ServerInternal)._registeredTools;
+    // opengrok_search_code compact description is the short fallback form
+    const desc = internal['opengrok_search_code']?.description ?? '';
+    expect(desc).not.toContain('Full-text or symbol search across one or all OpenGrok projects');
+    // Should be the compact version
+    expect(desc.length).toBeLessThan(50);
+  });
+
+  it('uses full descriptions when OPENGROK_CONTEXT_BUDGET=standard and Code Mode is OFF', () => {
+    const client = makeMockClient();
+    const config = makeConfig({ OPENGROK_CONTEXT_BUDGET: 'standard' });
+    const server = createServer(client as never, config);
+
+    const internal = (server as unknown as ServerInternal)._registeredTools;
+    // opengrok_search_code full description is the verbose form
+    const desc = internal['opengrok_search_code']?.description ?? '';
+    expect(desc).toContain('Full-text or symbol search across one or all OpenGrok projects');
+  });
+
+  it('uses full descriptions when OPENGROK_CONTEXT_BUDGET=generous and Code Mode is OFF', () => {
+    const client = makeMockClient();
+    const config = makeConfig({ OPENGROK_CONTEXT_BUDGET: 'generous' });
+    const server = createServer(client as never, config);
+
+    const internal = (server as unknown as ServerInternal)._registeredTools;
+    const desc = internal['opengrok_search_code']?.description ?? '';
+    expect(desc).toContain('Full-text or symbol search across one or all OpenGrok projects');
   });
 });
