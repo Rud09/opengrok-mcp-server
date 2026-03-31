@@ -57,26 +57,45 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.0.1] - 2026-03-31
+
+### 📖 Documentation & Packaging
+
+- **CHANGELOG**: Highlights section moved to top of file; v9.0 and v8.0 entries now have emojis on section headers.
+- **MCP_CLIENTS.md**: Fully rewritten — removed stale `opengrok-mcp-wrapper.sh` references (deleted in v8.0); all client configs now use `npx opengrok-mcp-server`; added `OPENGROK_ENABLE_ELICITATION` to env var table.
+- **evaluation.xml**: Expanded from 10 to 20 questions — added coverage for `opengrok_blame`, `opengrok_what_changed`, `opengrok_dependency_map`, `opengrok_get_file_diff`, `opengrok_search_pattern`, Code Mode workflow, memory bank, and v9.0 sandbox features (`elicit`, `sample`, `_suggestions`, `opengrok_api` project picker).
+- **skills/opengrok/SKILL.md**: Fixed tool count (2→5 for Code Mode), added `elicit`/`sample`/`_suggestions` examples, updated token estimates.
+- **CONTRIBUTING.md**: Fixed test count, removed stale release scripts, added "Adding a Code Mode Sandbox Method" guide.
+
+### 📦 Packaging
+
+- **`.vscodeignore`**: Exclude `evaluation.xml`, `skills/`, `docs/`, `CLAUDE.md`, `server.json`, `vitest.sandbox.config.ts`, `.opengrok/` from VSIX.
+- **`.npmignore`**: Exclude `out/webview/`, `out/extension.js` (VS Code-only), `evaluation.xml`, `skills/`, `docs/`, `CLAUDE.md`, `scripts/` from npm package.
+- **`.gitignore`**: Added `.opengrok/` (local tool state directory).
+- Deleted stale `opengrok-mcp-server-7.0.0.vsix` artifact.
+
+---
+
 ## [9.0.0] - 2026-03-31
 
-### Features — Code Mode Interactive Prompts & LLM Sampling
+### ✨ Features — Code Mode Interactive Prompts & LLM Sampling
 
 - **`env.opengrok.elicit(message, schema)`** — New sandbox method for interactive disambiguation. When the LLM's JavaScript encounters multiple matching files or projects, it can pause execution and ask the user to choose from a list. Returns `{ action: "accept"|"decline"|"cancel", content? }`. Requires `OPENGROK_ENABLE_ELICITATION=true` and a supporting MCP client (Claude Code v2.1.76+, VS Code Copilot). Gracefully returns `{ action: "cancel" }` on unsupported clients — no breakage.
 - **`env.opengrok.sample(prompt, opts?)`** — New sandbox method to invoke the client's LLM for query reformulation or result summarization. Returns `string | null` (null on unsupported clients). Accepts `maxTokens` and `systemPrompt` options. Always null-guard the return value.
 - **Zero-result `_suggestions` auto-injection** — When `env.opengrok.search()` returns `totalCount === 0` and MCP Sampling is available, the result object is automatically populated with `_suggestions: string[]` containing up to 3 reformulation candidates. Sandbox JS can check `results._suggestions` before calling `sample()` explicitly.
 - **`opengrok_api` project picker** — The `opengrok_api` tool (Code Mode session start) now elicits a project selection from the user when `OPENGROK_ENABLE_ELICITATION=true` and no `OPENGROK_DEFAULT_PROJECT` is configured. Mirrors the existing legacy-mode project picker in `opengrok_search_code`. The chosen project is injected as a `**Working project: <name>**` hint at the top of the returned API spec.
 
-### Exported Interface
+### 📦 Exported Interface
 - **`SandboxOpts`** exported from `src/server/sandbox.ts` — Allows external callers to configure sandbox behaviour: `getCompileInfoFn`, `mcpServer`, `elicitEnabled`.
 
-### API Change
+### 🔧 API Change
 - **`elicitOrFallback()` now takes `McpServer`** (high-level SDK type) instead of the deprecated low-level `Server`. All call sites updated. No user-facing behaviour change.
 
-### Documentation
+### 📖 Documentation
 - `API_SPEC` in `sandbox.ts`: Added `elicit` and `sample` to `methods`, 4 new guidance lines to `important[]`, plus `disambiguationExample` and `zeroResultExample` code templates.
 - README: Code Mode section expanded with elicit/sample capabilities, `_suggestions` auto-injection note, updated Elicitation and Sampling sections.
 
-### Tests
+### 🧪 Tests
 - 22 new tests in `src/tests/sandbox-elicitation.test.ts` covering all paths: elicit accept/cancel/decline/disabled, sample null-guard, `_suggestions` injection/skip conditions, API_SPEC key presence.
 - 4 new tests in `src/tests/code-mode.test.ts` for `opengrok_api` project picker (accept/cancel/skip-with-default/skip-when-disabled).
 - **1,115 tests total** — all passing.
@@ -85,28 +104,28 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ## [8.0.0] - 2026-03-31
 
-### Breaking Changes
+### ⚠️ Breaking Changes
 - Memory tools (`opengrok_read_memory`, `opengrok_update_memory`, `opengrok_memory_status`) removed from standard mode — available in Code Mode only
 - `OPENGROK_ALLOWED_CLIENT_IDS` removed (enforcement was never active; use RBAC tokens for access control)
 - Standalone tarball downloads removed — npm/npx and VSIX only
 - `verifySsl` now defaults to `true` in VS Code extension (previously `false`)
 - `OPENGROK_PASSWORD_KEY` / `OPENGROK_PASSWORD_FILE` deprecated; server auto-reads from OS keychain
 
-### Security
+### 🔒 Security
 - Extension writes credentials to OS keychain instead of temp file — eliminates `OPENGROK_PASSWORD_KEY` env var exposure
 - Server reads password from OS keychain on startup via `resolveConfig()` (macOS/Windows/Linux, with encrypted file fallback for headless Linux)
 - `verifySsl` default corrected to `true`
 - HTTP URL warning added in setup wizard and VS Code config UI
 - Keychain credential files now written with `mode: 0o600` (previously world-readable on default umask)
 
-### Bug Fixes
+### 🐛 Bug Fixes
 - VS Code extension save no longer fails with "apiVersion is not a registered configuration"
 - Password now persists even if a config update throws (save order fixed: `secretStorage.store` runs first)
 - `OPENGROK_API_VERSION` and `OPENGROK_ENABLE_ELICITATION` now correctly passed to server process
 - `OPENGROK_USERNAME` included in generated MCP client configs (Claude Code, VS Code, Codex)
 - `verifySsl` default inconsistency resolved
 
-### Features
+### ✨ Features
 - Compact tool descriptions automatically enabled when `OPENGROK_CONTEXT_BUDGET=minimal` (~1,400 token savings)
 - `OPENGROK_ENABLE_CACHE_HINTS=true` now logs informational note (previously silently unused)
 - VS Code config UI: added Elicitation toggle; modern `--vscode-*` CSS tokens (fully theme-adaptive)
@@ -114,14 +133,14 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 - Quick configure and WebView save unified — same validation and credential handling
 - `enableElicitation` setting added to VS Code extension config
 
-### Removals
+### 🗑️ Removals
 - Wrapper scripts deleted: `opengrok-mcp-wrapper.sh/cmd/ps1`, `install.sh`, `package-server.js`, `release.ps1`
 - `package.json`: `package-server`, `release:patch/minor/major` scripts removed
 - `x-supports-interleaving` custom annotation removed (not a real MCP spec field)
 - `validateOrigin()` dead function removed
 - `OPENGROK_ALLOWED_CLIENT_IDS` config removed
 
-### Tool Count: 26 total
+### 📊 Tool Count: 26 total
 - Standard mode: 23 tools (no memory tools)
 - Code Mode: 5 tools (opengrok_api + opengrok_execute + 3 memory tools)
 
