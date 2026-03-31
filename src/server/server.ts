@@ -586,6 +586,160 @@ function applyDefaultProject(
 }
 
 // ---------------------------------------------------------------------------
+// TOOL_DEFS: exported map of tool descriptions + parameter descriptions.
+// Used by tool-descriptions.test.ts to enforce ≤120 char tool descriptions
+// and ≤80 char parameter descriptions without importing the full MCP server.
+// ---------------------------------------------------------------------------
+
+/** Extract parameter description strings from a Zod object shape. */
+function extractZodParamDescs(
+  shape: Record<string, z.ZodTypeAny>
+): Record<string, { description?: string }> {
+  const out: Record<string, { description?: string }> = {};
+  for (const [key, field] of Object.entries(shape)) {
+    // Zod stores description in _def.description on the field's _def chain
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let node: any = field;
+    let description: string | undefined;
+    // Walk unwrap chain: ZodOptional/ZodDefault wrap the inner type
+    while (node) {
+      if (typeof node._def?.description === "string") {
+        description = node._def.description;
+        break;
+      }
+      // Unwrap optional/default wrappers
+      node = node._def?.innerType ?? node._def?.schema ?? null;
+    }
+    out[key] = { description };
+  }
+  return out;
+}
+
+export const TOOL_DEFS: Record<string, {
+  description: string;
+  parameters?: Record<string, { description?: string }>;
+}> = {
+  opengrok_search_code: {
+    description: "Full-text or symbol search across one or all OpenGrok projects.",
+    parameters: extractZodParamDescs(SearchCodeArgs.shape),
+  },
+  opengrok_find_file: {
+    description: "Find files by name across all or one project.",
+    parameters: extractZodParamDescs(FindFileArgs.shape),
+  },
+  opengrok_search_pattern: {
+    description: "Search the codebase using a regular expression pattern.",
+    parameters: extractZodParamDescs(SearchPatternArgs.shape),
+  },
+  opengrok_get_file_content: {
+    description: "Fetch file content with optional line range.",
+    parameters: extractZodParamDescs(GetFileContentArgs.shape),
+  },
+  opengrok_get_file_history: {
+    description: "Show git commit history for a file.",
+    parameters: extractZodParamDescs(GetFileHistoryArgs.shape),
+  },
+  opengrok_get_file_diff: {
+    description: "Diff between two revisions of a file (unified diff format).",
+    parameters: extractZodParamDescs(GetFileDiffArgs.shape),
+  },
+  opengrok_browse_directory: {
+    description: "List files and subdirectories in a project directory.",
+    parameters: extractZodParamDescs(BrowseDirectoryArgs.shape),
+  },
+  opengrok_list_projects: {
+    description: "List all indexed OpenGrok projects.",
+    parameters: extractZodParamDescs(ListProjectsArgs.shape),
+  },
+  opengrok_get_file_annotate: {
+    description: "Annotate each line with its last commit (git blame).",
+    parameters: extractZodParamDescs(GetFileAnnotateArgs.shape),
+  },
+  opengrok_search_suggest: {
+    description: "Autocomplete suggestions for a partial query.",
+    parameters: extractZodParamDescs(SearchSuggestArgs.shape),
+  },
+  opengrok_batch_search: {
+    description: "Execute 2-5 parallel OpenGrok searches in one call.",
+    parameters: extractZodParamDescs(BatchSearchArgs.shape),
+  },
+  opengrok_search_and_read: {
+    description: "Search then read matching files in a single call.",
+    parameters: extractZodParamDescs(SearchAndReadArgs.shape),
+  },
+  opengrok_get_symbol_context: {
+    description: "Complete symbol investigation: definition + header + references in one call.",
+    parameters: extractZodParamDescs(GetSymbolContextArgs.shape),
+  },
+  opengrok_index_health: {
+    description: "Check OpenGrok server health and indexed project list.",
+    parameters: extractZodParamDescs(IndexHealthArgs.shape),
+  },
+  opengrok_get_compile_info: {
+    description: "Get compiler flags and include paths from compile_commands.json.",
+    parameters: extractZodParamDescs(GetCompileInfoArgs.shape),
+  },
+  opengrok_get_file_symbols: {
+    description: "List all symbols (functions, classes, variables) defined in a file.",
+    parameters: extractZodParamDescs(GetFileSymbolsArgs.shape),
+  },
+  opengrok_call_graph: {
+    description: "Find all callers and callees of a function or method symbol.",
+    parameters: extractZodParamDescs(CallGraphArgs.shape),
+  },
+  opengrok_what_changed: {
+    description: "Show recent commits across one or all projects.",
+    parameters: extractZodParamDescs(WhatChangedArgs.shape),
+  },
+  opengrok_blame: {
+    description: "Git blame with optional diff for a file path.",
+    parameters: extractZodParamDescs(BlameArgs.shape),
+  },
+  opengrok_dependency_map: {
+    description: "Build #include/import dependency graph (configurable depth).",
+    parameters: extractZodParamDescs(DependencyMapArgs.shape),
+  },
+  opengrok_memory_status: {
+    description: "Show current memory bank file sizes and modification times.",
+    parameters: {
+      _: { description: "(no input required)" },
+    },
+  },
+  opengrok_read_memory: {
+    description: "Read active-task.md or investigation-log.md from the memory bank.",
+    parameters: {
+      filename: { description: "File to read from the memory bank" },
+    },
+  },
+  opengrok_update_memory: {
+    description: "Write or append to active-task.md or investigation-log.md.",
+    parameters: {
+      filename: { description: "File to update" },
+      content: { description: "Content to write" },
+      mode: { description: "append adds to end (use for investigation-log)" },
+    },
+  },
+  opengrok_api: {
+    description: "Return the full Code Mode API specification.",
+    parameters: {
+      _: { description: "(no input required)" },
+    },
+  },
+  opengrok_execute: {
+    description: "Execute JavaScript in the QuickJS sandbox with OpenGrok API access.",
+    parameters: {
+      code: { description: "JS function body; use env.opengrok.* for API calls; return a value." },
+    },
+  },
+  opengrok_get_task_result: {
+    description: "Deprecated: opengrok_execute now returns synchronously; use that instead.",
+    parameters: {
+      taskId: { description: "Task ID returned by a previous opengrok_execute call" },
+    },
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Priority tool core executors (return raw data for structured output)
 // ---------------------------------------------------------------------------
 
@@ -1333,9 +1487,7 @@ function registerMemoryTools(
     "opengrok_memory_status",
     {
       title: "Memory Bank Status",
-      description:
-        "Returns status of all OpenGrok memory files. Call once at session start " +
-        "to check whether there is prior investigation state to restore.",
+      description: "Show current memory bank file sizes and modification times.",
       inputSchema: { _: z.string().optional().describe("(no input required)") },
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
@@ -1368,9 +1520,7 @@ function registerMemoryTools(
     "opengrok_read_memory",
     {
       title: "Read Memory Bank",
-      description:
-        "Read a Living Document file. Call at session start to restore context. " +
-        "Files: active-task.md (current task state), investigation-log.md (findings history)",
+      description: "Read active-task.md or investigation-log.md from the memory bank.",
       inputSchema: {
         filename: z.enum(["active-task.md", "investigation-log.md"]
         ).describe("File to read from the memory bank"),
@@ -1409,9 +1559,7 @@ function registerMemoryTools(
     "opengrok_update_memory",
     {
       title: "Update Memory Bank",
-      description:
-        "Write findings to a Living Document file. Use mode=append for investigation-log.md. " +
-        "MANDATORY: Update active-task.md before every final answer.",
+      description: "Write or append to active-task.md or investigation-log.md.",
       inputSchema: {
         filename: z.enum(["active-task.md", "investigation-log.md"])
           .describe("File to update"),
@@ -1508,9 +1656,7 @@ function registerCodeModeTools(
     "opengrok_api",
     {
       title: "OpenGrok API Reference",
-      description:
-        "Get the full API specification for Code Mode. " +
-        "Call this ONCE at session start before writing any opengrok_execute code.",
+      description: "Return the full Code Mode API specification.",
       inputSchema: { _ : z.string().optional().describe("(no input required)") },
       // x-supports-interleaving: extended thinking hint for Claude (Task 5.9)
       annotations: CODE_MODE_API_ANNOTATIONS,
@@ -1531,15 +1677,9 @@ function registerCodeModeTools(
     "opengrok_execute",
     {
       title: "Execute OpenGrok Code",
-      description:
-        "Execute JavaScript code in a secure sandbox with access to the env.opengrok API object. " +
-        "All API calls are synchronous from your code's perspective. " +
-        "Return values via 'return' (not 'export default'). Use env.opengrok.* for API calls.",
+      description: "Execute JavaScript in the QuickJS sandbox with OpenGrok API access.",
       inputSchema: {
-        code: z.string().min(1).describe(
-          "JavaScript code to execute. Must be able to run as a function body. " +
-          "Use the opengrok object to access the API. Return a value."
-        ),
+        code: z.string().min(1).describe("JS function body; use env.opengrok.* for API calls; return a value."),
       },
       // x-supports-interleaving: extended thinking hint for Claude (Task 5.9)
       annotations: CODE_MODE_EXECUTE_ANNOTATIONS,
@@ -1613,10 +1753,7 @@ function registerCodeModeTools(
     "opengrok_get_task_result",
     {
       title: "Get Task Result",
-      description:
-        "Retained for backward compatibility. opengrok_execute now returns results " +
-        "synchronously — polling is no longer required. This tool will return " +
-        "'task not found' for any ID produced by the current server.",
+      description: "Deprecated: opengrok_execute now returns synchronously; use that instead.",
       inputSchema: {
         taskId: z.string().describe("Task ID returned by a previous opengrok_execute call"),
       },
@@ -1676,7 +1813,7 @@ function registerLegacyTools(
     {
       title: "Search Code",
       description: desc(
-        "Search OpenGrok. Types: full (text), defs (definitions), refs (references), path (filenames), hist (commit messages). Prefer defs/refs for known symbol names. Use opengrok_batch_search for multiple queries.",
+        "Full-text or symbol search across one or all OpenGrok projects.",
         "(fallback) search the codebase"
       ),
       inputSchema: SearchCodeArgs.shape,
@@ -1737,7 +1874,7 @@ function registerLegacyTools(
     "opengrok_find_file",
     {
       title: "Find File",
-      description: desc("Find files by name/path pattern across the codebase.", "(fallback) find file by name pattern"),
+      description: desc("Find files by name across all or one project.", "(fallback) find file by name pattern"),
       inputSchema: FindFileArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1766,7 +1903,7 @@ function registerLegacyTools(
     {
       title: "Search Pattern",
       description: desc(
-        "Search the codebase using a regular expression pattern. More powerful than keyword search for matching code patterns.",
+        "Search the codebase using a regular expression pattern.",
         "(fallback) regex pattern search"
       ),
       inputSchema: SearchPatternArgs.shape,
@@ -1797,7 +1934,7 @@ function registerLegacyTools(
     {
       title: "Get File Content",
       description: desc(
-        "Get file contents. ALWAYS pass start_line/end_line — never fetch full files. Use opengrok_search_code first to find line numbers. For full symbol context use opengrok_get_symbol_context.",
+        "Fetch file content with optional line range.",
         "(fallback) read file lines — always pass start_line + end_line"
       ),
       inputSchema: GetFileContentArgs.shape,
@@ -1820,7 +1957,7 @@ function registerLegacyTools(
     "opengrok_get_file_history",
     {
       title: "Get File History",
-      description: desc("Commit history for a file.", "(fallback) file commit history"),
+      description: desc("Show git commit history for a file.", "(fallback) file commit history"),
       inputSchema: GetFileHistoryArgs.shape,
       outputSchema: FileHistoryOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1867,8 +2004,7 @@ function registerLegacyTools(
     {
       title: "Get File Diff",
       description: desc(
-        "Get the diff between two revisions of a file. Returns a standard unified diff (git-diff format) " +
-        "with +/- lines and @@ hunk headers. Use opengrok_get_file_history first to discover revision hashes.",
+        "Diff between two revisions of a file (unified diff format).",
         "(fallback) diff between two file revisions"
       ),
       inputSchema: GetFileDiffArgs.shape,
@@ -1909,7 +2045,7 @@ function registerLegacyTools(
     "opengrok_browse_directory",
     {
       title: "Browse Directory",
-      description: desc("List files/subdirectories at a path.", "(fallback) list directory contents"),
+      description: desc("List files and subdirectories in a project directory.", "(fallback) list directory contents"),
       inputSchema: BrowseDirectoryArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -1935,7 +2071,7 @@ function registerLegacyTools(
     "opengrok_list_projects",
     {
       title: "List Projects",
-      description: desc("List indexed OpenGrok projects.", "(fallback) list all indexed projects"),
+      description: desc("List all indexed OpenGrok projects.", "(fallback) list all indexed projects"),
       inputSchema: ListProjectsArgs.shape,
       outputSchema: ProjectsListOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -1957,7 +2093,7 @@ function registerLegacyTools(
     {
       title: "Get File Annotate",
       description: desc(
-        "Blame annotations (who changed each line). Use start_line/end_line to limit output.",
+        "Annotate each line with its last commit (git blame).",
         "(fallback) line-by-line blame"
       ),
       inputSchema: GetFileAnnotateArgs.shape,
@@ -1985,7 +2121,7 @@ function registerLegacyTools(
     "opengrok_search_suggest",
     {
       title: "Search Suggest",
-      description: desc("Autocomplete suggestions for a partial query.", "(fallback) search autocomplete suggestions"),
+      description: desc("Autocomplete suggestions for a partial search query.", "(fallback) search autocomplete suggestions"),
       inputSchema: SearchSuggestArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -2029,10 +2165,7 @@ function registerLegacyTools(
     {
       title: "Batch Search",
       description: desc(
-        "Execute up to 5 searches in parallel in one call.\n\n" +
-        "**When to use**: Always prefer this over multiple opengrok_search_code calls for the same investigation.\n\n" +
-        "**Args**: `queries` array (each with `query`, `search_type`, `max_results`); `projects` and `file_type` apply to all queries.\n\n" +
-        "**Example**: Find definition, references, and usage patterns of a symbol in one call.",
+        "Execute 2-5 parallel OpenGrok searches in one call.",
         "(fallback) 2–5 parallel searches in 1 call"
       ),
       inputSchema: BatchSearchArgs.shape,
@@ -2057,9 +2190,7 @@ function registerLegacyTools(
     {
       title: "Search and Read",
       description: desc(
-        "Search and return matching code with surrounding context in one call.\n\n" +
-        "**When to use**: Instead of opengrok_search_code + opengrok_get_file_content. Never fetches full files.\n\n" +
-        "**When not to use**: When you need the full file or deep symbol analysis — use opengrok_get_symbol_context instead.",
+        "Search then read matching files in a single call.",
         "(fallback) search + surrounding code in 1 call"
       ),
       inputSchema: SearchAndReadArgs.shape,
@@ -2085,11 +2216,7 @@ function registerLegacyTools(
     {
       title: "Get Symbol Context",
       description: desc(
-        "Complete symbol investigation in one call: definition with context + corresponding header + references.\n\n" +
-        "**When to use**: First choice for any unknown C++ symbol or function. Replaces search_code + get_file_content combination.\n\n" +
-        "**When not to use**: For simple file reads or when you already have the exact line number.\n\n" +
-        "**Args**: `symbol` (required); `projects`, `context_lines`, `max_refs`, `include_header`, `file_type` (optional).\n\n" +
-        "**Example**: Use for any CamelCase/PascalCase identifier to get definition + header + callers in one call.",
+        "Complete symbol investigation: definition + header + references in one call.",
         "(fallback) symbol definition + header + refs in 1 call"
       ),
       inputSchema: GetSymbolContextArgs.shape,
@@ -2131,7 +2258,7 @@ function registerLegacyTools(
     {
       title: "Index Health",
       description: desc(
-        "OpenGrok server connection status and diagnostics. Call if results seem stale or incomplete.",
+        "Check OpenGrok server health and indexed project list.",
         "(fallback) server connectivity and index status"
       ),
       inputSchema: IndexHealthArgs.shape,
@@ -2169,11 +2296,7 @@ function registerLegacyTools(
     {
       title: "Get Compile Info",
       description: desc(
-        "Get compilation details for a source file: compiler, include paths, preprocessor defines, and language standard.\n\n" +
-        "**When to use**: When you need compiler flags or include paths for precise analysis of C/C++ files.\n\n" +
-        "**When not to use**: For non-C/C++ files or when compile_commands.json is not present.\n\n" +
-        "**Args**: `path` — absolute or OpenGrok-relative path (e.g., GridNode/EventLoop.cpp).\n\n" +
-        "**Example**: Use before asking about preprocessor macros or platform-specific includes.",
+        "Get compiler flags and include paths from compile_commands.json.",
         "(fallback) compiler flags for a file (requires local compile_commands.json)"
       ),
       inputSchema: GetCompileInfoArgs.shape,
@@ -2199,11 +2322,7 @@ function registerLegacyTools(
     {
       title: "Get File Symbols",
       description: desc(
-        "List all symbols defined in a file: functions, classes, structs, macros with line numbers and signatures.\n\n" +
-        "**When to use**: To understand a file's structure before reading it with opengrok_get_file_content.\n\n" +
-        "**When not to use**: When you already know exactly which lines to read.\n\n" +
-        "**Args**: `project` and `path` (required).\n\n" +
-        "**Example**: Use before opengrok_get_file_content to identify which function/class starts at which line.",
+        "List all symbols (functions, classes, variables) defined in a file.",
         "(fallback) file symbols list — call before get_file_content"
       ),
       inputSchema: GetFileSymbolsArgs.shape,
@@ -2257,10 +2376,7 @@ function registerLegacyTools(
     {
       title: "Get Call Graph",
       description: desc(
-        "Find all callers and callees of a function or method symbol (v2 API if configured, v1 fallback).\n\n" +
-        "**When to use**: To understand function call relationships and dependencies.\n\n" +
-        "**Args**: `project` and `symbol` (required).\n\n" +
-        "**Example**: Use to trace how a function is called through the codebase.",
+        "Find all callers and callees of a function or method symbol.",
         "(fallback) callers and callees of a symbol"
       ),
       inputSchema: CallGraphArgs.shape,
@@ -2307,10 +2423,7 @@ function registerLegacyTools(
     {
       title: "What Changed",
       description: desc(
-        "Show which lines changed recently in a file, grouped by commit. Combines file history + blame in one call.\n\n" +
-        "**When to use**: To understand what recently changed in a file and who changed it.\n\n" +
-        "**Args**: `project`, `path` (required), `since_days` (1–90, default 7).\n\n" +
-        "**Example**: Use to audit recent changes to a critical source file before code review.",
+        "Show which lines changed recently in a file, grouped by commit.",
         "(fallback) recent line changes grouped by commit"
       ),
       inputSchema: WhatChangedArgs.shape,
@@ -2379,10 +2492,7 @@ function registerLegacyTools(
     {
       title: "Git Blame",
       description: desc(
-        "Get git blame/annotation for a file — shows who changed each line and when. Optionally filter to a line range.\n\n" +
-        "**When to use**: To understand ownership of specific lines, track down when a bug was introduced, or audit authorship.\n\n" +
-        "**Args**: `project`, `path` (required); `line_start`, `line_end` (optional line range); `include_diff` (default false).\n\n" +
-        "**Example**: Use on a function body to see who last touched each line.",
+        "Git blame with optional diff for a file path.",
         "(fallback) git blame annotation"
       ),
       inputSchema: BlameArgs.shape,
@@ -2431,9 +2541,7 @@ function registerLegacyTools(
     {
       title: "Dependency Map",
       description: desc(
-        "**When to use**: To understand a file's dependencies or find all callers/includers across a project.\n\n" +
-        "**Args**: `project`, `path` (required); `depth` (1–3, default 2); `direction` (uses|used_by|both, default both).\n\n" +
-        "**Example**: Use on a header file to find all translation units that include it.",
+        "Build #include/import dependency graph (configurable depth).",
         "(fallback) #include/import dependency graph, configurable depth"
       ),
       inputSchema: DependencyMapArgs.shape,

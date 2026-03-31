@@ -12,12 +12,7 @@ const RESPONSE_FORMAT = z
   .enum(["markdown", "json", "tsv", "yaml", "text", "toon", "auto"])
   .default("markdown")
   .optional()
-  .describe(
-    'Output format. "markdown" (default, LLM-optimised), "json" (programmatic), ' +
-    '"tsv" (tabular search results, most compact), "toon" (Token-Oriented Object Notation, ~40% fewer tokens than JSON for search results), ' +
-    '"yaml" (hierarchical data, best for symbol context), ' +
-    '"text" (raw code, no markdown framing), "auto" (server selects best format)'
-  );
+  .describe("Output format: markdown, json, tsv, toon, yaml, text, or auto.");
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -46,7 +41,7 @@ export const SearchCodeArgs = z.object({
   max_results: z.number().int().min(1).max(100).default(10),
   start_index: z.number().int().min(0).default(0),
   file_type: z.string().optional().describe(FILE_TYPE_DESC),
-  stream: z.boolean().default(false).describe("Stream results progressively (HTTP transport only). When true, results are sent via SSE as they arrive."),
+  stream: z.boolean().default(false).describe("Stream results via SSE (HTTP transport only)."),
   response_format: RESPONSE_FORMAT,
 });
 
@@ -189,7 +184,7 @@ export const IndexHealthArgs = z.object({
 });
 
 export const GetCompileInfoArgs = z.object({
-  path: z.string().min(1, "path must not be empty").describe("Source file path. Accepts absolute paths or OpenGrok-relative paths (e.g., GridNode/EventLoop.cpp)."),
+  path: z.string().min(1, "path must not be empty").describe("Absolute or project-relative path (e.g., GridNode/EventLoop.cpp)."),
   response_format: RESPONSE_FORMAT,
 });
 
@@ -208,7 +203,7 @@ export const CallGraphArgs = z.object({
 export const GetFileDiffArgs = z.object({
   project: z.string().min(1).describe("OpenGrok project name"),
   path: z.string().min(1).describe("File path within the project (e.g. src/Foo.cpp)"),
-  rev1: z.string().min(1).describe("First (older) revision hash — use opengrok_get_file_history to discover revisions"),
+  rev1: z.string().min(1).describe("First (older) revision hash — get from opengrok_get_file_history."),
   rev2: z.string().min(1).describe("Second (newer) revision hash"),
   response_format: RESPONSE_FORMAT,
 });
