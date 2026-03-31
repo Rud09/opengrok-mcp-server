@@ -62,12 +62,15 @@ to chaining individual calls.
 
 ### Code Mode Tools (preferred when available)
 
-When Code Mode is enabled, these 2 tools replace all individual tools above:
+When Code Mode is enabled, these 5 tools replace all individual tools above:
 
 | Goal | Tool | Why |
 |------|------|-----|
-| Get the API specification | `opengrok_api` | Returns a full spec of the `env.opengrok.*` methods available inside the sandbox. Call this once per session. |
-| Execute a JavaScript program against OpenGrok | `opengrok_execute` | Write JS code that uses `env.opengrok.*` methods. Returns only the final `return` value — intermediate data stays in the sandbox (huge token savings). |
+| Get the API specification | `opengrok_api` | Returns the full spec of all `env.opengrok.*` sandbox methods. Call once per session. With `OPENGROK_ENABLE_ELICITATION=true`, also prompts the user to select a working project at startup. |
+| Execute a JavaScript program against OpenGrok | `opengrok_execute` | Write JS code using `env.opengrok.*` methods. Only the `return` value crosses back — intermediate data stays in sandbox (huge token savings). |
+| Read memory bank file | `opengrok_read_memory` | Read `active-task.md` or `investigation-log.md` |
+| Write/append to memory bank file | `opengrok_update_memory` | Persist findings across turns |
+| Check memory bank status | `opengrok_memory_status` | See file sizes and previews without reading full content |
 
 ### Individual Tools
 
@@ -138,12 +141,12 @@ status: investigating | blocked | complete
 
 ## Code Mode
 
-Code Mode reduces tool calls to just 2 (`opengrok_api` + `opengrok_execute`), saving 75–95% tokens.
+Code Mode reduces tool calls to just 5, saving 75–95% tokens vs standard mode's 23 tools.
 
 ### Workflow
 
 ```
-1. Call opengrok_api once to get the API spec
+1. Call opengrok_api once to get the full API spec (and pick a working project if elicitation is enabled)
 2. Write JavaScript that uses env.opengrok.* methods
 3. Call opengrok_execute with the code
 4. Only the return value crosses back — intermediate data stays in the sandbox
@@ -167,10 +170,46 @@ const content = defPath
 return { definition: content?.content, callers: refs.results.map(r => r.path) };
 ```
 
+### Example: File disambiguation with elicit() (v9.0+, requires OPENGROK_ENABLE_ELICITATION=true)
+
+```javascript
+const found = env.opengrok.findFile("AuthService*", { maxResults: 10 });
+if (found.results.length === 0) return "No file found matching AuthService*";
+if (found.results.length === 1) {
+  const r = found.results[0];
+  return env.opengrok.getFileContent(r.project, r.path).content;
+}
+const paths = found.results.map(r => r.path).slice(0, 10);
+const choice = env.opengrok.elicit("Multiple files match. Which one?", {
+  type: "object",
+  properties: { path: { type: "string", enum: paths, description: "File to fetch" } },
+  required: ["path"],
+});
+if (choice.action !== "accept") return "Cancelled.";
+const match = found.results.find(r => r.path === choice.content.path);
+return env.opengrok.getFileContent(match.project, choice.content.path).content;
+```
+
+### Example: Zero-result handling with _suggestions and sample() (v9.0+)
+
+```javascript
+const results = env.opengrok.search("handelCrash", { searchType: "defs" });
+if (results.totalCount === 0) {
+  const suggestions = results._suggestions?.join(", ");  // auto-injected when sampling available
+  if (suggestions) return `No results. Try: ${suggestions}`;
+  const s = env.opengrok.sample(`"handelCrash" returned 0 results. Suggest 3 alternative symbol names.`);
+  return s ? `No results. Try: ${s}` : "No results found.";
+}
+// ... process results
+```
+
 ### Code Mode Notes
-- `Promise.all` does **not** parallelize inside the sandbox VM (calls are serialized via the Atomics bridge) — use `env.opengrok.batchSearch()` instead, which runs queries in parallel on the host event loop
+- `Promise.all` does **not** parallelize inside the sandbox VM — use `env.opengrok.batchSearch()` instead
 - All `env.opengrok.*` calls are synchronous from your code's perspective
 - `env.opengrok.readMemory(filename)` / `writeMemory(filename, content)` for Living Document access
+- `env.opengrok.elicit(message, schema)` — pause and ask the user to choose from a list (v9.0+, requires `OPENGROK_ENABLE_ELICITATION=true`); returns `{ action, content }` — always handle `action !== "accept"`
+- `env.opengrok.sample(prompt, opts?)` — call the client's LLM for suggestions (v9.0+); returns `string | null` — always null-guard
+- `_suggestions` — auto-injected into zero-result `search()` responses when sampling is available (v9.0+)
 
 ## Search Types
 
@@ -217,7 +256,7 @@ Common values: `c`, `cxx` (C++), `java`, `python`, `javascript`, `typescript`, `
 
 ### response_format
 
-All 14 tools accept `response_format`:
+All standard mode tools accept `response_format`:
 - `"markdown"` (default) — human-readable, optimized for LLM consumption
 - `"json"` — structured output for programmatic use
 
@@ -254,7 +293,7 @@ Always pass `start_line` and `end_line` to `opengrok_get_file_content`. Never fe
 
 11. **VS Code memory vs OpenGrok memory.** VS Code Copilot's built-in `/memory` command stores general codebase knowledge (architecture, conventions, key directories) and auto-loads every session — free. The OpenGrok memory bank (`active-task.md`, `investigation-log.md`) is for investigation-specific state that needs to persist across multiple OpenGrok sessions. Use VS Code memory for "what is this codebase", OpenGrok memory for "what am I currently investigating".
 
-12. **17 tools = ~2,550 prompt tokens.** In token-constrained environments, enable Code Mode (2 tools = ~200 tokens) via Extension Settings or `OPENGROK_CODE_MODE=true`. When Code Mode is active, individual tools remain available as fallbacks with compact descriptions.
+12. **23 tools = ~3,200 prompt tokens.** In token-constrained environments, enable Code Mode (5 tools = ~320 tokens) via Extension Settings or `OPENGROK_CODE_MODE=true`. When Code Mode is active, all operations go through the sandbox instead of individual tools.
 
 ## Error Recovery
 
