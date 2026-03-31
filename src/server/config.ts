@@ -111,8 +111,6 @@ const ConfigSchema = z.object({
     .describe("Use Files API cache for investigation-log.md (when supported by SDK)"),
   // Per-tool rate limiting (comma-separated tool=rpm pairs, e.g. "opengrok_batch_search=5,opengrok_execute=10")
   OPENGROK_PER_TOOL_RATELIMIT: z.string().default(""),
-  // Allowed client IDs for request origin validation (comma-separated, empty = no restriction)
-  OPENGROK_ALLOWED_CLIENT_IDS: z.string().default(""),
   // OpenGrok REST API version (Task 5.7)
   OPENGROK_API_VERSION: z.enum(["v1", "v2"]).default("v1")
     .describe("OpenGrok REST API version (v1 or v2, default: v1)"),
@@ -157,12 +155,6 @@ export function parsePerToolLimits(configStr: string): Record<string, number> {
   }
 
   return limits;
-}
-
-// Parse comma-separated list of allowed client IDs
-export function parseAllowedClientIds(configStr: string): string[] {
-  if (!configStr || !configStr.trim()) return [];
-  return configStr.split(",").map((id) => id.trim()).filter((id) => id.length > 0);
 }
 
 // Check credential age and return warning if older than threshold
