@@ -275,18 +275,17 @@ export class MemoryBank {
     // Always keep the 2 most recent entries; score older ones
     const recent = sections.slice(-2);
     const older = sections.slice(0, -2);
-    const scored = older.map((s, i) => ({ s, i, score: this.scoreLogEntry(s) }));
+    const scored = older.map((s, i) => ({ i, score: this.scoreLogEntry(s) }));
     // Sort ascending so we drop lowest-score entries first
     scored.sort((a, b) => a.score - b.score);
 
-    const kept = [...older];
+    // B2: Use index-based tracking instead of indexOf to handle duplicate sections correctly
+    const dropIndices = new Set<number>();
     for (const { i } of scored) {
-      const candidate = trimNote + kept.join("") + recent.join("");
-      if (Buffer.byteLength(candidate, "utf8") <= maxBytes) {
-        return candidate;
-      }
-      const idx = kept.indexOf(older[i]);
-      if (idx !== -1) kept.splice(idx, 1);
+      const keptSections = older.filter((_, idx) => !dropIndices.has(idx));
+      const candidate = trimNote + keptSections.join("") + recent.join("");
+      if (Buffer.byteLength(candidate, "utf8") <= maxBytes) return candidate;
+      dropIndices.add(i);
     }
 
     // Only recent entries left

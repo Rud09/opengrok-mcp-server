@@ -124,6 +124,13 @@ class TTLCache<K, V> {
     // Evict expired entries periodically (every 10 writes) instead of every set()
     if (++this.writeCount % 10 === 0) this.evictExpired();
 
+    // Subtract existing entry's size before eviction loop (B5: prevent double-counting on key update)
+    const existing = this.map.get(key);
+    if (existing) {
+      this.totalBytes -= existing.sizeBytes;
+      this.map.delete(key);
+    }
+
     // Evict LRU-style if over limits
     while (
       this.map.size >= this.maxEntries ||
@@ -243,11 +250,7 @@ export function extractLineRange(
   for (let line = s; line < e && endOffset <= content.length; line++) {
     const nl = content.indexOf("\n", endOffset);
     if (nl === -1) { endOffset = content.length; break; }
-    endOffset = nl + (line < e - 1 ? 1 : 0);
-  }
-  // If endOffset landed on a newline and we consumed all requested lines, include up to that newline
-  if (endOffset < content.length && content.charCodeAt(endOffset) === 10) {
-    endOffset++;
+    endOffset = nl + 1; // always advance past the newline (B6: off-by-one fix)
   }
 
   // Trim trailing newline from extracted range for consistency with split/slice/join

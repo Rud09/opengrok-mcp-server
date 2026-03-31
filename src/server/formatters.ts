@@ -82,10 +82,9 @@ export function selectFormat(
 
 // Max lines returned for a full-file read (no line range specified).
 // Override with OPENGROK_MAX_INLINE_LINES env var.
-const MAX_INLINE_LINES = parseInt(
-  process.env.OPENGROK_MAX_INLINE_LINES ?? "200",
-  10
-);
+const _rawMaxInlineLines = process.env.OPENGROK_MAX_INLINE_LINES ?? '';
+const _parsedMaxInlineLines = _rawMaxInlineLines !== '' ? parseInt(_rawMaxInlineLines, 10) : NaN;
+const MAX_INLINE_LINES = !Number.isNaN(_parsedMaxInlineLines) ? _parsedMaxInlineLines : 200; // B8: NaN guard
 
 // ---------------------------------------------------------------------------
 // Utilities

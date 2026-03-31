@@ -167,8 +167,8 @@ export async function startHttpTransport(
     for (const [sid, handle] of sessions) {
       if (now - handle.meta.lastActivity.getTime() > SESSION_TTL_MS) {
         logger.info(`HTTP session expired (idle TTL): ${sid}`);
+        sessions.delete(sid); // remove before closing to prevent new requests on this session ID (B4)
         void handle.transport.close().catch(() => undefined);
-        sessions.delete(sid);
       }
     }
   }, SESSION_SWEEP_INTERVAL_MS);
