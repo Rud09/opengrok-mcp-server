@@ -218,11 +218,7 @@
     "vsix": "node scripts/build-vsix.js",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
-    "version:major": "npm version major --no-git-tag-version",
-    "package-server": "node scripts/package-server.js",
-    "release:patch": "npm run version:patch && npm run compile && npm run package-server && npm run vsix",
-    "release:minor": "npm run version:minor && npm run compile && npm run package-server && npm run vsix",
-    "release:major": "npm run version:major && npm run compile && npm run package-server && npm run vsix"
+    "version:major": "npm version major --no-git-tag-version"
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",

@@ -32,9 +32,6 @@ jobs:
       - name: Build VSIX
         run: npm run vsix
 
-      - name: Package standalone server
-        run: npm run package-server
-
       - name: Extract version
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
@@ -50,9 +47,6 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             opengrok-mcp-server-${{ steps.version.outputs.version }}.vsix
-            opengrok-mcp-server-${{ steps.version.outputs.version }}-linux.tar.gz
-            opengrok-mcp-server-${{ steps.version.outputs.version }}-darwin.tar.gz
-            opengrok-mcp-server-${{ steps.version.outputs.version }}-win.zip
 
       - name: Publish to npm
         run: |
