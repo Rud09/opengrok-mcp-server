@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Highlights
 
+### 🛡️ v7.0 — Security Audit, OAuth Resource Server & CLI Setup Wizard
+
+Comprehensive security audit across all attack surfaces: SSRF hardening, Unicode path traversal, HTML/prompt injection, timing-safe token comparison, AES-256-GCM credential encryption, integer rate limiter, and CORS allowlist. OAuth 2.1 migrated to resource server model (bring your own IdP). New `npx opengrok-mcp setup` interactive wizard for Claude Code CLI, VS Code/Copilot CLI, and Codex CLI. **1079 tests, ≥89% coverage.**
+
 ### 🚀 v6.0 — Enterprise MCP: HTTP Transport, OAuth 2.1 & RBAC
 
 Streamable HTTP transport for team deployments, OAuth 2.1 with `client_credentials` grant, role-based access control (admin/developer/readonly), OpenGrok API v2 support, and full MCP 2025-06-18 spec compliance: structured tool output (`outputSchema` + `structuredContent`), MCP Resources, Prompts, Elicitation, and Sampling. **26 tools total, 919 tests.**
@@ -40,6 +44,68 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [7.0.0] - 2026-03-31
+
+### ⚠️ Breaking Changes
+
+- **OAuth 2.1 model changed to resource server**: `OPENGROK_HTTP_CLIENT_ID` and `OPENGROK_HTTP_CLIENT_SECRET` removed. The server no longer acts as an authorization server or issues tokens. Configure `OPENGROK_JWKS_URI` + `OPENGROK_RESOURCE_URI` and bring your own IdP. RFC 9728 protected resource metadata served at `/.well-known/oauth-protected-resource`.
+- **Memory bank `migrate()` removed**: The legacy 6-file layout (`AGENTS.md`, `codebase-map.md`, etc.) is no longer supported. If you have old memory files, copy content manually into `active-task.md` / `investigation-log.md`.
+- **CORS is now allowlist-only** when `OPENGROK_ALLOWED_ORIGINS` is configured. Wildcard CORS disabled in production HTTP deployments.
+
+### 🔒 Security (Phase 1)
+
+- **SSRF hardening**: DNS rebinding detection + IPv6-mapped address blocking in `buildSafeUrl` (`isPrivateIp` helper)
+- **Unicode path traversal fix**: NFC normalization + bidirectional Unicode character blocking before path validation
+- **HTML injection prevention**: `he.decode` applied to all parser text nodes in `parsers.ts`
+- **Prompt injection escaping**: `escapeMarkdownField` and `fenceCode` helpers applied across all formatters
+- **Timing-safe token comparison**: `crypto.timingSafeEqual` for all Bearer token comparisons (replaces `===`)
+- **RBAC fail-safe**: 403 for unknown tokens when RBAC is configured (was silently allowed)
+- **CORS allowlist**: `OPENGROK_ALLOWED_ORIGINS` env var; wildcard CORS disabled when set
+- **Security headers**: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, CSP on all HTTP responses
+- **Sandbox buffer overflow guards**: bounds checks on SharedArrayBuffer reads/writes in `sandbox.ts` + `sandbox-worker.ts`
+- **AES-256-GCM migration**: credential files now use GCM (authenticated encryption); existing CBC files auto-upgraded on first read
+- **Integer rate limiter**: token bucket rewritten with integer counters (eliminates float drift accumulation)
+- **ReDoS prevention**: `minimatch` for all glob pattern matching (replaces hand-rolled regex)
+- **Audit log injection escaping**: CSV/JSON audit entries sanitized before write
+- **Memory bank TOCTOU fix**: pre-check before write prevents race condition on concurrent writes
+
+### 🏗️ Architecture (Phase 2)
+
+- **Memory hybrid status injection**: `MemoryBank.getStatusLine()` auto-injected into `SERVER_INSTRUCTIONS` as `{{MEMORY_STATUS}}` — LLM always knows memory state without an explicit tool call
+- **`migrate()` removed**: no legacy 6-file memory layout support; simplifies `MemoryBank` class
+- **OAuth 2.1 resource server**: `/token` endpoint removed; JWT validation via `jose`; RFC 9728 metadata at `/.well-known/oauth-protected-resource`
+- **New env vars**: `OPENGROK_JWKS_URI`, `OPENGROK_RESOURCE_URI`, `OPENGROK_AUTH_SERVERS`, `OPENGROK_SCOPE_MAP`, `OPENGROK_STRICT_OAUTH`, `OPENGROK_ALLOWED_ORIGINS`
+- **Removed env vars**: `OPENGROK_HTTP_CLIENT_ID`, `OPENGROK_HTTP_CLIENT_SECRET`
+
+### 📉 Token Optimization (Phase 3)
+
+- All tool descriptions compressed to ≤120 characters; parameter descriptions ≤80 characters
+- MCP Resource `opengrok-docs://tools/{name}` — full per-tool documentation available on demand
+- `SERVER_INSTRUCTIONS` reduced to ≤300 tokens
+- Anthropic prompt caching hints (`OPENGROK_ENABLE_CACHE_HINTS`) wired to `cache-control: immutable` headers
+
+### 🐛 Bug Fixes (Phase 4)
+
+- **B6 — `extractLineRange` off-by-one**: fencepost error in line range extraction corrected
+- **B5 — `TTLCache` double-count on key update**: counter was incremented on overwrites, causing premature eviction
+- **B2 — `trimLogFromTop` index bug**: incorrect byte-boundary index caused log truncation to corrupt UTF-8 sequences
+- **B4 — Session sweep race condition**: concurrent sweep and request could double-close a session
+
+### ⌨️ CLI (Phase 5)
+
+- **`npx opengrok-mcp setup`**: interactive wizard using `@clack/prompts`; configures Claude Code CLI, VS Code/Copilot CLI, and Codex CLI; stores credentials in OS keychain (`@napi-rs/keyring`) with AES-GCM file fallback
+- **`opengrok-mcp status`**: health check command — validates connectivity, detects installed clients, prints version
+- **Auto-update notification** at server startup (throttled to once per 24 hours)
+- **`bin` field**: `opengrok-mcp` (setup/status entrypoint) and `opengrok-mcp-server` (MCP server)
+- **`files` field** in `package.json` for clean npm publish
+
+### 📈 Stats
+
+- Tests: 919 → **1079** (+160 tests)
+- Coverage: ≥89% lines/functions/statements/branches
 
 ---
 

@@ -109,8 +109,9 @@ The MCP server maintains 2 persistent files across sessions:
 
 ### Mandatory Agentic Loop
 
-**On every session start:**
-1. Call `opengrok_memory_status` — check if prior state exists
+**On every session start (v7.0+):**
+Memory status is auto-injected into SERVER_INSTRUCTIONS — no need to call `opengrok_memory_status` at startup.
+1. Check `{{MEMORY_STATUS}}` in SERVER_INSTRUCTIONS — byte counts and previews are already visible
 2. If `active-task.md` has content: call `opengrok_read_memory` to restore context
 3. If `investigation-log.md` has content: call `opengrok_read_memory` to see recent findings
 4. Begin investigation

@@ -29,7 +29,29 @@ For non-VS Code clients:
 
 ## Quick Start
 
-### 1 — Install
+### Option A — Interactive Setup Wizard (Recommended, v7.0+)
+
+Run the guided wizard — it configures your MCP client and stores credentials securely:
+
+```sh
+npx opengrok-mcp setup
+```
+
+Supports **Claude Code CLI**, **VS Code/Copilot CLI**, and **Codex CLI**. The wizard:
+- Prompts for your OpenGrok URL, username, and password
+- Tests the connection
+- Writes the MCP config to the right file for the detected client
+- Stores credentials in the OS keychain (`@napi-rs/keyring`) with AES-256-GCM encrypted file fallback for headless/CI environments
+
+Your password is **never** stored in any MCP client config file.
+
+Check installation health at any time:
+
+```sh
+opengrok-mcp status
+```
+
+### Option B — Legacy Wrapper Scripts
 
 **Linux / macOS (one command):**
 ```sh
@@ -40,8 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/IcyHot09/opengrok-mcp-server/main/s
 [Releases page](https://github.com/IcyHot09/opengrok-mcp-server/releases),
 extract it to a permanent location (e.g., `C:\tools\opengrok-mcp\`).
 
-### 2 — Set up credentials (once, in your terminal)
-
+Then run the setup wizard:
 ```sh
 # Linux / macOS
 ~/.local/bin/opengrok-mcp-wrapper.sh --setup
@@ -50,18 +71,14 @@ extract it to a permanent location (e.g., `C:\tools\opengrok-mcp\`).
 C:\tools\opengrok-mcp\opengrok-mcp-wrapper.cmd --setup
 ```
 
-The `--setup` wizard tests the connection and stores your password in:
-
 | Platform | Primary store | Fallback |
 | :------- | :------------ | :------- |
-| macOS | macOS Keychain | AES-256 encrypted file |
-| Linux (desktop) | GNOME Keyring / KDE Wallet | AES-256 encrypted file |
-| Linux (headless/SSH) | AES-256 encrypted file (machine-id key) | `.env` file |
+| macOS | macOS Keychain | AES-256-GCM encrypted file |
+| Linux (desktop) | GNOME Keyring / KDE Wallet | AES-256-GCM encrypted file |
+| Linux (headless/SSH) | AES-256-GCM encrypted file (machine-id key) | `.env` file |
 | Windows | Windows Credential Manager | DPAPI encrypted file |
 
-Your password is **never** stored in any MCP client config file.
-
-### 3 — Configure your client
+### Configure your client
 
 Point your client at the wrapper (the path printed by `--setup`).
 Snippets for each client are below.
@@ -71,6 +88,8 @@ Snippets for each client are below.
 ## Client Configurations
 
 ### Claude Code
+
+> **Quickest setup:** `npx opengrok-mcp setup` — detects Claude Code CLI and writes the config automatically.
 
 Scope options:
 - **Project** (team-shared, no secrets): `.mcp.json` in project root

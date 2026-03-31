@@ -48,9 +48,10 @@ Structured investigation methodology for large codebases. Use this alongside the
 ## Memory Usage During Investigation
 
 ```
-Session start:
-  1. opengrok_memory_status          — check prior state
-  2. opengrok_read_memory active-task.md  — restore task if exists
+Session start (v7.0+):
+  Memory status is auto-injected into SERVER_INSTRUCTIONS.
+  1. Check {{MEMORY_STATUS}} in SERVER_INSTRUCTIONS — no tool call needed
+  2. opengrok_read_memory active-task.md  — restore task if content exists
 
 During investigation (every 3-5 finds):
   3. opengrok_update_memory investigation-log.md (append):

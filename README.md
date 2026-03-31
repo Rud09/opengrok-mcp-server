@@ -38,11 +38,21 @@
 
 ## How to Install
 
-### 1. From the VS Code Marketplace (Easiest)
+### 1. Interactive Setup Wizard (Recommended for CLI clients)
+
+Run the guided setup wizard — it configures your MCP client and stores credentials securely:
+
+```bash
+npx opengrok-mcp setup
+```
+
+Supports **Claude Code CLI**, **VS Code/Copilot CLI**, and **Codex CLI**. Credentials are stored in the OS keychain (`@napi-rs/keyring`) with an AES-256-GCM encrypted file fallback for headless environments.
+
+### 2. From the VS Code Marketplace (Easiest for VS Code)
 
 Inside VS Code, open the Extensions view (`Ctrl+Shift+X`), search for **"OpenGrok MCP Server"**, and hit Install.
 
-### 2. Global NPM Package
+### 3. Global NPM Package
 
 ```bash
 # Run directly without installing permanently
@@ -52,11 +62,11 @@ npx opengrok-mcp-server
 npm install -g opengrok-mcp-server
 ```
 
-### 3. Via the MCP Registry
+### 4. Via the MCP Registry
 
 We are officially listed in the [Model Context Protocol Registry](https://registry.modelcontextprotocol.io) under `io.github.IcyHot09/opengrok-mcp-server`. Clients with registry integration can locate and install it natively.
 
-### Option 4 — Install pre-built VSIX
+### Option 5 — Install pre-built VSIX
 
 1. Download the latest VSIX file from [GitHub Releases](https://github.com/IcyHot09/opengrok-mcp-server/releases).
 2. Install it in VS Code:
@@ -65,7 +75,7 @@ We are officially listed in the [Model Context Protocol Registry](https://regist
 3. **Updates are automatic** — the extension checks GitHub Releases once per day and offers one-click install.
 
 <details>
-<summary>🛠️ Option 5 — Build from source <em>(For developers)</em></summary>
+<summary>🛠️ Option 6 — Build from source <em>(For developers)</em></summary>
 
 ```bash
 git clone https://github.com/IcyHot09/opengrok-mcp-server.git
@@ -94,6 +104,16 @@ code --install-extension opengrok-mcp-server-*.vsix
    - Locate **OpenGrok** in the list, check the box, and confirm.
 
 > ⚠️ Note that VS Code manages tool authorizations **per workspace**. If you open a different repository, you may need to re-check the OpenGrok box in Copilot.
+
+### CLI Commands (v7.0+)
+
+| Command | Description |
+| :------ | :---------- |
+| `npx opengrok-mcp setup` | Interactive wizard: configures your MCP client and stores credentials securely |
+| `opengrok-mcp status` | Health check: validates connectivity and detects installed MCP clients |
+| `opengrok-mcp --version` | Print version and exit |
+
+`setup` supports Claude Code CLI, VS Code/Copilot CLI, and Codex CLI. Credentials are stored in the OS keychain with an AES-256-GCM encrypted file fallback for headless/CI environments.
 
 ### 🔌 Third-Party Client Support
 
@@ -239,7 +259,7 @@ Access via `env.opengrok.readMemory(filename)` / `env.opengrok.writeMemory(filen
 
 </details>
 
-### Advanced Configuration (v6 — env vars)
+### Advanced Configuration (v7 — env vars)
 
 For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these environment variables:
 
@@ -250,7 +270,7 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | `OPENGROK_BASE_URL` | URL | OpenGrok server base URL (required) |
 | `OPENGROK_USERNAME` | string | Authentication username |
 | `OPENGROK_PASSWORD` | string | Authentication password (or use `OPENGROK_PASSWORD_FILE`) |
-| `OPENGROK_PASSWORD_FILE` | path | Path to AES-256-CBC encrypted credential file |
+| `OPENGROK_PASSWORD_FILE` | path | Path to AES-256-GCM encrypted credential file (auto-upgrades legacy CBC) |
 | `OPENGROK_PASSWORD_KEY` | string | Decryption key for `OPENGROK_PASSWORD_FILE` |
 | `OPENGROK_VERIFY_SSL` | `true` (default) / `false` | Disable TLS verification for self-signed certs |
 | `OPENGROK_TIMEOUT` | integer (seconds, default: `30`) | HTTP request timeout |
@@ -314,15 +334,19 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | :--- | :--- | :--- |
 | `OPENGROK_API_VERSION` | `v1` (default) / `v2` | OpenGrok REST API version (`v2` required for `opengrok_call_graph`) |
 
-#### HTTP Transport (v6.0+)
+#### HTTP Transport (v7.0+)
 
 | Variable | Values | Description |
 | :--- | :--- | :--- |
 | `OPENGROK_HTTP_PORT` | integer | Expose Streamable HTTP transport on this port (in addition to stdio) |
 | `OPENGROK_HTTP_MAX_SESSIONS` | integer (default: `100`) | Max concurrent HTTP sessions before new connections are rejected |
 | `OPENGROK_HTTP_AUTH_TOKEN` | string | Static Bearer token for HTTP endpoint authentication |
-| `OPENGROK_HTTP_CLIENT_ID` | string | OAuth 2.1 `client_credentials` client ID |
-| `OPENGROK_HTTP_CLIENT_SECRET` | string | OAuth 2.1 `client_credentials` client secret |
+| `OPENGROK_JWKS_URI` | URL | JWKS endpoint for JWT validation (OAuth 2.1 resource server mode) |
+| `OPENGROK_RESOURCE_URI` | URL | This server's resource URI, advertised in RFC 9728 metadata |
+| `OPENGROK_AUTH_SERVERS` | comma-separated URLs | Trusted authorization server URIs |
+| `OPENGROK_SCOPE_MAP` | `scope:role,...` | Map JWT scopes to RBAC roles (e.g., `read:readonly,admin:admin`) |
+| `OPENGROK_STRICT_OAUTH` | `true` / `false` | Reject requests without a valid JWT when `OPENGROK_JWKS_URI` is set |
+| `OPENGROK_ALLOWED_ORIGINS` | comma-separated origins | CORS allowlist (replaces wildcard CORS) |
 | `OPENGROK_RBAC_TOKENS` | `tok1:role,tok2:role` | Role-based access tokens: `admin` / `developer` / `readonly` |
 
 #### Logging
@@ -339,7 +363,7 @@ VS Code users can set `opengrok-mcp.codeMode`, `opengrok-mcp.contextBudget`, `op
 
 ---
 
-## HTTP Transport (v6.0+)
+## HTTP Transport (v7.0+)
 
 By default the server communicates over **stdio** (standard MCP). For team deployments, you can also expose a **Streamable HTTP endpoint**:
 
@@ -362,10 +386,10 @@ Configure one of the following:
 | Method | Config |
 | ------ | ------ |
 | **Static Bearer token** | `OPENGROK_HTTP_AUTH_TOKEN=mysecret` |
-| **OAuth 2.1 client credentials** | `OPENGROK_HTTP_CLIENT_ID=app` + `OPENGROK_HTTP_CLIENT_SECRET=secret` |
+| **OAuth 2.1 resource server** | `OPENGROK_JWKS_URI=https://idp.example.com/.well-known/jwks.json` + `OPENGROK_RESOURCE_URI=https://opengrok-mcp.example.com` |
 | **RBAC with named roles** | `OPENGROK_RBAC_TOKENS='alice-token:admin,bot-token:readonly'` |
 
-OAuth 2.1 discovery is available at `/.well-known/oauth-authorization-server`.
+In resource server mode, this server validates JWTs issued by your own IdP — there is no built-in `/token` endpoint. RFC 9728 protected resource metadata is served at `/.well-known/oauth-protected-resource`.
 
 ### RBAC Roles
 
@@ -376,6 +400,31 @@ OAuth 2.1 discovery is available at `/.well-known/oauth-authorization-server`.
 | `readonly` | Search and read tools only; no memory writes, no code execution |
 
 > **Fail-safe**: unknown or missing tokens default to `readonly`, not `admin`.
+
+---
+
+## Security (v7.0+)
+
+v7.0 includes a comprehensive security audit with the following hardening:
+
+| Area | Protection |
+| ---- | ---------- |
+| **SSRF** | DNS rebinding detection + IPv6-mapped address blocking in `buildSafeUrl` |
+| **Path traversal** | NFC normalization + bidirectional Unicode character blocking |
+| **HTML injection** | `he.decode` on all parser text nodes before display |
+| **Prompt injection** | `escapeMarkdownField` + `fenceCode` in all formatters |
+| **Token comparison** | `crypto.timingSafeEqual` for all Bearer token comparisons |
+| **CORS** | Allowlist via `OPENGROK_ALLOWED_ORIGINS` (no wildcard in production) |
+| **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, CSP on HTTP responses |
+| **Credential encryption** | AES-256-GCM (migrated from CBC; auto-upgrades existing files) |
+| **Rate limiting** | Integer-based token bucket (eliminates float drift) |
+| **ReDoS** | `minimatch` for glob patterns |
+| **Audit logs** | Injection-escaped structured audit entries |
+
+> **⚠️ v7.0.0 Breaking Changes**
+> - `OPENGROK_HTTP_CLIENT_ID` and `OPENGROK_HTTP_CLIENT_SECRET` removed. Migrate to `OPENGROK_JWKS_URI` + `OPENGROK_RESOURCE_URI` for OAuth 2.1 (resource server model — bring your own IdP).
+> - Memory bank `migrate()` removed — the legacy 6-file layout is no longer supported. The 2-file layout (`active-task.md` + `investigation-log.md`) has been the default since v5.4.
+> - CORS is now allowlist-only when `OPENGROK_ALLOWED_ORIGINS` is set; unauthenticated wildcard CORS is disabled.
 
 ---
 
@@ -414,9 +463,9 @@ npm install
 
 # Code Quality & Tests
 npm run lint           # Strict TypeScript & ESLint validation
-npm test               # Execute the Vitest test suite (919 tests)
+npm test               # Execute the Vitest test suite (1079 tests)
 npm run test:sandbox   # Sandbox integration tests (requires compile first)
-npm run test:coverage  # Coverage report (≥69% threshold)
+npm run test:coverage  # Coverage report (≥89% threshold)
 
 # Packaging
 npm run compile   # Generate the esbuild artifact (includes sandbox-worker.js)

@@ -11,12 +11,13 @@ description: >
 
 Session lifecycle and memory management for multi-turn OpenGrok investigations.
 
-## Session Startup Protocol (4 steps, always)
+## Session Startup Protocol
+
+As of v7.0, memory status is **auto-injected** into the server instructions at startup — you can see byte counts and file previews without calling `opengrok_memory_status` first.
 
 ```
-Step 1: opengrok_memory_status
-  → Check if prior investigation state exists
-  → Review byte counts and previews
+Step 1: Read injected {{MEMORY_STATUS}} in SERVER_INSTRUCTIONS
+  → Memory state (bytes, stub/populated/empty) is already visible
 
 Step 2 (if active-task.md has content):
   opengrok_read_memory { filename: "active-task.md" }
@@ -30,6 +31,8 @@ Step 4: Acknowledge state
   → Tell user: "Resuming investigation: [task]. Last worked on: [last_symbol]"
   → OR: "Starting fresh — no prior investigation state"
 ```
+
+Call `opengrok_memory_status` explicitly only if you need up-to-date byte counts mid-session.
 
 ## Mandatory Write Before Answer
 
