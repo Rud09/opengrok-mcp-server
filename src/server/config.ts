@@ -324,10 +324,10 @@ function loadPassword(envPassword: string, passwordFile: string, passwordKey: st
   return envPassword;
 }
 
-export function loadConfig(): Config {
-  if (_config) return _config;
+export function loadConfig(overrides?: Record<string, string>): Config {
+  if (!overrides && _config) return _config;
 
-  const result = ConfigSchema.safeParse(process.env);
+  const result = ConfigSchema.safeParse({ ...process.env, ...overrides });
   if (!result.success) {
     logger.error("Configuration error:", result.error.format());
     process.exit(1);
@@ -370,14 +370,19 @@ export function loadConfig(): Config {
   }
 
   // Freeze to prevent accidental mutation by consumers
-  _config = Object.freeze({ ...data, OPENGROK_PASSWORD: password });
+  const frozen = Object.freeze({ ...data, OPENGROK_PASSWORD: password });
+
+  // Only cache the singleton when no overrides were supplied
+  if (!overrides) {
+    _config = frozen;
+  }
 
   // Warn (never log password value)
-  if (!_config.OPENGROK_USERNAME) {
+  if (!frozen.OPENGROK_USERNAME) {
     logger.warn("OPENGROK_USERNAME is not set. Authentication may fail.");
   }
 
-  return _config;
+  return frozen;
 }
 
 // Get the config directory, respecting XDG_CONFIG_HOME

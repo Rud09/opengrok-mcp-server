@@ -12,8 +12,32 @@ import { logger } from "./logger.js";
 import { runServer } from "./server.js";
 import { MemoryBank } from "./memory-bank.js";
 import { configureAuditLog, exportAuditLogAsCSV, exportAuditLogAsJSON } from "./audit.js";
+import { retrievePassword } from "./cli/keychain.js";
 
 declare const __VERSION__: string;
+
+/**
+ * Load config and auto-resolve password from OS keychain if not set via env.
+ * The keychain lookup is done before the first loadConfig() call so that the
+ * "username set but no password" validation in loadConfig does not exit early.
+ * Exported for unit testing.
+ */
+export async function resolveConfig(): Promise<ReturnType<typeof loadConfig>> {
+  // Peek at the relevant env vars without going through full loadConfig validation
+  const username = process.env['OPENGROK_USERNAME'] ?? '';
+  const envPassword = process.env['OPENGROK_PASSWORD'] ?? '';
+  const passwordFile = process.env['OPENGROK_PASSWORD_FILE'] ?? '';
+
+  if (username && !envPassword && !passwordFile) {
+    // No password in env — try the OS keychain before calling loadConfig
+    const keychainPassword = retrievePassword(username);
+    if (keychainPassword) {
+      return loadConfig({ OPENGROK_PASSWORD: keychainPassword });
+    }
+  }
+
+  return loadConfig();
+}
 
 /* v8 ignore start -- false branch falls through to main() which is integration-level */
 if (process.argv.includes("--version") || process.argv.includes("-v")) {
@@ -78,7 +102,7 @@ if (firstArg === "setup" || firstArg === "--setup") {
 } else {
   // cmd === 'server' || cmd === undefined || cmd === '--server' → normal MCP server startup
   async function main(): Promise<void> {
-    const config = loadConfig();
+    const config = await resolveConfig();
     const client = new OpenGrokClient(config);
 
     // Configure audit log file if set
