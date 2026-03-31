@@ -118,6 +118,8 @@ async function runJob(
       readMemory:       makeMethod("readMemory"),
       writeMemory:      makeMethod("writeMemory"),
       getFileDiff:      makeMethod("getFileDiff"),
+      elicit:           makeMethod("elicit"),
+      sample:           makeMethod("sample"),
     },
   };
 

@@ -36,6 +36,7 @@ import { logger } from "./logger.js";
 import { auditLog } from "./audit.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { elicitOrFallback, type ElicitSchema } from "./elicitation.js";
 
 // ---------------------------------------------------------------------------
 // Buffer layout constants (must match sandbox-worker.ts)
@@ -273,6 +274,10 @@ export interface SandboxAPI {
   getFileDiff(project: string, path: string, rev1: string, rev2: string): Promise<unknown>;
   readMemory(filename: string): Promise<unknown>;
   writeMemory(filename: string, content: string, mode?: "overwrite" | "append"): Promise<unknown>;
+  elicit(
+    message: string,
+    schema: ElicitSchema
+  ): Promise<{ action: "accept" | "decline" | "cancel"; content?: Record<string, string | number | boolean | string[]> }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -297,7 +302,7 @@ export function createSandboxAPI(
   memoryBank: MemoryBank,
   sandboxOpts: SandboxOpts = {}
 ): SandboxAPI {
-  const { getCompileInfoFn } = sandboxOpts;
+  const { getCompileInfoFn, server, elicitEnabled } = sandboxOpts;
   return {
     async search(query, opts = {}) {
       const { searchType = "full", projects, maxResults = 5, startIndex = 0, fileType } = opts;
@@ -440,6 +445,11 @@ export function createSandboxAPI(
     async writeMemory(filename, content, mode = "overwrite") {
       await memoryBank.write(filename, content, mode);
       return `Written: ${filename}`;
+    },
+
+    async elicit(message, schema) {
+      if (!elicitEnabled || !server) return { action: "cancel" as const };
+      return elicitOrFallback(server, message, schema);
     },
   };
 }

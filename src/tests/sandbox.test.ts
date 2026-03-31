@@ -32,6 +32,8 @@ function makeMockApi(overrides: Partial<SandboxAPI> = {}): SandboxAPI {
     async indexHealth() { return { connected: true, latencyMs: 1, baseUrl: '' }; },
     async readMemory(filename: string) { return `content of ${filename}`; },
     async writeMemory() { return 'written'; },
+    async elicit() { return { action: 'cancel' as const }; },
+    async sample() { return null; },
     ...overrides,
   } as SandboxAPI;
 }
