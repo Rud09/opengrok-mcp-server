@@ -50,8 +50,8 @@ function storeInEncryptedFile(username: string, password: string): void {
   mkdirSync(dir, { recursive: true });
   const key = crypto.randomBytes(32).toString('hex');
   const encrypted = encryptWithGcm(password, key);
-  writeFileSync(join(dir, `cred-${username}.enc`), encrypted, 'utf8');
-  writeFileSync(join(dir, `cred-${username}.key`), key, 'utf8');
+  writeFileSync(join(dir, `cred-${username}.enc`), encrypted, { encoding: 'utf8', mode: 0o600 });
+  writeFileSync(join(dir, `cred-${username}.key`), key, { encoding: 'utf8', mode: 0o600 });
 }
 
 function retrieveFromEncryptedFile(username: string): string | null {

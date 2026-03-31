@@ -22,7 +22,7 @@ declare const __VERSION__: string;
  * "username set but no password" validation in loadConfig does not exit early.
  * Exported for unit testing.
  */
-export async function resolveConfig(): Promise<ReturnType<typeof loadConfig>> {
+export function resolveConfig(): ReturnType<typeof loadConfig> {
   // Peek at the relevant env vars without going through full loadConfig validation
   const username = process.env['OPENGROK_USERNAME'] ?? '';
   const envPassword = process.env['OPENGROK_PASSWORD'] ?? '';
@@ -102,7 +102,7 @@ if (firstArg === "setup" || firstArg === "--setup") {
 } else {
   // cmd === 'server' || cmd === undefined || cmd === '--server' → normal MCP server startup
   async function main(): Promise<void> {
-    const config = await resolveConfig();
+    const config = resolveConfig();
     const client = new OpenGrokClient(config);
 
     // Configure audit log file if set

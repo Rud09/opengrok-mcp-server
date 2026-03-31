@@ -686,6 +686,7 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
                 entry.setPassword(password);
                 log('Credentials stored in OS keychain for server startup.');
             } catch (keychainErr) {
+                log(`Keychain unavailable (${keychainErr}), using encrypted file fallback.`);
                 // Headless Linux / no libsecret: write encrypted file (same format as keychain.ts)
                 try {
                     const xdgConfig = process.env['XDG_CONFIG_HOME'] || path.join(os.homedir(), '.config');
