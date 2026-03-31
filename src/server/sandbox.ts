@@ -36,7 +36,7 @@ import { logger } from "./logger.js";
 import { auditLog } from "./audit.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { elicitOrFallback, type ElicitSchema } from "./elicitation.js";
+import { elicitOrFallback, type ElicitSchema, type ElicitResult } from "./elicitation.js";
 
 // ---------------------------------------------------------------------------
 // Buffer layout constants (must match sandbox-worker.ts)
@@ -277,7 +277,7 @@ export interface SandboxAPI {
   elicit(
     message: string,
     schema: ElicitSchema
-  ): Promise<{ action: "accept" | "decline" | "cancel"; content?: Record<string, string | number | boolean | string[]> }>;
+  ): Promise<ElicitResult>;
 }
 
 // ---------------------------------------------------------------------------
