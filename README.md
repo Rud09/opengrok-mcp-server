@@ -36,56 +36,28 @@
 
 ---
 
-## How to Install
+## Installation
 
-### 1. Interactive Setup Wizard (Recommended for CLI clients)
+### Option 1 — VS Code Extension (Recommended)
 
-Run the guided setup wizard — it configures your MCP client and stores credentials securely:
+Install **OpenGrok MCP** from the VS Code Marketplace, or search "OpenGrok" in the Extensions panel.
 
+The extension provides a visual configuration UI and manages the MCP server process automatically.
+
+### Option 2 — npm / npx
+
+**Global install:**
 ```bash
-npx opengrok-mcp setup
-```
-
-Supports **Claude Code CLI**, **VS Code/Copilot CLI**, and **Codex CLI**. Credentials are stored in the OS keychain (`@napi-rs/keyring`) with an AES-256-GCM encrypted file fallback for headless environments.
-
-### 2. From the VS Code Marketplace (Easiest for VS Code)
-
-Inside VS Code, open the Extensions view (`Ctrl+Shift+X`), search for **"OpenGrok MCP Server"**, and hit Install.
-
-### 3. Global NPM Package
-
-```bash
-# Run directly without installing permanently
-npx opengrok-mcp-server
-
-# Or install it globally on your system
 npm install -g opengrok-mcp-server
+opengrok-mcp setup      # interactive wizard: URL, credentials, MCP client registration
 ```
 
-### 4. Via the MCP Registry
-
-We are officially listed in the [Model Context Protocol Registry](https://registry.modelcontextprotocol.io) under `io.github.IcyHot09/opengrok-mcp-server`. Clients with registry integration can locate and install it natively.
-
-### Option 5 — Install pre-built VSIX
-
-1. Download the latest VSIX file from [GitHub Releases](https://github.com/IcyHot09/opengrok-mcp-server/releases).
-2. Install it in VS Code:
-   - **Open the terminal** in VS Code and run: `code --install-extension opengrok-mcp-server-X.Y.Z.vsix`
-   - **OR** go to the Extensions tab → click the `···` menu → **Install from VSIX…** and select the file.
-3. **Updates are automatic** — the extension checks GitHub Releases once per day and offers one-click install.
-
-<details>
-<summary>🛠️ Option 6 — Build from source <em>(For developers)</em></summary>
-
+**Or run without installing:**
 ```bash
-git clone https://github.com/IcyHot09/opengrok-mcp-server.git
-cd opengrok-mcp-server
-npm install
-npm run vsix          # Creates opengrok-mcp-server-*.vsix
-code --install-extension opengrok-mcp-server-*.vsix
+npx opengrok-mcp-server setup
 ```
 
-</details>
+The wizard stores credentials securely in the OS keychain (macOS Keychain, Windows Credential Manager, Linux libsecret) with an encrypted file fallback for headless Linux.
 
 ---
 
@@ -121,7 +93,7 @@ While tailored for VS Code, the integrated server logic runs perfectly with othe
 
 **Claude Desktop** | **Cursor IDE** | **Windsurf** | **Claude Code** | **Google Antigravity**
 
-> **👉 Refer to [MCP_CLIENTS.md](MCP_CLIENTS.md)** for configuration snippets, terminal wrapper scripts, and advanced daemon setups.
+> **👉 Refer to [MCP_CLIENTS.md](MCP_CLIENTS.md)** for configuration snippets and advanced daemon setups.
 
 ---
 
@@ -230,6 +202,29 @@ Access via `env.opengrok.readMemory(filename)` / `env.opengrok.writeMemory(filen
 
 </details>
 
+### Project Picker Prompt (Elicitation)
+
+When `OPENGROK_ENABLE_ELICITATION=true` and no project is specified in a search, the server
+asks the user to select a project interactively. Requires a client that supports MCP Elicitation:
+
+- **Claude Code** v2.1.76+ ✓
+- **VS Code Copilot** ✓
+
+Enable in the VS Code configuration panel, or set `OPENGROK_ENABLE_ELICITATION=true` in your
+MCP client environment config.
+
+### LLM Sampling
+
+For complex operations (dependency graph summaries, sandbox error explanations), the server
+delegates LLM calls back to the client via MCP Sampling — using the client's model subscription
+without needing separate API keys.
+
+Supported clients:
+- **VS Code Copilot** ✓
+- **Claude Code** — support pending (tracked in [anthropics/claude-code#1785](https://github.com/anthropics/claude-code/issues/1785))
+
+The server gracefully degrades when the client does not support sampling.
+
 ---
 
 ## VS Code Integration
@@ -270,8 +265,8 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | `OPENGROK_BASE_URL` | URL | OpenGrok server base URL (required) |
 | `OPENGROK_USERNAME` | string | Authentication username |
 | `OPENGROK_PASSWORD` | string | Authentication password (or use `OPENGROK_PASSWORD_FILE`) |
-| `OPENGROK_PASSWORD_FILE` | path | Path to AES-256-GCM encrypted credential file (auto-upgrades legacy CBC) |
-| `OPENGROK_PASSWORD_KEY` | string | Decryption key for `OPENGROK_PASSWORD_FILE` |
+| `OPENGROK_PASSWORD_FILE` | path | Path to AES-256-GCM encrypted credential file (auto-upgrades legacy CBC) — deprecated: server reads from OS keychain via resolveConfig() |
+| `OPENGROK_PASSWORD_KEY` | string | Decryption key for `OPENGROK_PASSWORD_FILE` — deprecated: server reads from OS keychain via resolveConfig() |
 | `OPENGROK_VERIFY_SSL` | `true` (default) / `false` | Disable TLS verification for self-signed certs |
 | `OPENGROK_TIMEOUT` | integer (seconds, default: `30`) | HTTP request timeout |
 
@@ -317,7 +312,6 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | Variable | Values | Description |
 | :--- | :--- | :--- |
 | `OPENGROK_AUDIT_LOG_FILE` | path | File path for structured audit log (CSV or JSON) |
-| `OPENGROK_ALLOWED_CLIENT_IDS` | comma-separated | Allowlisted MCP client IDs (enforcement pending SDK support) |
 
 #### MCP Protocol Features
 

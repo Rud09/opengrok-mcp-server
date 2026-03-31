@@ -47,10 +47,10 @@ All three are bundled by esbuild (`esbuild.js`). The build also copies `emscript
 ### MCP Server layer (`src/server/`)
 
 - **`main.ts`** — Entry point. Loads config, constructs `OpenGrokClient` and `MemoryBank`, calls `runServer()`.
-- **`server.ts`** — All 25 tool registrations via `McpServer.registerTool()` (MCP SDK high-level API). Contains `SERVER_INSTRUCTIONS`, `capResponse()`, `sanitizeErrorMessage()`, `registerLegacyTools()`, `registerCodeModeTools()`, and `dispatchTool()`. This is the largest file; tool handlers, MCP Resources, Prompts, Elicitation, and Sampling live here.
+- **`server.ts`** — All 26 tool registrations via `McpServer.registerTool()` (MCP SDK high-level API): 23 in standard mode, 5 in Code Mode (`opengrok_api` + `opengrok_execute` + 3 memory tools). Contains `SERVER_INSTRUCTIONS`, `capResponse()`, `sanitizeErrorMessage()`, `registerLegacyTools()`, `registerCodeModeTools()`, and `dispatchTool()`. This is the largest file; tool handlers, MCP Resources, Prompts, Elicitation, and Sampling live here.
 - **`config.ts`** — `loadConfig()` parses env vars through a Zod schema. Supports encrypted credential files (AES-256-GCM; auto-upgrades legacy AES-256-CBC). `BUDGET_LIMITS` defines the three context budget tiers. Config is singleton and frozen.
 - **`client.ts`** — `OpenGrokClient`: HTTP fetches via undici, TTL cache, token-bucket rate limiter, `p-retry` retry logic, SSRF protection (`buildSafeUrl`), path-traversal validation (`assertSafePath`).
-- **`models.ts`** — Zod input schemas for all 25 tools + structured output schemas (`IndexHealthOutput`, `BlameOutput`, `WhatChangedOutput`, `DependencyMapOutput`, etc.). `RESPONSE_FORMAT` is a shared field added to every tool input schema.
+- **`models.ts`** — Zod input schemas for all 26 tools + structured output schemas (`IndexHealthOutput`, `BlameOutput`, `WhatChangedOutput`, `DependencyMapOutput`, etc.). `RESPONSE_FORMAT` is a shared field added to every tool input schema.
 - **`formatters.ts`** — Per-tool response formatters producing markdown/json/tsv/yaml/text. `selectFormat()` resolves the active format from args vs. env override.
 - **`parsers.ts`** — HTML parsers for OpenGrok web responses (search results, directory listings, annotations, symbols, history).
 - **`memory-bank.ts`** — `MemoryBank`: Living Document system. Two-file allow-list (`active-task.md` ≤ 4 KB + `investigation-log.md` ≤ 32 KB). `getStatusLine()` auto-injected into `SERVER_INSTRUCTIONS` as `{{MEMORY_STATUS}}`. No legacy migration support. Delta encoding, richness-scored trimming, compressed initial read, `getFileReference()` for Files API. Stub detection via sentinel comment. Used by the LLM to persist investigation state across turns.
@@ -62,7 +62,7 @@ All three are bundled by esbuild (`esbuild.js`). The build also copies `emscript
 - **`logger.ts`** — Structured logger (stderr-only, JSON in production).
 - **`local/compile-info.ts`** — Parses `compile_commands.json` for C/C++ compiler flags and include paths.
 - **`worker-pool.ts`** — `SandboxWorkerPool`: keeps up to 2 idle QuickJS workers warm. `acquire()`/`release()`/`drain()` lifecycle with `isAlive` guard.
-- **`audit.ts`** — `auditLog()`: structured audit logging to stderr + optional `OPENGROK_AUDIT_LOG_FILE` (CSV/JSON). All 25 tool invocations emit audit events.
+- **`audit.ts`** — `auditLog()`: structured audit logging to stderr + optional `OPENGROK_AUDIT_LOG_FILE` (CSV/JSON). All 26 tool invocations emit audit events.
 - **`elicitation.ts`** — MCP Elicitation wrapper: `server.elicitInput()` for project-picker form with graceful fallback for unsupported clients.
 - **`sampling.ts`** — `sampleOrNull()`: production MCP Sampling with retry/backoff/10 s timeout/model preference. Used for error explanation and graph summarization.
 - **`task-registry.ts`** — In-memory async task store for `opengrok_execute`. `createTask()`/`completeTask()`/`failTask()`/`getTask()` with 30-min TTL for running tasks.
@@ -81,8 +81,8 @@ Manages credentials (VS Code SecretStorage + encrypted temp files), registers th
 
 ### Operational modes
 
-- **Standard mode** (default): 25 tools, all prefixed `opengrok_`.
-- **Code Mode** (`OPENGROK_CODE_MODE=true`): 2 tools only — `opengrok_api` (returns API spec) and `opengrok_execute` (runs JS in QuickJS WASM sandbox). Significant token savings for large multi-language codebases. Memory tools (`opengrok_read_memory`, `opengrok_update_memory`, `opengrok_memory_status`) available in both modes.
+- **Standard mode** (default): 23 tools, all prefixed `opengrok_` (no memory tools).
+- **Code Mode** (`OPENGROK_CODE_MODE=true`): 5 tools — `opengrok_api` (returns API spec), `opengrok_execute` (runs JS in QuickJS WASM sandbox), plus 3 memory tools (`opengrok_read_memory`, `opengrok_update_memory`, `opengrok_memory_status`). Significant token savings for large multi-language codebases.
 
 ### Key env vars
 
