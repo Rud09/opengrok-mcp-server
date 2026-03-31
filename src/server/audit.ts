@@ -33,6 +33,18 @@ export interface AuditEvent {
 let auditLogFile: string | null = null;
 
 /**
+ * Escape special characters in a log field to prevent log injection.
+ * Escapes backslashes, newlines, carriage returns, and double-quotes.
+ */
+function escapeLogField(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/"/g, '\\"');
+}
+
+/**
  * Configure the audit log file path for compliance export.
  * When set, audit events are appended to this file in addition to stderr.
  */
@@ -55,9 +67,9 @@ export function auditLog(event: AuditEvent): void {
     audit: true,
     type: event.type,
   };
-  if (event.tool !== undefined) entry.tool = event.tool;
-  if (event.project !== undefined) entry.project = event.project;
-  if (event.detail !== undefined) entry.detail = String(event.detail).slice(0, 200);
+  if (event.tool !== undefined) entry.tool = escapeLogField(String(event.tool).slice(0, 200));
+  if (event.project !== undefined) entry.project = escapeLogField(String(event.project).slice(0, 200));
+  if (event.detail !== undefined) entry.detail = escapeLogField(String(event.detail).slice(0, 200));
 
   const entryStr = JSON.stringify(entry);
   process.stderr.write(entryStr + "\n");

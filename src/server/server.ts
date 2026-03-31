@@ -395,7 +395,15 @@ async function tryLocalRead(
   }
 
   for (const root of roots) {
-    const candidate = path.join(root, normalized);
+    // Canonicalize root to resolve any symlinks, preventing symlink traversal escapes
+    let canonicalRoot: string;
+    try {
+      canonicalRoot = await fsp.realpath(root);
+    } catch {
+      canonicalRoot = root; // root doesn't exist yet, use as-is
+    }
+
+    const candidate = path.join(canonicalRoot, normalized);
     let resolved: string;
     try {
       resolved = await fsp.realpath(candidate);
@@ -403,7 +411,7 @@ async function tryLocalRead(
       continue;
     }
 
-    if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+    if (!resolved.startsWith(canonicalRoot + path.sep) && resolved !== canonicalRoot) {
       continue;
     }
 

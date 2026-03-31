@@ -163,6 +163,13 @@ export class MemoryBank {
         existing = "";
       }
 
+      // Pre-reject: if the combined size far exceeds the limit, trimming cannot help
+      const existingBytes = Buffer.byteLength(existing, "utf8");
+      const newBytes = Buffer.byteLength(content, "utf8");
+      if (existingBytes + newBytes > maxBytes * 1.5) {
+        throw new Error(`MemoryBank: write rejected — content would exceed max size for "${filename}"`);
+      }
+
       if (mode === "append" && filename === "investigation-log.md") {
         const now = new Date();
         const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
