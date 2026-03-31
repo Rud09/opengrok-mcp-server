@@ -1867,11 +1867,39 @@ function registerCodeModeTools(
       inputSchema: { _ : z.string().optional().describe("(no input required)") },
       annotations: CODE_MODE_API_ANNOTATIONS,
     },
-    () => {
+    async () => {
       auditLog({ type: "tool_invoke", tool: "opengrok_api" });
       try {
+        let projectHint = "";
+        if (config.OPENGROK_ENABLE_ELICITATION && !config.OPENGROK_DEFAULT_PROJECT?.trim()) {
+          const projects = await client.listProjects();
+          if (projects.length > 0) {
+            const projectNames = projects.map((p) => p.name).slice(0, 20);
+            const result = await elicitOrFallback(
+              server,
+              "Which project should I work in this session?",
+              {
+                type: "object",
+                properties: {
+                  project: {
+                    type: "string",
+                    enum: projectNames,
+                    description: "Default project for this session",
+                  },
+                },
+                required: ["project"],
+              }
+            );
+            if (result.action === "accept" && result.content?.project) {
+              projectHint =
+                `\n\n**Working project: ${result.content.project}**` +
+                ` — use this project in all env.opengrok calls unless the user specifies otherwise.`;
+            }
+          }
+        }
         const specText = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
-        return { content: [{ type: "text", text: capResponse(specText) }] };
+        const fullText = projectHint ? `${projectHint}\n\n${specText}` : specText;
+        return { content: [{ type: "text", text: capResponse(fullText) }] };
       } catch (err) {
         return makeToolError("opengrok_api", err);
       }

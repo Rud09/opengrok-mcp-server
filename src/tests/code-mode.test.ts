@@ -26,7 +26,13 @@ vi.mock('../server/sandbox.js', async (importOriginal) => {
   };
 });
 
+vi.mock('../server/elicitation.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../server/elicitation.js')>();
+  return { ...original, elicitOrFallback: vi.fn().mockResolvedValue({ action: 'cancel' }) };
+});
+
 import { executeInSandbox } from '../server/sandbox.js';
+import { elicitOrFallback as mockedElicit } from '../server/elicitation.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -364,5 +370,99 @@ describe('API_SPEC — return_rules and memory filenames', () => {
     const yaml = await import('js-yaml');
     const specText = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
     expect(specText).toContain('return_rules');
+  });
+});
+
+describe('Code Mode — opengrok_api project picker', () => {
+  let tmpDir: string;
+  let bank: MemoryBank;
+
+  beforeEach(async () => {
+    tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'opengrok-cm-picker-'));
+    bank = new MemoryBank(tmpDir);
+    await bank.ensureDir();
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('injects project hint when elicitation is enabled and user accepts', async () => {
+    const ogClient = makeMockClient();
+    ogClient.listProjects.mockResolvedValueOnce([
+      { name: 'proj-a' }, { name: 'proj-b' }, { name: 'proj-c' },
+    ]);
+    vi.mocked(mockedElicit).mockResolvedValueOnce({
+      action: 'accept',
+      content: { project: 'proj-b' },
+    });
+
+    const config = makeConfig({
+      OPENGROK_DEFAULT_PROJECT: '',
+      OPENGROK_ENABLE_ELICITATION: true,
+    });
+    const server = createServer(ogClient as never, config, bank);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test', version: '1.0' });
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({ name: 'opengrok_api', arguments: {} });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain('Working project: proj-b');
+  });
+
+  it('skips picker when OPENGROK_DEFAULT_PROJECT is set', async () => {
+    const ogClient = makeMockClient();
+    const config = makeConfig({
+      OPENGROK_DEFAULT_PROJECT: 'release-2.x',
+      OPENGROK_ENABLE_ELICITATION: true,
+    });
+    const server = createServer(ogClient as never, config, bank);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test', version: '1.0' });
+    await client.connect(clientTransport);
+
+    await client.callTool({ name: 'opengrok_api', arguments: {} });
+    expect(mockedElicit).not.toHaveBeenCalled();
+  });
+
+  it('skips picker when OPENGROK_ENABLE_ELICITATION is false', async () => {
+    const ogClient = makeMockClient();
+    const config = makeConfig({
+      OPENGROK_DEFAULT_PROJECT: '',
+      OPENGROK_ENABLE_ELICITATION: false,
+    });
+    const server = createServer(ogClient as never, config, bank);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test', version: '1.0' });
+    await client.connect(clientTransport);
+
+    await client.callTool({ name: 'opengrok_api', arguments: {} });
+    expect(mockedElicit).not.toHaveBeenCalled();
+  });
+
+  it('returns spec without hint when user cancels the picker', async () => {
+    const ogClient = makeMockClient();
+    ogClient.listProjects.mockResolvedValueOnce([{ name: 'proj-a' }]);
+    vi.mocked(mockedElicit).mockResolvedValueOnce({ action: 'cancel' });
+
+    const config = makeConfig({
+      OPENGROK_DEFAULT_PROJECT: '',
+      OPENGROK_ENABLE_ELICITATION: true,
+    });
+    const server = createServer(ogClient as never, config, bank);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test', version: '1.0' });
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({ name: 'opengrok_api', arguments: {} });
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).not.toContain('Working project:');
+    expect(text.length).toBeGreaterThan(100);
   });
 });
