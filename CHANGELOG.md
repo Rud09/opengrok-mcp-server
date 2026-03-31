@@ -57,6 +57,14 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.0.2] - 2026-04-01
+
+### 🐛 Bug Fix — Server startup crash when `@napi-rs/keyring` is absent
+
+- **`keychain.ts`**: Replaced the static top-level `import { Entry } from '@napi-rs/keyring'` with a lazy `require()` inside a private `getKeyringEntry()` helper. The module is now resolved at call-time, not at bundle load. If it is missing (e.g. when the MCP server binary runs outside the VS Code extension host without the native addon installed), the helper returns `null` and all three functions (`storeCredentials`, `retrievePassword`, `deleteCredentials`) fall through to the AES-256-GCM encrypted-file fallback. The server now starts successfully in all environments.
+
+---
+
 ## [9.0.1] - 2026-03-31
 
 ### 📖 Documentation & Packaging

@@ -1,4 +1,3 @@
-import { Entry } from '@napi-rs/keyring';
 import * as crypto from 'crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
@@ -6,33 +5,46 @@ import { getConfigDirectory } from '../config.js';
 
 const SERVICE = 'opengrok-mcp';
 
+function getKeyringEntry(username: string): { setPassword(p: string): void; getPassword(): string | null; deletePassword(): void } | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Entry } = require('@napi-rs/keyring') as { Entry: new (service: string, account: string) => { setPassword(p: string): void; getPassword(): string | null; deletePassword(): void } };
+    return new Entry(SERVICE, username);
+  } catch {
+    return null;
+  }
+}
+
 export function storeCredentials(
   _url: string,
   username: string,
   password: string
 ): void {
-  try {
-    const entry = new Entry(SERVICE, username);
-    entry.setPassword(password);
-  } catch {
-    storeInEncryptedFile(username, password);
+  const entry = getKeyringEntry(username);
+  if (entry) {
+    try {
+      entry.setPassword(password);
+      return;
+    } catch { /* fall through to file fallback */ }
   }
+  storeInEncryptedFile(username, password);
 }
 
 export function retrievePassword(username: string): string | null {
-  try {
-    const entry = new Entry(SERVICE, username);
-    return entry.getPassword();
-  } catch {
-    return retrieveFromEncryptedFile(username);
+  const entry = getKeyringEntry(username);
+  if (entry) {
+    try {
+      return entry.getPassword();
+    } catch { /* fall through to file fallback */ }
   }
+  return retrieveFromEncryptedFile(username);
 }
 
 export function deleteCredentials(username: string): void {
-  try {
-    const entry = new Entry(SERVICE, username);
-    entry.deletePassword();
-  } catch { /* not stored in keyring */ }
+  const entry = getKeyringEntry(username);
+  if (entry) {
+    try { entry.deletePassword(); } catch { /* not stored in keyring */ }
+  }
   // Also clear encrypted files
   const dir = getConfigDirectory();
   const encPath = join(dir, `cred-${username}.enc`);

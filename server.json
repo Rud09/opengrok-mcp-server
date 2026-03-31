@@ -8,12 +8,12 @@
     "url": "https://github.com/IcyHot09/opengrok-mcp-server",
     "source": "github"
   },
-  "version": "9.0.1",
+  "version": "9.0.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "opengrok-mcp-server",
-      "version": "9.0.1",
+      "version": "9.0.2",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -71,7 +71,11 @@
           "isRequired": false,
           "isSecret": false,
           "default": "minimal",
-          "choices": ["minimal", "standard", "generous"]
+          "choices": [
+            "minimal",
+            "standard",
+            "generous"
+          ]
         },
         {
           "name": "OPENGROK_ENABLE_ELICITATION",
