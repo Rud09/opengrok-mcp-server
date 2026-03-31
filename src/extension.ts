@@ -1045,8 +1045,8 @@ async function handleSaveConfiguration(
     try {
         const { Entry } = await import('@napi-rs/keyring');
         new Entry('opengrok-mcp', username).setPassword(finalPassword);
-    } catch {
-        // headless fallback handled separately
+    } catch (keychainErr) {
+        log(`Warning: OS keychain unavailable (${keychainErr}). Server will rely on env OPENGROK_PASSWORD or encrypted file fallback.`);
     }
 
     // Store password BEFORE config updates so credentials are never lost if a

@@ -159,13 +159,6 @@
         .btn-secondary:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground)); }
         .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 
-        .btn-ghost {
-            background: transparent;
-            color: var(--vscode-descriptionForeground);
-            border: 1px solid var(--vscode-input-border, transparent);
-            padding: 5px 8px;
-        }
-        .btn-ghost:hover:not(:disabled) { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); }
 
         /* Status bar */
         #statusBar { font-size: 11px; margin-top: 8px; min-height: 16px; }
@@ -434,20 +427,7 @@
             }
         }
 
-        function clearForm() {
-            document.getElementById('baseUrl').value = '';
-            document.getElementById('username').value = '';
-            document.getElementById('password').value = '';
-            document.getElementById('proxy').value = '';
-            document.getElementById('defaultProject').value = '';
-            document.getElementById('verifySsl').checked = true;
-            document.getElementById('contextBudget').value = 'minimal';
-            document.getElementById('responseFormatOverride').value = '';
-            document.getElementById('apiVersion').value = 'v1';
-            document.getElementById('enableElicitation').checked = false;
-        }
-
-        function setLoading(btnId, isLoading, label, iconSvg) {
+function setLoading(btnId, isLoading, label, iconSvg) {
             const btn = document.getElementById(btnId);
             btn.disabled = isLoading;
             if (isLoading) {
