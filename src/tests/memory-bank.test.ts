@@ -296,6 +296,103 @@ describe('MemoryBank readCompressed', () => {
 });
 
 // ---------------------------------------------------------------------------
+// write — pre-reject throw when combined content far exceeds limit (line 168)
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank.write — pre-reject when content far exceeds limit', () => {
+  it('throws when append content would cause combined size to far exceed limit', async () => {
+    // Write a large existing log (~30KB) then try to append another ~30KB
+    // Combined ~60KB > 32768 * 1.5 = 49152 → pre-reject threshold
+    const existing = '## Entry 1\n' + 'x'.repeat(30000);
+    await bank.write('investigation-log.md', existing);
+
+    const hugeAppend = '## Entry 2\n' + 'y'.repeat(30000);
+    // Should throw because existingBytes + newBytes > maxBytes * 1.5
+    await expect(bank.write('investigation-log.md', hugeAppend, 'append')).rejects.toThrow(
+      'content would exceed max size'
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// write — writeFile error catch (lines 201-203)
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank.write — writeFile error', () => {
+  it('throws MemoryBank error when directory is read-only', async () => {
+    const roDir = path.join(tmpDir, 'readonly-bank');
+    await fsp.mkdir(roDir, { recursive: true });
+    await fsp.chmod(roDir, 0o555); // read-only dir
+    const roBank = new MemoryBank(roDir);
+
+    try {
+      await expect(roBank.write('active-task.md', 'hello')).rejects.toThrow('Failed to write memory bank file');
+    } finally {
+      await fsp.chmod(roDir, 0o755); // restore for cleanup
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trimLogFromTop — last-resort byte truncate (lines 292-298)
+// When even the 2 most recent entries exceed maxBytes, byte-truncate them.
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank trimLogFromTop — last resort truncation', () => {
+  it('byte-truncates when 2 recent entries still exceed limit', async () => {
+    // Create exactly 2 sections each ~20KB → total ~40KB > 32768 limit
+    const section1 = `## 2026-01-01 10:00: Entry 1\n${'a'.repeat(20000)}`;
+    const section2 = `## 2026-01-02 10:00: Entry 2\n${'b'.repeat(20000)}`;
+    const content = section1 + '\n' + section2;
+    await bank.write('investigation-log.md', content);
+    const result = await fsp.readFile(path.join(tmpDir, 'investigation-log.md'), 'utf8');
+    // Should be trimmed to <= 32768 bytes
+    expect(Buffer.byteLength(result, 'utf8')).toBeLessThanOrEqual(32768 + 200);
+    // The trim note should appear
+    expect(result).toContain('Older entries trimmed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getStatusLine — age > 60 minutes (line 331) and catch block (line 344)
+// ---------------------------------------------------------------------------
+
+describe('MemoryBank.getStatusLine — age and error paths', () => {
+  it('formats age in hours when file is older than 60 minutes', async () => {
+    await bank.write('active-task.md', 'task: test task');
+    // Backdate the file modification time by 2 hours
+    const filePath = path.join(tmpDir, 'active-task.md');
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await fsp.utimes(filePath, twoHoursAgo, twoHoursAgo);
+
+    const status = await bank.getStatusLine();
+    // Should contain "2h ago" or similar
+    expect(status).toMatch(/\d+h ago/);
+  });
+
+  it('handles unreadable file in getStatusLine without throwing', async () => {
+    // Write a real file first so it appears in the loop
+    const filePath = path.join(tmpDir, 'active-task.md');
+    await fsp.writeFile(filePath, 'task: something');
+    // Remove read permissions to trigger the catch block
+    await fsp.chmod(filePath, 0o000);
+
+    let status: string;
+    try {
+      status = await bank.getStatusLine();
+      // If we can run as root, the chmod may not prevent reads; just verify no throw
+      expect(typeof status).toBe('string');
+    } catch (e) {
+      // Should never throw even with unreadable files
+      expect(e).toBeUndefined();
+    } finally {
+      // Restore permissions for cleanup
+      await fsp.chmod(filePath, 0o644);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // FileReferenceCache
 // ---------------------------------------------------------------------------
 

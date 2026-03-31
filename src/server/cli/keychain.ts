@@ -6,20 +6,20 @@ import { getConfigDirectory } from '../config.js';
 
 const SERVICE = 'opengrok-mcp';
 
-export async function storeCredentials(
+export function storeCredentials(
   _url: string,
   username: string,
   password: string
-): Promise<void> {
+): void {
   try {
     const entry = new Entry(SERVICE, username);
     entry.setPassword(password);
   } catch {
-    await storeInEncryptedFile(username, password);
+    storeInEncryptedFile(username, password);
   }
 }
 
-export async function retrievePassword(username: string): Promise<string | null> {
+export function retrievePassword(username: string): string | null {
   try {
     const entry = new Entry(SERVICE, username);
     return entry.getPassword();
@@ -28,7 +28,7 @@ export async function retrievePassword(username: string): Promise<string | null>
   }
 }
 
-export async function deleteCredentials(username: string): Promise<void> {
+export function deleteCredentials(username: string): void {
   try {
     const entry = new Entry(SERVICE, username);
     entry.deletePassword();
@@ -45,7 +45,7 @@ export async function deleteCredentials(username: string): Promise<void> {
   }
 }
 
-async function storeInEncryptedFile(username: string, password: string): Promise<void> {
+function storeInEncryptedFile(username: string, password: string): void {
   const dir = getConfigDirectory();
   mkdirSync(dir, { recursive: true });
   const key = crypto.randomBytes(32).toString('hex');
@@ -54,7 +54,7 @@ async function storeInEncryptedFile(username: string, password: string): Promise
   writeFileSync(join(dir, `cred-${username}.key`), key, 'utf8');
 }
 
-async function retrieveFromEncryptedFile(username: string): Promise<string | null> {
+function retrieveFromEncryptedFile(username: string): string | null {
   const dir = getConfigDirectory();
   const encPath = join(dir, `cred-${username}.enc`);
   const keyPath = join(dir, `cred-${username}.key`);

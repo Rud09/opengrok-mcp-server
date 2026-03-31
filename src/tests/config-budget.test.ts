@@ -112,4 +112,39 @@ describe('loadConfig', () => {
     expect(threw || exitSpy.mock.calls.length > 0).toBe(true);
     exitSpy.mockRestore();
   });
+
+  it('exits when OPENGROK_USERNAME is set but password is empty', () => {
+    process.env.OPENGROK_USERNAME = 'admin';
+    delete process.env.OPENGROK_PASSWORD;
+    delete process.env.OPENGROK_PASSWORD_FILE;
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: any) => {
+      throw new Error('process.exit');
+    });
+    expect(() => loadConfig()).toThrow('process.exit');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    delete process.env.OPENGROK_USERNAME;
+  });
+
+  it('exits when HTTP_PROXY has an invalid scheme (ftp)', () => {
+    process.env.HTTP_PROXY = 'ftp://proxy.example.com:8080';
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: any) => {
+      throw new Error('process.exit');
+    });
+    expect(() => loadConfig()).toThrow('process.exit');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    delete process.env.HTTP_PROXY;
+  });
+
+  it('exits when HTTPS_PROXY is not a valid URL', () => {
+    process.env.HTTPS_PROXY = 'not-a-url';
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: any) => {
+      throw new Error('process.exit');
+    });
+    expect(() => loadConfig()).toThrow('process.exit');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    delete process.env.HTTPS_PROXY;
+  });
 });

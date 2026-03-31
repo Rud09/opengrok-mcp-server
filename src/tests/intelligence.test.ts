@@ -68,6 +68,19 @@ describe('buildFileOverview', () => {
     expect(result.imports).toContain('vector');
   });
 
+  it('extracts JS/TS imports (non-C++ generic path) from file header', async () => {
+    const client = makeClient({
+      getFileContent: vi.fn().mockResolvedValue({
+        project: 'proj', path: 'index.ts',
+        content: "import { foo } from './foo';\nimport 'bar';\nconst x = require './baz';",
+        lineCount: 3, sizeBytes: 70, startLine: 1,
+      }),
+    });
+    const result = await buildFileOverview(client, 'proj', 'index.ts');
+    expect(result.imports).toContain('./foo');
+    expect(result.imports).toContain('bar');
+  });
+
   it('makes parallel API calls (symbols + content + history)', async () => {
     const client = makeClient();
     await buildFileOverview(client, 'proj', 'file.cpp');
@@ -192,5 +205,64 @@ describe('buildCallChain', () => {
     expect(result.callers.length).toBeGreaterThan(0);
     expect(result.callers[0].path).toBe('src/main.cpp');
     expect(result.callers[0].project).toBe('myproject');
+  });
+
+  it('recursively follows callers when depth > 1 and callerSym is found (covers lines 163-171)', async () => {
+    // Set up: first search finds 'init' calling 'crashHandler'
+    // 'init' is resolved to symbol 'main' via getFileSymbols
+    // depth=2 means it will recurse into traceCallers for 'main'
+    let searchCallCount = 0;
+    const client = makeClient({
+      search: vi.fn().mockImplementation((_sym: string) => {
+        searchCallCount++;
+        if (searchCallCount === 1) {
+          // First call: refs for the original symbol
+          return Promise.resolve({
+            query: 'doWork', searchType: 'refs', totalCount: 1, timeMs: 1,
+            results: [{
+              project: 'proj', path: 'src/init.cpp',
+              matches: [{ lineNumber: 5, lineContent: 'doWork()' }],
+            }],
+            startIndex: 0, endIndex: 1, hasMore: false,
+          });
+        }
+        // Subsequent calls: no more refs (stop recursion)
+        return Promise.resolve({
+          query: 'init', searchType: 'refs', totalCount: 0, timeMs: 1,
+          results: [],
+          startIndex: 0, endIndex: 0, hasMore: false,
+        });
+      }),
+      getFileSymbols: vi.fn().mockResolvedValue({
+        project: 'proj', path: 'src/init.cpp',
+        symbols: [
+          { symbol: 'init', type: 'function', line: 1, lineStart: 1, lineEnd: 20, signature: '()', namespace: null },
+        ],
+      }),
+    });
+    const result = await buildCallChain(client, 'doWork', 'callers', 2);
+    // Should have found callers and recursed (depth > 1 path covered)
+    expect(result.callers.length).toBeGreaterThan(0);
+  });
+
+  it('getEnclosingFunction returns null when getFileSymbols throws (coverage for line 194)', async () => {
+    // When refs are found but getFileSymbols throws for the caller's file,
+    // the node should still be added (using path:line as fallback symbol)
+    const client = makeClient({
+      search: vi.fn().mockResolvedValue({
+        query: 'myFn', searchType: 'refs', totalCount: 1, timeMs: 1,
+        results: [{
+          project: 'proj',
+          path: 'src/caller.ts',
+          matches: [{ lineNumber: 10, lineContent: 'myFn()' }],
+        }],
+        startIndex: 0, endIndex: 1, hasMore: false,
+      }),
+      getFileSymbols: vi.fn().mockRejectedValue(new Error('symbols fetch failed')),
+    });
+    const result = await buildCallChain(client, 'myFn', 'callers', 1);
+    // Node created with fallback symbol (path:line) since getEnclosingFunction returned null
+    expect(result.callers.length).toBeGreaterThan(0);
+    expect(result.callers[0].symbol).toContain('src/caller.ts');
   });
 });

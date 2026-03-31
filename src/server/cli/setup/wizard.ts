@@ -48,7 +48,7 @@ export async function runSetup(): Promise<void> {
 
   // Store credentials in OS keychain
   if (String(username) && password) {
-    await storeCredentials(String(url), String(username), password);
+    storeCredentials(String(url), String(username), password);
     p.log.success('Credentials stored in OS keychain');
   }
 
