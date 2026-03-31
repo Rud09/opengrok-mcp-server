@@ -17,7 +17,7 @@ import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
 import type { Config } from "./config.js";
-import { parsePerToolLimits, parseAllowedClientIds, getConfigDirectory, checkCredentialAge, loadConfig } from "./config.js";
+import { parsePerToolLimits, getConfigDirectory, checkCredentialAge, loadConfig } from "./config.js";
 import {
   capSearchResultsToBytes,
   formatAnnotate,
@@ -1619,6 +1619,18 @@ export function createServer(
     { instructions }
   );
 
+  // Prompt caching hints — the MCP SDK (current version) does not expose cache_control
+  // breakpoints at the server level. Claude Code caches the system prompt and tool schemas
+  // automatically for stdio clients. For HTTP clients (Cursor, Windsurf, Zed, Continue),
+  // configure cache_control breakpoints at the transport/proxy layer if needed.
+  if (config.OPENGROK_ENABLE_CACHE_HINTS) {
+    logger.info(
+      "OPENGROK_ENABLE_CACHE_HINTS=true: prompt caching active. " +
+      "Claude Code handles caching automatically. For other clients, " +
+      "configure cache_control breakpoints at the transport or proxy layer."
+    );
+  }
+
   const local = buildLocalLayer(config);
 
   // Initialize per-tool rate limiter
@@ -3176,14 +3188,6 @@ export async function runServer(
     auditLog({ type: "config_load", detail: credentialAgeWarning });
   }
 
-  // Warn when OPENGROK_ALLOWED_CLIENT_IDS is configured but not yet enforced
-  if (parseAllowedClientIds(config.OPENGROK_ALLOWED_CLIENT_IDS).length > 0) {
-    logger.warn(
-      "OPENGROK_ALLOWED_CLIENT_IDS is configured but enforcement is pending SDK client-context support. " +
-      "Requests are NOT currently filtered by client ID."
-    );
-  }
-
   // Task 4.9: Monitor config changes and connectivity for tool list changes
   setupNotificationHandlers(server, client, config);
 
@@ -3210,22 +3214,6 @@ function sanitizeErrorMessage(message: string): string {
     "[path]"
   );
   return sanitized;
-}
-
-/**
- * Validate that the request originates from an allowed client (if configured).
- * Task 4.13: Request Origin Validation
- * If OPENGROK_ALLOWED_CLIENT_IDS is set, throws if clientId is not in the list.
- * @unused - Reserved for future middleware integration in SDK versions with client context support
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function validateOrigin(clientId: string | undefined, config: Config): void {
-  const allowed = parseAllowedClientIds(config.OPENGROK_ALLOWED_CLIENT_IDS);
-  if (!allowed || allowed.length === 0) return; // no restriction
-  if (!clientId || !allowed.includes(clientId)) {
-    auditLog({ type: "auth_used", detail: `unauthorized client: ${clientId || "unknown"}` });
-    throw new Error("Unauthorized client");
-  }
 }
 
 /**

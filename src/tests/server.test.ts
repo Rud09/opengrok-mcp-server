@@ -1,11 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   _capResponse as capResponse,
   _sanitizeErrorMessage as sanitizeErrorMessage,
   _resolveFileFromIndex as resolveFileFromIndex,
   _SERVER_INSTRUCTIONS,
+  createServer,
 } from '../server/server.js';
 import type { CompileInfo } from '../server/local/compile-info.js';
+import type { Config } from '../server/config.js';
+import { logger } from '../server/logger.js';
 
 // ---------------------------------------------------------------------------
 // capResponse
@@ -184,5 +187,126 @@ describe('SERVER_INSTRUCTIONS', () => {
   it('references opengrok_update_memory for session memory guidance', () => {
     // Template now uses opengrok_update_memory in the MEMORY section (reduced token budget)
     expect(_SERVER_INSTRUCTIONS).toContain('opengrok_update_memory');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPENGROK_ENABLE_CACHE_HINTS
+// ---------------------------------------------------------------------------
+
+describe('createServer with OPENGROK_ENABLE_CACHE_HINTS', () => {
+  let logInfoSpy: any;
+
+  beforeEach(() => {
+    logInfoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logInfoSpy.mockRestore();
+  });
+
+  it('logs info message when OPENGROK_ENABLE_CACHE_HINTS=true', () => {
+    const mockClient = {
+      search: vi.fn(),
+      suggest: vi.fn(),
+      getFileContent: vi.fn(),
+      getFileHistory: vi.fn(),
+      browseDirectory: vi.fn(),
+      listProjects: vi.fn(),
+      getAnnotate: vi.fn(),
+      getFileSymbols: vi.fn(),
+      testConnection: vi.fn(),
+      close: vi.fn(),
+    };
+
+    const config: Config = {
+      OPENGROK_BASE_URL: 'https://example.com/source/',
+      OPENGROK_USERNAME: '',
+      OPENGROK_PASSWORD: '',
+      OPENGROK_PASSWORD_FILE: '',
+      OPENGROK_PASSWORD_KEY: '',
+      OPENGROK_VERIFY_SSL: true,
+      OPENGROK_TIMEOUT: 30,
+      OPENGROK_DEFAULT_MAX_RESULTS: 10,
+      OPENGROK_CACHE_ENABLED: false,
+      OPENGROK_CACHE_SEARCH_TTL: 300,
+      OPENGROK_CACHE_FILE_TTL: 600,
+      OPENGROK_CACHE_HISTORY_TTL: 1800,
+      OPENGROK_CACHE_PROJECTS_TTL: 3600,
+      OPENGROK_CACHE_MAX_SIZE: 500,
+      OPENGROK_CACHE_MAX_BYTES: 52428800,
+      OPENGROK_RATELIMIT_ENABLED: false,
+      OPENGROK_RATELIMIT_RPM: 60,
+      HTTP_PROXY: '',
+      HTTPS_PROXY: '',
+      OPENGROK_LOCAL_COMPILE_DB_PATHS: '',
+      OPENGROK_DEFAULT_PROJECT: '',
+      OPENGROK_CONTEXT_BUDGET: 'standard',
+      OPENGROK_CODE_MODE: false,
+      OPENGROK_MEMORY_BANK_DIR: '',
+      OPENGROK_RESPONSE_FORMAT_OVERRIDE: '',
+      OPENGROK_ENABLE_CACHE_HINTS: true,
+    } as Config;
+
+    createServer(mockClient as never, config, undefined);
+
+    expect(logInfoSpy).toHaveBeenCalledWith(
+      expect.stringContaining('OPENGROK_ENABLE_CACHE_HINTS=true')
+    );
+    expect(logInfoSpy).toHaveBeenCalledWith(
+      expect.stringContaining('prompt caching')
+    );
+  });
+
+  it('does not log info message when OPENGROK_ENABLE_CACHE_HINTS=false', () => {
+    const mockClient = {
+      search: vi.fn(),
+      suggest: vi.fn(),
+      getFileContent: vi.fn(),
+      getFileHistory: vi.fn(),
+      browseDirectory: vi.fn(),
+      listProjects: vi.fn(),
+      getAnnotate: vi.fn(),
+      getFileSymbols: vi.fn(),
+      testConnection: vi.fn(),
+      close: vi.fn(),
+    };
+
+    const config: Config = {
+      OPENGROK_BASE_URL: 'https://example.com/source/',
+      OPENGROK_USERNAME: '',
+      OPENGROK_PASSWORD: '',
+      OPENGROK_PASSWORD_FILE: '',
+      OPENGROK_PASSWORD_KEY: '',
+      OPENGROK_VERIFY_SSL: true,
+      OPENGROK_TIMEOUT: 30,
+      OPENGROK_DEFAULT_MAX_RESULTS: 10,
+      OPENGROK_CACHE_ENABLED: false,
+      OPENGROK_CACHE_SEARCH_TTL: 300,
+      OPENGROK_CACHE_FILE_TTL: 600,
+      OPENGROK_CACHE_HISTORY_TTL: 1800,
+      OPENGROK_CACHE_PROJECTS_TTL: 3600,
+      OPENGROK_CACHE_MAX_SIZE: 500,
+      OPENGROK_CACHE_MAX_BYTES: 52428800,
+      OPENGROK_RATELIMIT_ENABLED: false,
+      OPENGROK_RATELIMIT_RPM: 60,
+      HTTP_PROXY: '',
+      HTTPS_PROXY: '',
+      OPENGROK_LOCAL_COMPILE_DB_PATHS: '',
+      OPENGROK_DEFAULT_PROJECT: '',
+      OPENGROK_CONTEXT_BUDGET: 'standard',
+      OPENGROK_CODE_MODE: false,
+      OPENGROK_MEMORY_BANK_DIR: '',
+      OPENGROK_RESPONSE_FORMAT_OVERRIDE: '',
+      OPENGROK_ENABLE_CACHE_HINTS: false,
+    } as Config;
+
+    createServer(mockClient as never, config, undefined);
+
+    // Should not be called with the cache hints message
+    const cacheHintsCalls = logInfoSpy.mock.calls.filter((call: any[]) =>
+      call[0]?.includes?.('OPENGROK_ENABLE_CACHE_HINTS')
+    );
+    expect(cacheHintsCalls.length).toBe(0);
   });
 });
