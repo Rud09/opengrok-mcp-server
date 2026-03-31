@@ -8,41 +8,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { parseAllowedClientIds, checkCredentialAge, updateCredentialRotationTimestamp, getConfigDirectory, resetConfig } from "../server/config.js";
+import { checkCredentialAge, updateCredentialRotationTimestamp, getConfigDirectory, resetConfig } from "../server/config.js";
 import * as taskRegistry from "../server/task-registry.js";
-
-// ---------------------------------------------------------------------------
-// Task 4.13: Request Origin Validation
-// ---------------------------------------------------------------------------
-
-describe("Task 4.13 — parseAllowedClientIds", () => {
-  it("returns empty array for empty string", () => {
-    expect(parseAllowedClientIds("")).toEqual([]);
-  });
-
-  it("returns empty array for whitespace-only string", () => {
-    expect(parseAllowedClientIds("   ")).toEqual([]);
-  });
-
-  it("parses comma-separated client IDs", () => {
-    const ids = parseAllowedClientIds("client1,client2,client3");
-    expect(ids).toEqual(["client1", "client2", "client3"]);
-  });
-
-  it("trims whitespace from each client ID", () => {
-    const ids = parseAllowedClientIds("  client1 , client2  , client3 ");
-    expect(ids).toEqual(["client1", "client2", "client3"]);
-  });
-
-  it("filters out empty strings after trimming", () => {
-    const ids = parseAllowedClientIds("client1,,client2");
-    expect(ids).toEqual(["client1", "client2"]);
-  });
-
-  it("handles single client ID", () => {
-    expect(parseAllowedClientIds("onlyClient")).toEqual(["onlyClient"]);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Task 4.14: Credential Rotation Warnings
@@ -260,20 +227,11 @@ describe("Config loading with credential tracking", () => {
   afterEach(() => {
     resetConfig();
     delete process.env.OPENGROK_BASE_URL;
-    delete process.env.OPENGROK_ALLOWED_CLIENT_IDS;
   });
 
-  it("config includes OPENGROK_ALLOWED_CLIENT_IDS field", async () => {
+  it("loadConfig returns a frozen config object", async () => {
     const { loadConfig } = await import("../server/config.js");
     const config = loadConfig();
-    expect(config.OPENGROK_ALLOWED_CLIENT_IDS).toBe(""); // default empty
-  });
-
-  it("config parses OPENGROK_ALLOWED_CLIENT_IDS from environment", async () => {
-    process.env.OPENGROK_ALLOWED_CLIENT_IDS = "client1,client2";
-    resetConfig();
-    const { loadConfig } = await import("../server/config.js");
-    const config = loadConfig();
-    expect(config.OPENGROK_ALLOWED_CLIENT_IDS).toBe("client1,client2");
+    expect(Object.isFrozen(config)).toBe(true);
   });
 });

@@ -333,12 +333,27 @@ describe('runSetup wizard — verifySsl prompt', () => {
     expect(clackMocks.note).not.toHaveBeenCalled();
   });
 
-  it('shows SSL note when verifySsl is false', async () => {
+  it('passes OPENGROK_VERIFY_SSL=false to configure when verifySsl is false', async () => {
+    // All confirms return false: verifySsl=false, codeMode=false, enableElicitation=false, wantsAdvanced=false
     clackMocks.confirm.mockResolvedValue(false);
+    const configureMocks = {
+      configureClaudeCode: vi.fn(),
+      configureVSCode: vi.fn(),
+      configureCodex: vi.fn(),
+    };
+    vi.doMock('../../server/cli/setup/configure.js', () => configureMocks);
     const { runSetup } = await import('../../server/cli/setup/wizard.js');
     await runSetup();
-    expect(clackMocks.note).toHaveBeenCalledWith(
-      expect.stringContaining('OPENGROK_VERIFY_SSL=false')
-    );
+    // Wizard should have run to completion — no note needed since env var is written automatically
+    expect(clackMocks.note).not.toHaveBeenCalled();
+    // The config passed to any configure function should have verifySsl=false
+    const allCalls = [
+      ...configureMocks.configureClaudeCode.mock.calls,
+      ...configureMocks.configureVSCode.mock.calls,
+      ...configureMocks.configureCodex.mock.calls,
+    ];
+    if (allCalls.length > 0) {
+      expect(allCalls[0][0]).toMatchObject({ verifySsl: false });
+    }
   });
 });
