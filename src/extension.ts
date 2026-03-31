@@ -5,10 +5,6 @@ import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { execSync } from 'child_process';
-
-// Credential files older than this are considered stale and will be cleaned up
-const CREDENTIAL_FILE_MAX_AGE_MS = 60000; // 60 seconds
 
 // Global state keys
 const SETUP_PROMPTED_KEY = 'opengrok.setupPrompted.v2';
@@ -26,38 +22,6 @@ let secretStorage: vscode.SecretStorage;
 let mcpProvider: OpenGrokMcpProvider | undefined;
 
 // Tracks if the extension was activated without credentials, requiring a window reload to populate tools
-
-/**
- * Clean up stale credential files from temp directory.
- * Files older than CREDENTIAL_FILE_MAX_AGE_MS are deleted.
- * This handles cases where the server crashed before reading the file.
- */
-function cleanupStaleCredentialFiles(): void {
-    try {
-        const tempDir = os.tmpdir();
-        const files = fs.readdirSync(tempDir);
-        const now = Date.now();
-        
-        for (const file of files) {
-            if (file.startsWith('opengrok-cred-') && file.endsWith('.tmp')) {
-                const filepath = path.join(tempDir, file);
-                try {
-                    const stat = fs.statSync(filepath);
-                    const ageMs = now - stat.mtimeMs;
-                    
-                    if (ageMs > CREDENTIAL_FILE_MAX_AGE_MS) {
-                        fs.unlinkSync(filepath);
-                        log(`Cleaned up stale credential file (${Math.round(ageMs / 1000)}s old): ${filepath}`);
-                    }
-                } catch {
-                    // File might have been deleted by server, ignore
-                }
-            }
-        }
-    } catch (err) {
-        log(`Warning: Failed to clean up stale credential files: ${err}`);
-    }
-}
 
 /**
  * Clean up ALL credential files (used on extension deactivation)
@@ -673,10 +637,6 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
     }
 
     async provideMcpServerDefinitions(_token: vscode.CancellationToken): Promise<vscode.McpServerDefinition[]> {
-        // Clean up stale credential files (>60 seconds old) from previous calls
-        // Server should delete files immediately after reading, so stale files indicate crashed servers
-        cleanupStaleCredentialFiles();
-
         const config = vscode.workspace.getConfiguration('opengrok-mcp');
         const username = config.get<string>('username');
         if (!username) return [];
@@ -717,51 +677,34 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         if (responseFormatOverride) env.OPENGROK_RESPONSE_FORMAT_OVERRIDE = responseFormatOverride;
 
         if (password) {
-            // Write credentials to secure temporary file with AES-256 encryption
-            // This prevents exposure via process inspection AND file reading
             try {
-                const tempDir = os.tmpdir();
-                const filename = `opengrok-cred-${crypto.randomBytes(16).toString('hex')}.tmp`;
-                const filepath = path.join(tempDir, filename);
-                
-                // Generate one-time encryption key and IV
-                const encryptionKey = crypto.randomBytes(32); // AES-256
-                const iv = crypto.randomBytes(16);
-                
-                // Encrypt the password
-                const cipher = crypto.createCipheriv('aes-256-cbc', encryptionKey, iv);
-                let encrypted = cipher.update(password, 'utf8', 'base64');
-                encrypted += cipher.final('base64');
-                
-                // Write encrypted data: IV:EncryptedPassword
-                const fileContent = `${iv.toString('base64')}:${encrypted}`;
-                fs.writeFileSync(filepath, fileContent, { 
-                    encoding: 'utf8',
-                    mode: 0o600  // rw------- on Unix; on Windows, file is in user's temp dir
-                });
-                
-                // Windows: Apply explicit ACLs for defense-in-depth
-                if (process.platform === 'win32') {
-                    try {
-                        // Remove inherited permissions and grant full control only to current user
-                        execSync(`icacls "${filepath}" /inheritance:r /grant:r "%username%:(F)" /Q`, 
-                                 { windowsHide: true });
-                        log('Windows ACL hardening applied to credential file');
-                    } catch (aclErr) {
-                        log(`Warning: Failed to apply Windows ACLs (file still protected by temp dir): ${aclErr}`);
-                    }
+                // Write to OS keychain so server can read it via resolveConfig() on startup.
+                // Uses @napi-rs/keyring (native addon, already a dependency).
+                // Falls back to AES-256-GCM encrypted file in ~/.config/opengrok-mcp/ for headless Linux.
+                const { Entry } = await import('@napi-rs/keyring');
+                const entry = new Entry('opengrok-mcp', username);
+                entry.setPassword(password);
+                log('Credentials stored in OS keychain for server startup.');
+            } catch (keychainErr) {
+                // Headless Linux / no libsecret: write encrypted file (same format as keychain.ts)
+                try {
+                    const xdgConfig = process.env['XDG_CONFIG_HOME'] || path.join(os.homedir(), '.config');
+                    const credDir = path.join(xdgConfig, 'opengrok-mcp');
+                    fs.mkdirSync(credDir, { recursive: true });
+                    const key = crypto.randomBytes(32).toString('hex');
+                    const iv = crypto.randomBytes(12);
+                    const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(key, 'hex'), iv);
+                    const encrypted = Buffer.concat([cipher.update(password, 'utf8'), cipher.final()]);
+                    const tag = (cipher as crypto.CipherGCM).getAuthTag();
+                    const encoded = 'gcm:' + Buffer.concat([iv, tag, encrypted]).toString('base64');
+                    fs.writeFileSync(path.join(credDir, `cred-${username}.enc`), encoded, { encoding: 'utf8', mode: 0o600 });
+                    fs.writeFileSync(path.join(credDir, `cred-${username}.key`), key, { encoding: 'utf8', mode: 0o600 });
+                    log('Credentials stored in encrypted file (headless fallback).');
+                } catch (fileErr) {
+                    log(`Warning: Failed to store credentials: ${fileErr}. Server may fail to start.`);
                 }
-                
-                env.OPENGROK_PASSWORD_FILE = filepath;
-                env.OPENGROK_PASSWORD_KEY = encryptionKey.toString('base64');
-                log(`Credential file created (encrypted): ${filepath}`);
-                
-                // Note: File will be securely deleted by the server after it reads and decrypts the password.
-                // Stale files (from crashed servers) are cleaned up on next provideMcpServerDefinitions() call.
-            } catch (err) {
-                log(`Warning: Failed to create credential file, falling back to env variable: ${err}`);
-                env.OPENGROK_PASSWORD = password;
             }
+            // Server reads from keychain via resolveConfig() in main.ts — no env vars needed.
         }
 
         if (proxy) {
