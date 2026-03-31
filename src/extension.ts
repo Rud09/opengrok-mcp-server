@@ -836,7 +836,7 @@ function openConfigurationPanel(context: vscode.ExtensionContext): void {
                         await _handleTestConnection(configPanel.webview, message.data as { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string });
                         break;
                     case 'saveConfiguration':
-                        await _handleSaveConfiguration(configPanel.webview, message.data as { baseUrl: string; username: string; password?: string; proxy?: string; verifySsl: boolean; defaultProject?: string; contextBudget?: string; responseFormatOverride?: string; codeMode?: boolean; memoryBankDir?: string; compileDbPaths?: string; codeModeChanged?: boolean; apiVersion?: string });
+                        await _handleSaveConfiguration(configPanel.webview, message.data as { baseUrl: string; username: string; password?: string; proxy?: string; verifySsl: boolean; defaultProject?: string; contextBudget?: string; responseFormatOverride?: string; codeMode?: boolean; memoryBankDir?: string; compileDbPaths?: string; codeModeChanged?: boolean; apiVersion?: string; enableElicitation?: boolean });
                         break;
                 }
             } catch (error: unknown) {
@@ -907,6 +907,7 @@ async function _handleSaveConfiguration(webview: vscode.Webview, data: {
     compileDbPaths?: string;
     codeModeChanged?: boolean;
     apiVersion?: string;
+    enableElicitation?: boolean;
 }): Promise<void> {
     await handleSaveConfiguration(
         (msg: Record<string, unknown>) => { void webview.postMessage(msg); },
@@ -1054,9 +1055,10 @@ async function handleSaveConfiguration(
         compileDbPaths?: string;
         codeModeChanged?: boolean;
         apiVersion?: string;
+        enableElicitation?: boolean;
     }
 ): Promise<void> {
-    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged, apiVersion } = data;
+    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged, apiVersion, enableElicitation } = data;
 
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const oldUsername = config.get<string>('username');
@@ -1071,6 +1073,14 @@ async function handleSaveConfiguration(
         return;
     }
 
+    // Store password BEFORE config updates so credentials are never lost if a
+    // config.update() call throws (e.g. unregistered key).
+    await secretStorage.store(`opengrok-password-${username}`, finalPassword);
+
+    if (oldUsername && oldUsername !== username) {
+        await secretStorage.delete(`opengrok-password-${oldUsername}`);
+    }
+
     await config.update('baseUrl', baseUrl, vscode.ConfigurationTarget.Global);
     await config.update('username', username, vscode.ConfigurationTarget.Global);
     await config.update('verifySsl', verifySsl, vscode.ConfigurationTarget.Global);
@@ -1082,12 +1092,7 @@ async function handleSaveConfiguration(
     if (memoryBankDir !== undefined) await config.update('memoryBankDir', memoryBankDir || undefined, vscode.ConfigurationTarget.Global);
     if (compileDbPaths !== undefined) await config.update('compileDbPaths', compileDbPaths || undefined, vscode.ConfigurationTarget.Global);
     if (apiVersion !== undefined) await config.update('apiVersion', apiVersion || 'v1', vscode.ConfigurationTarget.Global);
-
-    await secretStorage.store(`opengrok-password-${username}`, finalPassword);
-
-    if (oldUsername && oldUsername !== username) {
-        await secretStorage.delete(`opengrok-password-${oldUsername}`);
-    }
+    if (enableElicitation !== undefined) await config.update('enableElicitation', enableElicitation, vscode.ConfigurationTarget.Global);
 
     log(`Configuration saved for user: ${username}`);
     updateStatusBar('ready');
