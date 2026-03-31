@@ -17,7 +17,6 @@ npm run lint             # tsc --noEmit + eslint src/
 npm run lint:fix         # eslint --fix
 npm run validate         # typecheck + lint + test (full pre-commit check)
 npm run vsix             # build .vsix extension package
-npm run release:patch    # bump patch version + compile + package-server + vsix
 ```
 
 CLI commands (v7.0+):
@@ -54,8 +53,8 @@ All three are bundled by esbuild (`esbuild.js`). The build also copies `emscript
 - **`formatters.ts`** — Per-tool response formatters producing markdown/json/tsv/yaml/text. `selectFormat()` resolves the active format from args vs. env override.
 - **`parsers.ts`** — HTML parsers for OpenGrok web responses (search results, directory listings, annotations, symbols, history).
 - **`memory-bank.ts`** — `MemoryBank`: Living Document system. Two-file allow-list (`active-task.md` ≤ 4 KB + `investigation-log.md` ≤ 32 KB). `getStatusLine()` auto-injected into `SERVER_INSTRUCTIONS` as `{{MEMORY_STATUS}}`. No legacy migration support. Delta encoding, richness-scored trimming, compressed initial read, `getFileReference()` for Files API. Stub detection via sentinel comment. Used by the LLM to persist investigation state across turns.
-- **`sandbox.ts`** — Code Mode main-thread side. Spawns a Worker thread running `sandbox-worker.js`, bridges async HTTP calls via `Atomics.notify()` on a SharedArrayBuffer, applies a 10 s hard timeout.
-- **`sandbox-worker.ts`** — Worker thread side. Runs LLM-supplied JavaScript inside a QuickJS WASM VM (`@sebastianwessel/quickjs`). Blocks on `Atomics.wait()` while the main thread performs HTTP calls. Separate esbuild entry point.
+- **`sandbox.ts`** — Code Mode main-thread side. Spawns a Worker thread running `sandbox-worker.js`, bridges async HTTP calls via `Atomics.notify()` on a SharedArrayBuffer, applies a 10 s hard timeout. Exports `SandboxAPI` interface, `SandboxOpts` interface, `createSandboxAPI()`, `executeInSandbox()`, and `API_SPEC`. `createSandboxAPI(client, memoryBank, SandboxOpts)` accepts `mcpServer` and `elicitEnabled` for `env.opengrok.elicit()` and `env.opengrok.sample()` sandbox methods (v9.0+).
+- **`sandbox-worker.ts`** — Worker thread side. Runs LLM-supplied JavaScript inside a QuickJS WASM VM (`@sebastianwessel/quickjs`). Blocks on `Atomics.wait()` while the main thread performs HTTP calls. `env.opengrok` object is hardcoded with `makeMethod("name")` per method — new sandbox methods must be added here explicitly. Separate esbuild entry point.
 - **`intelligence.ts`** — `buildFileOverview()` and `buildCallChain()`: pre-computed summaries for Code Mode, built from parallel OpenGrok API calls.
 - **`observation-masker.ts`** — `ObservationMasker`: session memory management for long Code Mode sessions. Keeps last 10 full results, summarizes older ones.
 - **`api-types.ts`** — Shared TypeScript interfaces for OpenGrok REST API response shapes.

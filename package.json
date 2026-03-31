@@ -2,7 +2,7 @@
   "name": "opengrok-mcp-server",
   "displayName": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases",
-  "version": "8.0.0",
+  "version": "9.0.0",
   "mcpName": "io.github.IcyHot09/opengrok-mcp-server",
   "license": "PolyForm-Noncommercial-1.0.0",
   "publisher": "IcyHot09",
@@ -199,7 +199,7 @@
         "opengrok-mcp.enableElicitation": {
           "type": "boolean",
           "default": false,
-          "description": "Enable project picker prompt when no project is specified (requires Claude Code v2.1.76+ or VS Code Copilot).",
+          "description": "Enable project picker at opengrok_api startup and env.opengrok.elicit() in Code Mode sandbox (requires Claude Code v2.1.76+ or VS Code Copilot).",
           "order": 13
         }
       }

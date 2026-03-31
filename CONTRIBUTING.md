@@ -17,7 +17,7 @@ opengrok-mcp-server/
 │   │   ├── logger.ts            # Structured stderr logging
 │   │   └── local/
 │   │       └── compile-info.ts  # compile_commands.json index
-│   ├── tests/                   # Unit tests (Vitest, 500+ tests)
+│   ├── tests/                   # Unit tests (Vitest, 1100+ tests)
 │   │   ├── parsers.test.ts
 │   │   ├── formatters.test.ts
 │   │   ├── client.test.ts
@@ -155,6 +155,43 @@ async myMethod(param1: string, param2: number): Promise<MyType> {
 
 ---
 
+## Adding a Code Mode Sandbox Method
+
+Code Mode sandbox methods (`env.opengrok.*`) are defined in three places:
+
+1. **`src/server/sandbox.ts`** — `SandboxAPI` interface (type declaration) + `createSandboxAPI()` implementation (async method bodies). Import any new dependencies via `SandboxOpts` fields.
+
+2. **`src/server/sandbox-worker.ts`** — `env.opengrok` object inside the QuickJS VM. Add one line: `myMethod: makeMethod("myMethod")`. The worker dispatches by method name string via `callHostSync`.
+
+3. **`src/server/sandbox.ts` → `API_SPEC.methods`** — Documentation for the LLM. Add a `myMethod` entry with `signature`, `returns`, and `note` fields. This is what the LLM reads when it calls `opengrok_api`.
+
+**Example — adding `env.opengrok.myMethod()`:**
+
+```typescript
+// 1. sandbox.ts — SandboxAPI interface
+myMethod(arg: string): Promise<string | null>;
+
+// 2. sandbox.ts — createSandboxAPI() returned object
+async myMethod(arg) {
+  if (!mcpServer) return null;
+  // ... implementation using client, memoryBank, mcpServer etc.
+},
+
+// 3. sandbox-worker.ts — env.opengrok object
+myMethod: makeMethod("myMethod"),
+
+// 4. sandbox.ts — API_SPEC.methods
+myMethod: {
+  signature: "env.opengrok.myMethod(arg)",
+  returns: "string | null",
+  note: "What it does and when to use it.",
+},
+```
+
+New methods that need access to `server`, `mcpServer`, or `elicitEnabled` receive them via `SandboxOpts` (passed from `registerCodeModeTools` in `server.ts`).
+
+---
+
 ## Security Practices
 
 ### Credential Storage
@@ -201,35 +238,24 @@ npm run vsix
 
 The extension uses [Semantic Versioning](https://semver.org/). Releases are automated via GitHub Actions.
 
-### Version Bump Commands
+### Version Bump
+
+Manually edit `package.json` and `server.json` to bump the version, then:
 
 ```bash
-npm run release:patch    # Bug fixes:        1.0.0 → 1.0.1
-npm run release:minor    # New features:     1.0.0 → 1.1.0
-npm run release:major    # Breaking changes: 1.0.0 → 2.0.0
+npm test                # Confirm all tests pass
+npm run package         # Production build
+npm run vsix            # Build .vsix package
+git add package.json server.json CHANGELOG.md
+git commit -m "chore: vX.Y.Z version bump"
+git tag vX.Y.Z
+git push origin main --tags
 ```
-
-### Automated Release Script (Recommended)
-
-```powershell
-# Dry-run (test without making changes)
-.\scripts\release.ps1 -Version patch -Dry
-
-# Actual release
-.\scripts\release.ps1 -Version [patch|minor|major]
-```
-
-The script will:
-1. Verify Git status is clean
-2. Bump version in `package.json`
-3. Run tests
-4. Build and package VSIX locally
-5. Create Git commit and tag
 
 ### Push to GitHub
 
 ```bash
-git push origin <your-branch>
+git push origin main
 git push origin vX.Y.Z        # Tag push triggers CI/CD
 ```
 

@@ -168,10 +168,19 @@ Set `OPENGROK_CODE_MODE=true` to switch to a 2-tool interface optimised for mult
 
 | Tool | Purpose |
 | ---- | ------- |
-| `opengrok_api` | Get the full API spec (call once at session start) |
+| `opengrok_api` | Get the full API spec (call once at session start). With `OPENGROK_ENABLE_ELICITATION=true`, also prompts the user to select a working project if none is configured. |
 | `opengrok_execute` | Run JavaScript in a sandboxed QuickJS VM with access to all OpenGrok operations via `env.opengrok.*` |
 
 All `env.opengrok.*` calls appear **synchronous** inside your code — the sandbox bridges async HTTP calls transparently using a SharedArrayBuffer + Atomics channel. Token savings of 80–95% are typical for complex investigations.
+
+**v9.0+ sandbox methods for interactive prompts and AI assistance:**
+
+| Method | Purpose |
+| ------ | ------- |
+| `env.opengrok.elicit(message, schema)` | Pause execution and ask the user to select from a list — e.g., pick the correct file from multiple matches. Returns `{ action, content }`. Requires `OPENGROK_ENABLE_ELICITATION=true`. |
+| `env.opengrok.sample(prompt, opts?)` | Request an AI-generated string from the client's LLM — e.g., reformulate a zero-result query. Returns `string \| null` (null when client doesn't support sampling). Always null-guard the result. |
+
+When `env.opengrok.search()` returns **zero results** and sampling is available, `_suggestions: string[]` is automatically injected into the result — check it before calling `sample()` explicitly.
 
 ```javascript
 // Example opengrok_execute code
@@ -202,28 +211,33 @@ Access via `env.opengrok.readMemory(filename)` / `env.opengrok.writeMemory(filen
 
 </details>
 
-### Project Picker Prompt (Elicitation)
+### Project Picker & Interactive Disambiguation (Elicitation)
 
-When `OPENGROK_ENABLE_ELICITATION=true` and no project is specified in a search, the server
-asks the user to select a project interactively. Requires a client that supports MCP Elicitation:
+When `OPENGROK_ENABLE_ELICITATION=true`, the server uses MCP Elicitation in two places:
+
+1. **Session start** — `opengrok_api` (Code Mode) prompts the user to select a working project if no `OPENGROK_DEFAULT_PROJECT` is configured and more than one project exists.
+2. **Mid-execution** — Sandbox JS can call `env.opengrok.elicit(message, schema)` to ask the user to choose between multiple matching files, revisions, or projects at any point during execution.
+
+Requires a client that supports MCP Elicitation:
 
 - **Claude Code** v2.1.76+ ✓
 - **VS Code Copilot** ✓
 
-Enable in the VS Code configuration panel, or set `OPENGROK_ENABLE_ELICITATION=true` in your
-MCP client environment config.
+Enable in the VS Code configuration panel, or set `OPENGROK_ENABLE_ELICITATION=true` in your MCP client environment config. The server degrades gracefully to `{ action: "cancel" }` on unsupported clients — no errors.
 
 ### LLM Sampling
 
-For complex operations (dependency graph summaries, sandbox error explanations), the server
-delegates LLM calls back to the client via MCP Sampling — using the client's model subscription
-without needing separate API keys.
+The server delegates LLM calls back to the client via MCP Sampling — using the client's model subscription without needing separate API keys. Used in three places:
+
+1. **Sandbox error explanation** — When `opengrok_execute` code fails, sampling generates a concise explanation and fix suggestion.
+2. **Dependency graph summarization** — Large `opengrok_dependency_map` graphs (>10 nodes) are summarized via sampling in legacy mode.
+3. **Zero-result query reformulation** (v9.0+, Code Mode) — When `env.opengrok.search()` returns 0 results, sampling auto-injects `_suggestions` into the result object. Sandbox JS can also call `env.opengrok.sample(prompt)` explicitly for any AI-generated text.
 
 Supported clients:
 - **VS Code Copilot** ✓
 - **Claude Code** — support pending (tracked in [anthropics/claude-code#1785](https://github.com/anthropics/claude-code/issues/1785))
 
-The server gracefully degrades when the client does not support sampling.
+The server degrades gracefully when sampling is unavailable — `sample()` returns `null`, `_suggestions` is not injected.
 
 ---
 
@@ -317,7 +331,7 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 
 | Variable | Values | Description |
 | :--- | :--- | :--- |
-| `OPENGROK_ENABLE_ELICITATION` | `true` / `false` (default: `false`) | Enable project picker form when no project specified and >1 project exists |
+| `OPENGROK_ENABLE_ELICITATION` | `true` / `false` (default: `false`) | Enable project picker at `opengrok_api` startup (Code Mode) and `env.opengrok.elicit()` in sandbox. Requires a supporting MCP client. |
 | `OPENGROK_ENABLE_FILES_API` | `true` / `false` (default: `false`) | Enable FileReferenceCache for `investigation-log.md` (SHA-256 content-addressed) |
 | `OPENGROK_SAMPLING_MODEL` | string | Model preference for MCP Sampling (error explanation, graph summarization) |
 | `OPENGROK_SAMPLING_MAX_TOKENS` | integer (default: `256`, max: `4096`) | Token budget for MCP Sampling responses |

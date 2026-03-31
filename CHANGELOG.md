@@ -5,6 +5,32 @@ All notable changes to the OpenGrok MCP extension will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.0.0] - 2026-03-31
+
+### Features — Code Mode Interactive Prompts & LLM Sampling
+
+- **`env.opengrok.elicit(message, schema)`** — New sandbox method for interactive disambiguation. When the LLM's JavaScript encounters multiple matching files or projects, it can pause execution and ask the user to choose from a list. Returns `{ action: "accept"|"decline"|"cancel", content? }`. Requires `OPENGROK_ENABLE_ELICITATION=true` and a supporting MCP client (Claude Code v2.1.76+, VS Code Copilot). Gracefully returns `{ action: "cancel" }` on unsupported clients — no breakage.
+- **`env.opengrok.sample(prompt, opts?)`** — New sandbox method to invoke the client's LLM for query reformulation or result summarization. Returns `string | null` (null on unsupported clients). Accepts `maxTokens` and `systemPrompt` options. Always null-guard the return value.
+- **Zero-result `_suggestions` auto-injection** — When `env.opengrok.search()` returns `totalCount === 0` and MCP Sampling is available, the result object is automatically populated with `_suggestions: string[]` containing up to 3 reformulation candidates. Sandbox JS can check `results._suggestions` before calling `sample()` explicitly.
+- **`opengrok_api` project picker** — The `opengrok_api` tool (Code Mode session start) now elicits a project selection from the user when `OPENGROK_ENABLE_ELICITATION=true` and no `OPENGROK_DEFAULT_PROJECT` is configured. Mirrors the existing legacy-mode project picker in `opengrok_search_code`. The chosen project is injected as a `**Working project: <name>**` hint at the top of the returned API spec.
+
+### Exported Interface
+- **`SandboxOpts`** exported from `src/server/sandbox.ts` — Allows external callers to configure sandbox behaviour: `getCompileInfoFn`, `mcpServer`, `elicitEnabled`.
+
+### API Change
+- **`elicitOrFallback()` now takes `McpServer`** (high-level SDK type) instead of the deprecated low-level `Server`. All call sites updated. No user-facing behaviour change.
+
+### Documentation
+- `API_SPEC` in `sandbox.ts`: Added `elicit` and `sample` to `methods`, 4 new guidance lines to `important[]`, plus `disambiguationExample` and `zeroResultExample` code templates.
+- README: Code Mode section expanded with elicit/sample capabilities, `_suggestions` auto-injection note, updated Elicitation and Sampling sections.
+
+### Tests
+- 22 new tests in `src/tests/sandbox-elicitation.test.ts` covering all paths: elicit accept/cancel/decline/disabled, sample null-guard, `_suggestions` injection/skip conditions, API_SPEC key presence.
+- 4 new tests in `src/tests/code-mode.test.ts` for `opengrok_api` project picker (accept/cancel/skip-with-default/skip-when-disabled).
+- **1,115 tests total** — all passing.
+
+---
+
 ## [8.0.0] - 2026-03-31
 
 ### Breaking Changes

@@ -6,8 +6,8 @@
 -->
 <evaluation>
   <meta>
-    <name>OpenGrok MCP Server v4.0 Evaluation</name>
-    <version>4.0.0</version>
+    <name>OpenGrok MCP Server v9.0 Evaluation</name>
+    <version>9.0.0</version>
     <description>
       Tests for multi-tool composition, structured output, response_format,
       error handling, and compound tool usage across all 14 opengrok_ tools.
