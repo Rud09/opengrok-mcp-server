@@ -7,7 +7,7 @@
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
@@ -199,79 +199,271 @@ const VERSION = (typeof __VERSION__ !== "undefined"
 // Server instructions (opengrok_ prefixed tool names)
 // ---------------------------------------------------------------------------
 
-export const SERVER_INSTRUCTIONS_TEMPLATE = `
-OpenGrok MCP — Code intelligence for large, multi-language codebases.
+export const SERVER_INSTRUCTIONS_TEMPLATE = `You are connected to an OpenGrok code search MCP server.
+
+## TOOLS
+Use opengrok_ prefixed tools to search and navigate the codebase. Run opengrok_index_health first to list available projects.
 
 ## SESSION START
 {{MEMORY_STATUS}}
-Run opengrok_index_health to verify connectivity, then proceed.
+Run opengrok_index_health to verify connectivity, then proceed with the user's request.
 
-Note: For general codebase context (conventions, architecture, AI rules), use VS Code's
-built-in memory tool (/memory command in chat) — it auto-loads at every session.
+## MEMORY
+Update opengrok_update_memory after completing investigations:
+- active-task.md: current task, last symbol/file, next step
+- investigation-log.md: append ## YYYY-MM-DD HH:MM entries
 
-## TOOL SELECTION — DECISION TREE
-Single symbol lookup         → opengrok_get_symbol_context (1 call, replaces 3–5)
-2–5 parallel searches        → opengrok_batch_search (1 call)
-Search + read code           → opengrok_search_and_read (1 call)
-Multi-step (3+ calls needed) → opengrok_execute (1 call, logic runs in sandbox)
-Single search                → opengrok_search_code
-
-NEVER: search_code + get_file_content → use search_and_read
-NEVER: multiple search_code calls → use batch_search
-NEVER: get_file_content on file > 50 lines without start_line + end_line
-
-## TOOL RULES
-- ALWAYS call get_file_symbols before get_file_content to find line ranges cheaply
-- ALWAYS pass file_type to narrow results (cxx, java, python, etc.)
-- LIMIT max_results to 5 unless asked for more
-
-## MEMORY — MANDATORY BEFORE FINAL ANSWER
-You MUST do both of these before responding to the user:
-  1. opengrok_update_memory("active-task.md", <current state>, "overwrite")
-  2. If a significant finding: opengrok_update_memory("investigation-log.md", <summary>, "append")
-
-Memory files: active-task.md (current task) | investigation-log.md (findings log)
-Note: When OPENGROK_ENABLE_FILES_API=true, investigation-log.md is cached by content hash;
-      opengrok_read_memory returns "[unchanged]" when no new entries have been appended.
-`.trim();
+## WORKFLOW
+1. Search broadly with opengrok_search_code (symbol/full/path)
+2. Use opengrok_get_symbol_context for function/class deep-dives
+3. Use opengrok_batch_search for 2-5 parallel queries
+4. Read files via opengrok_get_file_content with line ranges
+5. Record findings in investigation-log.md`.trim();
 
 /**
  * Code Mode uses a shorter instruction set — only 5 tools are exposed so the full
  * standard decision tree is not needed. This saves ~80-100 tokens per turn vs
  * the standard instructions.
  */
-export const SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE = `
-OpenGrok MCP — Code intelligence via sandbox execution.
+export const SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE = `You are connected to an OpenGrok code search MCP server in Code Mode.
 
 ## SESSION START
 {{MEMORY_STATUS}}
-Run opengrok_api once to get the full API spec, then proceed.
+Run opengrok_api to get the full API spec, then use opengrok_execute to run JavaScript queries.
 
-## YOUR ONLY TOOLS
-- opengrok_api: get the full OpenGrok API spec (call once per session)
-- opengrok_execute: run JavaScript with env.opengrok.* to query the codebase
-- opengrok_memory_status / opengrok_read_memory / opengrok_update_memory: session state
+## MEMORY
+Update memory after investigations:
+- active-task.md: current task and next step
+- investigation-log.md: append ## YYYY-MM-DD HH:MM entries
 
-## ALL QUERIES GO THROUGH opengrok_execute
-Even simple lookups. Single-line scripts are fine:
-  return env.opengrok.search("X", {searchType:"defs", maxResults:3})
-         .results.map(r => r.path+":"+r.matches[0].lineNumber).join("\\n");
-
-- All env.opengrok.* calls are synchronous from your code's perspective
-- Use env.opengrok.batchSearch([...]) for parallel searches — do NOT write Promise.all()
-- Filter data inside the sandbox — only return what is needed
-- Return strings, not objects (see return_rules in the API spec)
-
-## MEMORY — MANDATORY BEFORE FINAL ANSWER
-You MUST do both of these before responding to the user:
-  1. opengrok_update_memory("active-task.md", <current state>, "overwrite")
-  2. If a significant finding: opengrok_update_memory("investigation-log.md", <summary>, "append")
-`.trim();
+## CODE MODE
+Use opengrok_execute to run JavaScript with env.opengrok.* API methods.
+All methods are synchronous in the sandbox.`.trim();
 
 // Aliases for backward compatibility in tests and legacy references
 const SERVER_INSTRUCTIONS_STANDARD = SERVER_INSTRUCTIONS_TEMPLATE;
 const SERVER_INSTRUCTIONS_CODE_MODE = SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE;
 const SERVER_INSTRUCTIONS = SERVER_INSTRUCTIONS_STANDARD;
+
+// ---------------------------------------------------------------------------
+// Tool documentation — served as MCP Resources at opengrok-docs://tools/{name}
+// ---------------------------------------------------------------------------
+
+export const TOOL_DOCS: Record<string, string> = {
+  opengrok_search_code: `## opengrok_search_code
+Search by symbol, text, or path across projects.
+
+**Parameters:**
+- \`query\` — search term (required)
+- \`projects\` — scope to one or more projects (optional)
+- \`search_type\` — symbol|full|path|hist|type (default: full)
+- \`max_results\` — 1-25 (default: 10)
+
+**Example:** \`opengrok_search_code({ query: "AuthService", search_type: "symbol", projects: ["myrepo"] })\``,
+
+  opengrok_get_file_content: `## opengrok_get_file_content
+Fetch file content with optional line range.
+
+**Parameters:**
+- \`path\` — file path (required)
+- \`project\` — project name (required)
+- \`start_line\` — first line (optional)
+- \`end_line\` — last line (optional)`,
+
+  opengrok_get_symbol_context: `## opengrok_get_symbol_context
+One-call symbol investigation: definition + header + callers.
+
+**Parameters:**
+- \`symbol\` — symbol name (required)
+- \`project\` — project name (optional)`,
+
+  opengrok_index_health: `## opengrok_index_health
+Check server health and list all indexed projects. Run this first each session.`,
+
+  opengrok_read_memory: `## opengrok_read_memory
+Read active-task.md or investigation-log.md.
+
+**Parameters:**
+- \`filename\` — "active-task.md" or "investigation-log.md"`,
+
+  opengrok_update_memory: `## opengrok_update_memory
+Write or append to active-task.md or investigation-log.md.
+
+**Parameters:**
+- \`filename\` — file to update
+- \`content\` — new content or append text
+- \`mode\` — "write" or "append"`,
+
+  opengrok_memory_status: `## opengrok_memory_status
+Show current memory bank file sizes and modification times. No parameters required.`,
+
+  opengrok_batch_search: `## opengrok_batch_search
+Run 2-5 searches in parallel in a single call.
+
+**Parameters:**
+- \`queries\` — array of search query objects (required)`,
+
+  opengrok_search_and_read: `## opengrok_search_and_read
+Combined search + file read in one call. Prefer over separate search + get_file_content.
+
+**Parameters:**
+- \`query\` — search term (required)
+- \`project\` — project scope (optional)`,
+
+  opengrok_find_file: `## opengrok_find_file
+Find files by name pattern across projects.
+
+**Parameters:**
+- \`path_pattern\` — glob or substring to match against file paths (required)
+- \`projects\` — scope to specific projects (optional)`,
+
+  opengrok_browse_directory: `## opengrok_browse_directory
+List directory contents.
+
+**Parameters:**
+- \`path\` — directory path (required)
+- \`project\` — project name (required)`,
+
+  opengrok_list_projects: `## opengrok_list_projects
+List all indexed projects. No parameters required.`,
+
+  opengrok_get_file_history: `## opengrok_get_file_history
+Get commit history for a file.
+
+**Parameters:**
+- \`path\` — file path (required)
+- \`project\` — project name (required)`,
+
+  opengrok_get_file_annotate: `## opengrok_get_file_annotate
+Get line-by-line blame/annotation for a file.
+
+**Parameters:**
+- \`path\` — file path (required)
+- \`project\` — project name (required)`,
+
+  opengrok_get_file_symbols: `## opengrok_get_file_symbols
+List all symbols defined in a file. Call before get_file_content to find line ranges.
+
+**Parameters:**
+- \`path\` — file path (required)
+- \`project\` — project name (required)`,
+
+  opengrok_search_suggest: `## opengrok_search_suggest
+Get search suggestions/autocomplete for a partial query.
+
+**Parameters:**
+- \`query\` — partial query (required)
+- \`project\` — project scope (optional)`,
+
+  opengrok_what_changed: `## opengrok_what_changed
+Show recently changed files in a project.
+
+**Parameters:**
+- \`project\` — project name (required)
+- \`days\` — look-back window in days (optional)`,
+
+  opengrok_blame: `## opengrok_blame
+Get blame information for a file with commit metadata.
+
+**Parameters:**
+- \`path\` — file path (required)
+- \`project\` — project name (required)`,
+
+  opengrok_dependency_map: `## opengrok_dependency_map
+Build a dependency map showing what a file uses and what uses it.
+
+**Parameters:**
+- \`path\` — file path (required)
+- \`project\` — project name (required)`,
+
+  opengrok_call_graph: `## opengrok_call_graph
+Compute a call graph for a symbol showing callers and callees.
+
+**Parameters:**
+- \`symbol\` — symbol name (required)
+- \`project\` — project name (required)`,
+
+  opengrok_search_pattern: `## opengrok_search_pattern
+Search using a regular expression pattern.
+
+**Parameters:**
+- \`pattern\` — regex pattern (required)
+- \`project\` — project scope (optional)`,
+
+  opengrok_get_file_diff: `## opengrok_get_file_diff
+Get a diff for a file between two revisions.
+
+**Parameters:**
+- \`path\` — file path (required)
+- \`project\` — project name (required)
+- \`rev1\` — first revision (required)
+- \`rev2\` — second revision (optional)`,
+
+  opengrok_get_compile_info: `## opengrok_get_compile_info
+Get compiler flags and include paths for a C/C++ file from compile_commands.json.
+
+**Parameters:**
+- \`path\` — file path (required)`,
+
+  opengrok_api: `## opengrok_api
+[Code Mode] Return the full Code Mode API specification. Call once per session.`,
+
+  opengrok_execute: `## opengrok_execute
+[Code Mode] Execute JavaScript in the QuickJS sandbox with OpenGrok API access.
+
+**Parameters:**
+- \`code\` — JS function body using env.opengrok.* for API calls (required)`,
+
+  opengrok_get_task_result: `## opengrok_get_task_result
+[Code Mode] Poll for the result of an async opengrok_execute task.
+
+**Parameters:**
+- \`task_id\` — task ID returned by opengrok_execute (required)`,
+};
+
+// ---------------------------------------------------------------------------
+// Tool registration order — for prompt caching hints (3C)
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical tool registration order for prompt-caching hints (3C).
+ * Pre-populated at module init with the complete list; individual register*
+ * functions also push to this array at call time as a cross-check.
+ *
+ * Memory tools first (always registered), then Code Mode tools (when enabled),
+ * then legacy tools (when Code Mode is disabled).
+ */
+export const TOOL_REGISTRATION_ORDER: string[] = [
+  // Memory tools (always registered in both modes)
+  "opengrok_memory_status",
+  "opengrok_read_memory",
+  "opengrok_update_memory",
+  // Code Mode tools (registered when OPENGROK_CODE_MODE=true)
+  "opengrok_api",
+  "opengrok_execute",
+  "opengrok_get_task_result",
+  // Legacy tools (registered in standard mode)
+  "opengrok_search_code",
+  "opengrok_find_file",
+  "opengrok_search_pattern",
+  "opengrok_get_file_content",
+  "opengrok_get_file_history",
+  "opengrok_get_file_diff",
+  "opengrok_browse_directory",
+  "opengrok_list_projects",
+  "opengrok_get_file_annotate",
+  "opengrok_search_suggest",
+  "opengrok_batch_search",
+  "opengrok_search_and_read",
+  "opengrok_get_symbol_context",
+  "opengrok_index_health",
+  "opengrok_get_compile_info",
+  "opengrok_get_file_symbols",
+  "opengrok_call_graph",
+  "opengrok_what_changed",
+  "opengrok_blame",
+  "opengrok_dependency_map",
+];
 
 // ---------------------------------------------------------------------------
 // Tool annotations
@@ -1450,6 +1642,9 @@ export function createServer(
     registerMemoryResources(server, memoryBank);
   }
 
+  // Task 3B: Register tool documentation as MCP Resources at opengrok-docs://tools/{name}
+  registerToolDocResources(server);
+
   // Task 4.6: Register MCP Prompts
   registerInvestigationPrompts(server);
 
@@ -1483,6 +1678,7 @@ function registerMemoryTools(
   memoryBank: MemoryBank,
   config: Config
 ): void {
+  TOOL_REGISTRATION_ORDER.push("opengrok_memory_status");
   server.registerTool(
     "opengrok_memory_status",
     {
@@ -1516,6 +1712,7 @@ function registerMemoryTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_read_memory");
   server.registerTool(
     "opengrok_read_memory",
     {
@@ -1555,6 +1752,7 @@ function registerMemoryTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_update_memory");
   server.registerTool(
     "opengrok_update_memory",
     {
@@ -1652,6 +1850,7 @@ function registerCodeModeTools(
     : undefined;
 
   // Tool 1: opengrok_api — return the API spec
+  TOOL_REGISTRATION_ORDER.push("opengrok_api");
   server.registerTool(
     "opengrok_api",
     {
@@ -1673,6 +1872,7 @@ function registerCodeModeTools(
   );
 
   // Tool 2: opengrok_execute — run LLM-written JavaScript in the sandbox
+  TOOL_REGISTRATION_ORDER.push("opengrok_execute");
   server.registerTool(
     "opengrok_execute",
     {
@@ -1749,6 +1949,7 @@ function registerCodeModeTools(
   // Tool 3: opengrok_get_task_result — retained for backward compatibility.
   // opengrok_execute now returns results synchronously; this tool will always
   // return "not found" unless an external caller pre-populates the task registry.
+  TOOL_REGISTRATION_ORDER.push("opengrok_get_task_result");
   server.registerTool(
     "opengrok_get_task_result",
     {
@@ -1808,6 +2009,7 @@ function registerLegacyTools(
   toolRateLimiter?: ToolRateLimiter
 ): void {
   const desc = (full: string, compact: string): string => codeMode ? compact : full;
+  TOOL_REGISTRATION_ORDER.push("opengrok_search_code");
   server.registerTool(
     "opengrok_search_code",
     {
@@ -1870,6 +2072,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_find_file");
   server.registerTool(
     "opengrok_find_file",
     {
@@ -1898,6 +2101,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_search_pattern");
   server.registerTool(
     "opengrok_search_pattern",
     {
@@ -1929,6 +2133,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_content");
   server.registerTool(
     "opengrok_get_file_content",
     {
@@ -1953,6 +2158,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_history");
   server.registerTool(
     "opengrok_get_file_history",
     {
@@ -1999,6 +2205,7 @@ function registerLegacyTools(
   );
 
   // Tool: opengrok_get_file_diff — diff between two revisions
+  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_diff");
   server.registerTool(
     "opengrok_get_file_diff",
     {
@@ -2041,6 +2248,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_browse_directory");
   server.registerTool(
     "opengrok_browse_directory",
     {
@@ -2067,6 +2275,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_list_projects");
   server.registerTool(
     "opengrok_list_projects",
     {
@@ -2088,6 +2297,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_annotate");
   server.registerTool(
     "opengrok_get_file_annotate",
     {
@@ -2117,6 +2327,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_search_suggest");
   server.registerTool(
     "opengrok_search_suggest",
     {
@@ -2160,6 +2371,7 @@ function registerLegacyTools(
   // Compound tools
   // -----------------------------------------------------------------------
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_batch_search");
   server.registerTool(
     "opengrok_batch_search",
     {
@@ -2185,6 +2397,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_search_and_read");
   server.registerTool(
     "opengrok_search_and_read",
     {
@@ -2211,6 +2424,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_get_symbol_context");
   server.registerTool(
     "opengrok_get_symbol_context",
     {
@@ -2253,6 +2467,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_index_health");
   server.registerTool(
     "opengrok_index_health",
     {
@@ -2291,6 +2506,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_get_compile_info");
   server.registerTool(
     "opengrok_get_compile_info",
     {
@@ -2317,6 +2533,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_symbols");
   server.registerTool(
     "opengrok_get_file_symbols",
     {
@@ -2371,6 +2588,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_call_graph");
   server.registerTool(
     "opengrok_call_graph",
     {
@@ -2418,6 +2636,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_what_changed");
   server.registerTool(
     "opengrok_what_changed",
     {
@@ -2487,6 +2706,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_blame");
   server.registerTool(
     "opengrok_blame",
     {
@@ -2536,6 +2756,7 @@ function registerLegacyTools(
     }
   );
 
+  TOOL_REGISTRATION_ORDER.push("opengrok_dependency_map");
   server.registerTool(
     "opengrok_dependency_map",
     {
@@ -2603,6 +2824,31 @@ function registerLegacyTools(
     registerMemoryTools(server, memoryBank, config);
   }
   // registerLegacyTools intentionally returns void — server is mutated in place
+}
+
+// ---------------------------------------------------------------------------
+// Task 3B: MCP Resources — tool documentation at opengrok-docs://tools/{name}
+// ---------------------------------------------------------------------------
+
+function registerToolDocResources(server: McpServer): void {
+  try {
+    server.resource(
+      'opengrok-tool-docs',
+      new ResourceTemplate('opengrok-docs://tools/{name}', { list: undefined }),
+      async (uri, variables) => {
+        const name = String(variables['name'] ?? '');
+        const doc = TOOL_DOCS[name];
+        if (!doc) {
+          throw new Error(`No documentation found for tool: ${name}`);
+        }
+        return {
+          contents: [{ uri: uri.href, mimeType: 'text/markdown', text: doc }],
+        };
+      }
+    );
+  } catch {
+    // Resource registration may not be supported in all SDK versions — skip gracefully
+  }
 }
 
 // ---------------------------------------------------------------------------

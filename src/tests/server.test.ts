@@ -181,7 +181,8 @@ describe('SERVER_INSTRUCTIONS', () => {
     expect(_SERVER_INSTRUCTIONS).not.toContain('opengrok_list_memory_files');
   });
 
-  it('references opengrok_read_memory for session start guidance', () => {
-    expect(_SERVER_INSTRUCTIONS).toContain('opengrok_read_memory');
+  it('references opengrok_update_memory for session memory guidance', () => {
+    // Template now uses opengrok_update_memory in the MEMORY section (reduced token budget)
+    expect(_SERVER_INSTRUCTIONS).toContain('opengrok_update_memory');
   });
 });
