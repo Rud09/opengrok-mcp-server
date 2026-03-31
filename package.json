@@ -55,8 +55,16 @@
     }
   },
   "bin": {
+    "opengrok-mcp": "./out/server/main.js",
     "opengrok-mcp-server": "./out/server/main.js"
   },
+  "files": [
+    "out/server/",
+    "out/webview/",
+    "images/",
+    "README.md",
+    "LICENSE"
+  ],
   "contributes": {
     "commands": [
       {
