@@ -225,29 +225,69 @@ function secureDeleteFile(filePath: string): void {
   }
 }
 
+// Magic prefix that identifies the new AES-256-GCM format
+const GCM_MAGIC = "gcm:";
+
+/**
+ * Encrypt a plaintext password using AES-256-GCM.
+ * The key is derived from keyMaterial via SHA-256.
+ * Output format: "gcm:" + base64(12-byte IV || 16-byte tag || ciphertext)
+ */
+export function encryptPassword(plaintext: string, keyMaterial: string): string {
+  const key = crypto.createHash("sha256").update(keyMaterial).digest();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = (cipher as crypto.CipherGCM).getAuthTag();
+  const combined = Buffer.concat([iv, tag, encrypted]);
+  return GCM_MAGIC + combined.toString("base64");
+}
+
 /**
  * Decrypt password from encrypted credential file.
- * File format: base64(IV):base64(encryptedPassword)
- * Encryption: AES-256-CBC
+ *
+ * New GCM format: "gcm:" + base64(12-byte IV || 16-byte tag || ciphertext)
+ *   Key = SHA-256(keyMaterial)
+ *
+ * Legacy CBC format: base64(IV):base64(encryptedPassword)
+ *   Key = Buffer.from(keyMaterial, "base64") — raw 32-byte key passed as base64
  */
-function decryptPassword(encryptedContent: string, keyBase64: string): string {
+function decryptPassword(encryptedContent: string, keyMaterial: string): string {
+  const key = crypto.createHash("sha256").update(keyMaterial).digest();
+
+  if (encryptedContent.startsWith(GCM_MAGIC)) {
+    // New format: AES-256-GCM
+    const data = Buffer.from(encryptedContent.slice(GCM_MAGIC.length), "base64");
+    const iv = data.subarray(0, 12);
+    const tag = data.subarray(12, 28);
+    const encrypted = data.subarray(28);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv) as crypto.DecipherGCM;
+    decipher.setAuthTag(tag);
+    try {
+      return decipher.update(encrypted).toString("utf8") + decipher.final("utf8");
+    } catch {
+      logger.warn("AES-GCM decryption failed (wrong key?)");
+      return "";
+    }
+  }
+
+  // Legacy CBC format: base64(IV):base64(encryptedPassword)
   try {
-    const key = Buffer.from(keyBase64, "base64");
+    const legacyKey = Buffer.from(keyMaterial, "base64");
     const [ivBase64, encryptedBase64] = encryptedContent.split(":");
-    
+
     if (!ivBase64 || !encryptedBase64) {
       logger.warn("Invalid encrypted file format");
       return "";
     }
-    
+
     const iv = Buffer.from(ivBase64, "base64");
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    const decipher = crypto.createDecipheriv("aes-256-cbc", legacyKey, iv);
     let decrypted = decipher.update(encryptedBase64, "base64", "utf8");
     decrypted += decipher.final("utf8");
-    
     return decrypted;
-  } catch (err) {
-    logger.warn("Failed to decrypt password:", err);
+  } catch {
+    logger.warn("Failed to decrypt password (legacy CBC):", "decryption failed");
     return "";
   }
 }
@@ -306,6 +346,27 @@ export function loadConfig(): Config {
   if (password || data.OPENGROK_USERNAME) {
     const configDir = getConfigDirectory();
     updateCredentialRotationTimestamp(configDir);
+  }
+
+  // Validate: username set but no password source provided
+  if (data.OPENGROK_USERNAME && !password && !data.OPENGROK_PASSWORD_FILE) {
+    logger.error("OPENGROK_USERNAME is set but OPENGROK_PASSWORD is empty and no OPENGROK_PASSWORD_FILE specified.");
+    process.exit(1);
+  }
+
+  // Validate proxy URL scheme (for both HTTP_PROXY and HTTPS_PROXY)
+  for (const proxyUrl of [data.HTTP_PROXY, data.HTTPS_PROXY].filter(Boolean)) {
+    try {
+      const parsedProxy = new URL(proxyUrl);
+      const allowedSchemes = ["http:", "https:", "socks5:"];
+      if (!allowedSchemes.includes(parsedProxy.protocol)) {
+        logger.error(`Proxy URL scheme "${parsedProxy.protocol}" not allowed. Use http, https, or socks5.`);
+        process.exit(1);
+      }
+    } catch {
+      logger.error(`Proxy URL is not a valid URL: "${proxyUrl}"`);
+      process.exit(1);
+    }
   }
 
   // Freeze to prevent accidental mutation by consumers

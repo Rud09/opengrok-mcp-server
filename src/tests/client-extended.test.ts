@@ -616,17 +616,15 @@ describe('OpenGrokClient methods', () => {
       ).rejects.toThrow(/too long/);
     });
 
-    it('rejects catastrophic backtracking patterns', async () => {
-      // listProjects fetches first (no cache), then validates the filter
-      // Need a mock for each listProjects call since cache is disabled
-      mockFetchText('<html><body></body></html>');
-      await expect(
-        client.listProjects('***')
-      ).rejects.toThrow(/too complex/);
-      mockFetchText('<html><body></body></html>');
-      await expect(
-        client.listProjects('???')
-      ).rejects.toThrow(/too complex/);
+    it('handles consecutive wildcard patterns safely via minimatch (no ReDoS)', async () => {
+      // minimatch handles *** and ??? safely without catastrophic backtracking;
+      // these patterns are no longer rejected — they simply match or not.
+      mockFetchText('<html><body><select id="project"><option value="release-2.x">release-2.x</option></select></body></html>');
+      const result1 = await client.listProjects('***');
+      expect(Array.isArray(result1)).toBe(true);
+      mockFetchText('<html><body><select id="project"><option value="abc">abc</option></select></body></html>');
+      const result2 = await client.listProjects('???');
+      expect(Array.isArray(result2)).toBe(true);
     });
 
     it('supports glob wildcards', async () => {

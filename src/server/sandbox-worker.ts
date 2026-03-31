@@ -62,6 +62,10 @@ async function runJob(
     const payload = JSON.stringify({ method: methodName, args });
     const encoded = Buffer.from(payload, "utf8");
 
+    if (encoded.length > dataArray.length) {
+      throw new Error(`callHostSync payload too large: ${encoded.length} bytes (max ${dataArray.length})`);
+    }
+
     // Write call payload into the buffer
     lengthArray[0] = encoded.length;
     dataArray.set(encoded, 0);
@@ -77,7 +81,12 @@ async function runJob(
     const resLen = lengthArray[0];
     const resBytes = dataArray.subarray(0, resLen);
     const resJson = Buffer.from(resBytes).toString("utf8");
-    const res = JSON.parse(resJson) as Record<string, unknown>;
+    let res: Record<string, unknown>;
+    try {
+      res = JSON.parse(resJson) as Record<string, unknown>;
+    } catch {
+      throw new Error(`callHostSync: malformed response from main thread (first 100 chars: ${resJson.slice(0, 100)})`);
+    }
 
     if ("__error" in res) throw new Error(res["__error"] as string);
     return res["data"];

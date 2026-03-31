@@ -4,6 +4,7 @@
  */
 
 import pRetry, { AbortError } from "p-retry";
+import { minimatch } from "minimatch";
 import { URL } from "url";
 import { isIPv4, isIPv6 } from "node:net";
 import { Agent } from "undici";
@@ -45,17 +46,17 @@ const CLIENT_VERSION =
 // ---------------------------------------------------------------------------
 
 class RateLimiter {
-  private readonly rate: number;
-  private readonly maxTokens: number;
-  private tokens: number;
+  private readonly intervalMs: number;   // ms per token (integer)
+  private readonly maxTokensMs: number;  // max accumulated token-ms
+  private tokensMs: number;              // current accumulated token-ms (integer)
   private lastUpdate: number;
   private queue: Array<() => void> = [];
   private processing = false;
 
   constructor(requestsPerMinute: number) {
-    this.rate = requestsPerMinute / 60;
-    this.maxTokens = requestsPerMinute;
-    this.tokens = requestsPerMinute;
+    this.intervalMs = Math.round((60 / requestsPerMinute) * 1000);
+    this.maxTokensMs = requestsPerMinute * this.intervalMs;
+    this.tokensMs = this.maxTokensMs; // start full
     this.lastUpdate = Date.now();
   }
 
@@ -63,9 +64,7 @@ class RateLimiter {
     return new Promise((resolve) => {
       this.queue.push(resolve);
       /* v8 ignore start */
-      if (!this.processing) {
-        void this.processQueue();
-      }
+      if (!this.processing) void this.processQueue();
       /* v8 ignore stop */
     });
   }
@@ -74,18 +73,16 @@ class RateLimiter {
     this.processing = true;
     while (this.queue.length > 0) {
       const now = Date.now();
-      const elapsed = (now - this.lastUpdate) / 1000;
-      this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.rate);
+      const elapsed = now - this.lastUpdate;
+      this.tokensMs = Math.min(this.maxTokensMs, this.tokensMs + elapsed);
       this.lastUpdate = now;
 
-      if (this.tokens >= 1) {
-        this.tokens -= 1;
-        const resolve = this.queue.shift();
-        if (resolve) resolve();
+      if (this.tokensMs >= this.intervalMs) {
+        this.tokensMs -= this.intervalMs;
+        this.queue.shift()!();
       } else {
-        // Release lock, sleep, re-check — avoids convoy effect
-        const waitMs = ((1 - this.tokens) / this.rate) * 1000;
-        await sleep(waitMs);
+        const waitMs = this.intervalMs - this.tokensMs;
+        await sleep(Math.ceil(waitMs));
       }
     }
     this.processing = false;
@@ -850,24 +847,9 @@ export class OpenGrokClient {
       if (filterPattern.length > MAX_FILTER_LENGTH) {
         throw new Error(`Filter pattern too long (max ${MAX_FILTER_LENGTH} characters)`);
       }
-      // Guard against catastrophic backtracking from excessive consecutive wildcards
-      if (/\*{3,}|\?{3,}/.test(filterPattern)) {
-        throw new Error("Filter pattern too complex (too many consecutive wildcards)");
-      }
       // Auto-append * for substring matching if no glob wildcards present
       const glob = /[*?]/.test(filterPattern) ? filterPattern : `*${filterPattern}*`;
-      // Escape all regex operators except * and ? which are handled as glob wildcards
-      const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-      const pattern = escaped.replace(/\*/g, ".*").replace(/\?/g, ".");
-      let re: RegExp;
-      try {
-        re = new RegExp(`^${pattern}$`, "i");
-      } catch {
-        /* v8 ignore start -- escaping prevents invalid regex; defense-in-depth */
-        throw new Error("Invalid filter pattern");
-        /* v8 ignore stop */
-      }
-      return projects.filter((p) => re.test(p.name));
+      return projects.filter((p) => minimatch(p.name, glob, { nocase: true }));
     }
     return projects;
   }

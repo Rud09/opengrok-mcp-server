@@ -507,11 +507,17 @@ export async function executeInSandbox(
         }
       } catch (err) {
         // Write error back into the buffer using __error sentinel
-        const errMsg     = (err as Error).message ?? "Unknown API error";
+        const errMsg = ((err as Error).message ?? "Unknown API error").slice(0, 4096);
         const errJson    = JSON.stringify({ __error: errMsg });
         const errEncoded = Buffer.from(errJson, "utf8");
-        lengthArray[0]   = errEncoded.length;
-        dataArray.set(errEncoded, 0);
+        if (errEncoded.length > dataArray.length) {
+          const fallback = Buffer.from(JSON.stringify({ __error: "API error (message truncated)" }), "utf8");
+          lengthArray[0] = fallback.length;
+          dataArray.set(fallback, 0);
+        } else {
+          lengthArray[0] = errEncoded.length;
+          dataArray.set(errEncoded, 0);
+        }
       }
 
       // Signal: result_ready — wake up the blocked worker thread

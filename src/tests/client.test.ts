@@ -177,6 +177,7 @@ describe('credential file security', () => {
       OPENGROK_PASSWORD_KEY: process.env.OPENGROK_PASSWORD_KEY,
     };
     // Clear them for clean test state
+    delete process.env.OPENGROK_USERNAME;
     delete process.env.OPENGROK_PASSWORD;
     delete process.env.OPENGROK_PASSWORD_FILE;
     delete process.env.OPENGROK_PASSWORD_KEY;
