@@ -169,48 +169,17 @@ describe('MemoryBank — investigation-log.md trimming', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Migration tests — 6-file → 2-file
+// ALLOWED_FILES structure tests (migration removed — new product, no backward compat)
 // ---------------------------------------------------------------------------
 
-describe('MemoryBank migration — 6-file → 2-file', () => {
+describe('MemoryBank ALLOWED_FILES', () => {
   it('ALLOWED_FILES contains exactly 2 entries', () => {
     expect(ALLOWED_FILES).toHaveLength(2);
     expect(ALLOWED_FILES).toContain('active-task.md');
     expect(ALLOWED_FILES).toContain('investigation-log.md');
   });
 
-  it('renames active-context.md to active-task.md when it has real content', async () => {
-    await fsp.writeFile(path.join(tmpDir, 'active-context.md'), 'task: fix EventLoop\nstatus: in-progress');
-    await bank.ensureDir();
-    expect(fs.existsSync(path.join(tmpDir, 'active-task.md'))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, 'active-context.md'))).toBe(false);
-    const content = await fsp.readFile(path.join(tmpDir, 'active-task.md'), 'utf8');
-    expect(content).toContain('fix EventLoop');
-  });
-
-  it('deletes active-context.md stub without renaming', async () => {
-    await fsp.writeFile(
-      path.join(tmpDir, 'active-context.md'),
-      '<!-- OPENGROK_STUB:active-context.md -->\ntask: (none)\n'
-    );
-    await bank.ensureDir();
-    expect(fs.existsSync(path.join(tmpDir, 'active-context.md'))).toBe(false);
-    // active-task.md should be created as new stub
-    expect(fs.existsSync(path.join(tmpDir, 'active-task.md'))).toBe(true);
-  });
-
-  it('deletes legacy files (AGENTS.md, symbol-index.md, etc.)', async () => {
-    const legacyFiles = ['AGENTS.md', 'codebase-map.md', 'symbol-index.md', 'known-patterns.md', 'project-context.md'];
-    for (const f of legacyFiles) {
-      await fsp.writeFile(path.join(tmpDir, f), '<!-- OPENGROK_STUB:' + f + ' -->\n');
-    }
-    await bank.ensureDir();
-    for (const f of legacyFiles) {
-      expect(fs.existsSync(path.join(tmpDir, f))).toBe(false);
-    }
-  });
-
-  it('migration is idempotent (safe to run twice)', async () => {
+  it('ensureDir is idempotent (safe to run twice)', async () => {
     await bank.ensureDir();
     await bank.ensureDir(); // second call
     // Should still have exactly the 2 allowed files as stubs

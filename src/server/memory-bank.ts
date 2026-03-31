@@ -97,8 +97,6 @@ export class MemoryBank {
       return;
     }
 
-    await this.migrate();
-
     for (const filename of ALLOWED_FILES) {
       const filePath = path.join(this.dir, filename);
       if (!fs.existsSync(filePath)) {
@@ -310,54 +308,45 @@ export class MemoryBank {
     return h.toString(36);
   }
 
-  /** Migrate from 6-file layout to 2-file layout. Idempotent. */
-  private async migrate(): Promise<void> {
-    const legacyFiles = [
-      "AGENTS.md",
-      "known-patterns.md",
-      "symbol-index.md",
-      "project-context.md",
-      "codebase-map.md",
-    ];
+  /**
+   * Returns a ≤80-token status line summarising current memory state.
+   * Injected into SERVER_INSTRUCTIONS as {{MEMORY_STATUS}}.
+   */
+  async getStatusLine(): Promise<string> {
+    await this.ensureDir();
 
-    // Rename active-context.md → active-task.md (preserve real content)
-    const oldActive = path.join(this.dir, "active-context.md");
-    const newActive = path.join(this.dir, "active-task.md");
-    if (fs.existsSync(oldActive) && !fs.existsSync(newActive)) {
-      try {
-        const content = await fsp.readFile(oldActive, "utf8");
-        const isStub = content.startsWith(STUB_SENTINEL_PREFIX);
-        if (!isStub) {
-          await fsp.rename(oldActive, newActive);
-          logger.info("MemoryBank: renamed active-context.md → active-task.md");
-        } else {
-          await fsp.unlink(oldActive);
-          logger.info("MemoryBank: removed active-context.md stub");
-        }
-      } catch (err) {
-        logger.warn("MemoryBank: migration error for active-context.md:", err);
-      }
-    }
+    const summaries: string[] = [];
 
-    // Delete deprecated files (warn if they have real content)
-    for (const filename of legacyFiles) {
+    for (const filename of ALLOWED_FILES) {
       const filePath = path.join(this.dir, filename);
       if (!fs.existsSync(filePath)) continue;
+
       try {
-        const content = await fsp.readFile(filePath, "utf8");
-        const isStub = content.startsWith(STUB_SENTINEL_PREFIX);
-        if (!isStub) {
-          logger.warn(
-            `MemoryBank: deleting "${filename}" which has real content. ` +
-            `For general codebase context, use VS Code's built-in /memory command.`
-          );
+        const raw = await fsp.readFile(filePath, "utf8");
+        if (raw.trimStart().startsWith(STUB_SENTINEL_PREFIX.slice(0, 20))) continue; // stub
+
+        const stat = await fsp.stat(filePath);
+        const ageMins = Math.round((Date.now() - stat.mtimeMs) / 60_000);
+        const ageStr = ageMins < 60
+          ? `${ageMins}m ago`
+          : `${Math.round(ageMins / 60)}h ago`;
+        const sizeKb = (Buffer.byteLength(raw, "utf8") / 1024).toFixed(1);
+
+        if (filename === "active-task.md") {
+          const taskLine = raw.split("\n").find(l => l.startsWith("task:"));
+          const taskVal = taskLine ? taskLine.slice(5).trim().slice(0, 60) : "(set)";
+          summaries.push(`active-task.md: "${taskVal}" (${ageStr}, ${sizeKb} KB)`);
+        } else if (filename === "investigation-log.md") {
+          const entryCount = (raw.match(/^## /gm) ?? []).length;
+          summaries.push(`investigation-log.md: ${entryCount} entr${entryCount === 1 ? "y" : "ies"} (${ageStr})`);
         }
-        await fsp.unlink(filePath);
-        logger.info(`MemoryBank: removed legacy file ${filename}`);
-      } catch (err) {
-        logger.warn(`MemoryBank: migration error for ${filename}:`, err);
+      } catch {
+        // File unreadable — skip silently
       }
     }
+
+    if (summaries.length === 0) return "[Memory] No prior context.";
+    return "[Memory] " + summaries.join(". ") + ".";
   }
 
   private assertAllowed(filename: string): void {

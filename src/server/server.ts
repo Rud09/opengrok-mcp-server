@@ -199,14 +199,12 @@ const VERSION = (typeof __VERSION__ !== "undefined"
 // Server instructions (opengrok_ prefixed tool names)
 // ---------------------------------------------------------------------------
 
-const SERVER_INSTRUCTIONS_STANDARD = `
+export const SERVER_INSTRUCTIONS_TEMPLATE = `
 OpenGrok MCP — Code intelligence for large, multi-language codebases.
 
-## SESSION STARTUP (do this once, in order)
-1. opengrok_memory_status → check for prior investigation state (1 call)
-2. opengrok_read_memory("active-task.md") → if populated, read it (restores last task)
-3. opengrok_read_memory("investigation-log.md") → if populated, read recent entries
-4. opengrok_index_health → verify connectivity
+## SESSION START
+{{MEMORY_STATUS}}
+Run opengrok_index_health to verify connectivity, then proceed.
 
 Note: For general codebase context (conventions, architecture, AI rules), use VS Code's
 built-in memory tool (/memory command in chat) — it auto-loads at every session.
@@ -242,13 +240,12 @@ Note: When OPENGROK_ENABLE_FILES_API=true, investigation-log.md is cached by con
  * standard decision tree is not needed. This saves ~80-100 tokens per turn vs
  * the standard instructions.
  */
-const SERVER_INSTRUCTIONS_CODE_MODE = `
+export const SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE = `
 OpenGrok MCP — Code intelligence via sandbox execution.
 
-## SESSION STARTUP (do this once, in order)
-1. opengrok_memory_status → check for prior investigation state
-2. opengrok_read_memory("active-task.md") → if populated, read it (restores last task)
-3. opengrok_api → call ONCE to get the full API spec
+## SESSION START
+{{MEMORY_STATUS}}
+Run opengrok_api once to get the full API spec, then proceed.
 
 ## YOUR ONLY TOOLS
 - opengrok_api: get the full OpenGrok API spec (call once per session)
@@ -271,7 +268,9 @@ You MUST do both of these before responding to the user:
   2. If a significant finding: opengrok_update_memory("investigation-log.md", <summary>, "append")
 `.trim();
 
-// For backward compatibility in tests and legacy references
+// Aliases for backward compatibility in tests and legacy references
+const SERVER_INSTRUCTIONS_STANDARD = SERVER_INSTRUCTIONS_TEMPLATE;
+const SERVER_INSTRUCTIONS_CODE_MODE = SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE;
 const SERVER_INSTRUCTIONS = SERVER_INSTRUCTIONS_STANDARD;
 
 // ---------------------------------------------------------------------------
@@ -1261,13 +1260,17 @@ async function dispatchTool(
 export function createServer(
   client: OpenGrokClient,
   config: Config,
-  memoryBank?: MemoryBank
+  memoryBank?: MemoryBank,
+  instructionsOverride?: string
 ): McpServer {
   const codeMode = config.OPENGROK_CODE_MODE;
 
+  const baseInstructions = codeMode ? SERVER_INSTRUCTIONS_CODE_MODE : SERVER_INSTRUCTIONS_STANDARD;
+  const instructions = instructionsOverride ?? baseInstructions;
+
   const server = new McpServer(
     { name: "opengrok-mcp", version: VERSION },
-    { instructions: codeMode ? SERVER_INSTRUCTIONS_CODE_MODE : SERVER_INSTRUCTIONS_STANDARD }
+    { instructions }
   );
 
   const local = buildLocalLayer(config);
@@ -2766,7 +2769,22 @@ export async function runServer(
   config: Config,
   memoryBank?: MemoryBank
 ): Promise<void> {
-  const server = createServer(client, config, memoryBank);
+  // Inject memory status into instructions so the LLM sees prior context at session start.
+  const codeMode = config.OPENGROK_CODE_MODE;
+  const baseTemplate = codeMode ? SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE : SERVER_INSTRUCTIONS_TEMPLATE;
+  let resolvedInstructions = baseTemplate;
+  if (memoryBank) {
+    try {
+      const memStatus = await memoryBank.getStatusLine();
+      resolvedInstructions = baseTemplate.replace("{{MEMORY_STATUS}}", memStatus);
+    } catch {
+      resolvedInstructions = baseTemplate.replace("{{MEMORY_STATUS}}", "[Memory] No prior context.");
+    }
+  } else {
+    resolvedInstructions = baseTemplate.replace("{{MEMORY_STATUS}}", "[Memory] No prior context.");
+  }
+
+  const server = createServer(client, config, memoryBank, resolvedInstructions);
   const transport = new StdioServerTransport();
 
   const state: { healthCheckInterval?: NodeJS.Timeout } = {};
