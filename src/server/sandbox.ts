@@ -34,6 +34,11 @@ import type { HealthAPIResult } from "./api-types.js";
 import { buildFileOverview, buildCallChain } from "./intelligence.js";
 import { logger } from "./logger.js";
 import { auditLog } from "./audit.js";
+import { elicitOrFallback } from "./elicitation.js";
+import type { ElicitSchema } from "./elicitation.js";
+import { sampleOrNull } from "./sampling.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 // ---------------------------------------------------------------------------
 // Buffer layout constants (must match sandbox-worker.ts)
@@ -283,11 +288,19 @@ export interface SandboxAPI {
  * The actual async work happens when sandbox code triggers these methods via
  * the SharedArrayBuffer bridge from the worker thread.
  */
+export interface SandboxOpts {
+  getCompileInfoFn?: (path: string) => Promise<unknown>;
+  server?: Server;
+  mcpServer?: McpServer;
+  elicitEnabled?: boolean;
+}
+
 export function createSandboxAPI(
   client: OpenGrokClient,
   memoryBank: MemoryBank,
-  getCompileInfoFn?: (path: string) => Promise<unknown>
+  sandboxOpts: SandboxOpts = {}
 ): SandboxAPI {
+  const { getCompileInfoFn, server, mcpServer, elicitEnabled } = sandboxOpts;
   return {
     async search(query, opts = {}) {
       const { searchType = "full", projects, maxResults = 5, startIndex = 0, fileType } = opts;

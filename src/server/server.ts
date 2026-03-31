@@ -1897,7 +1897,12 @@ function registerCodeModeTools(
 
       try {
         const budget = BUDGET_LIMITS[getActiveBudget()];
-        const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
+        const sandboxApi = createSandboxAPI(client, memoryBank, {
+          getCompileInfoFn,
+          server: server.server,
+          mcpServer: server,
+          elicitEnabled: config.OPENGROK_ENABLE_ELICITATION,
+        });
         const workerHandle = workerPool.acquire();
         let result: string;
         try {

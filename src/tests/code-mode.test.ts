@@ -276,7 +276,7 @@ describe('createSandboxAPI — getCompileInfo', () => {
     };
     const fn = vi.fn().mockResolvedValue(fakeInfo);
     const mockClient = makeMockClient();
-    const api = createSandboxAPI(mockClient as never, bank, fn);
+    const api = createSandboxAPI(mockClient as never, bank, { getCompileInfoFn: fn });
     const result = await api.getCompileInfo('/abs/path/foo.cpp');
     expect(result).toEqual(fakeInfo);
     expect(fn).toHaveBeenCalledWith('/abs/path/foo.cpp');
