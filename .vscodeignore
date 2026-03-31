@@ -18,6 +18,11 @@ CHANGELOG.md
 # Exclude backups
 *.bak
 
+# Exclude credential and token files — must never be in a VSIX
+.mcpregistry_*
+*.token
+*.secret
+
 # Exclude vitest config
 vitest.config.ts
 

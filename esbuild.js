@@ -99,8 +99,15 @@ async function main() {
     entryPoints: ['src/server/main.ts'],
     outfile: 'out/server/main.js',
     loader: { '.wasm': 'copy' }, // in case WASM imports leak through bundling
-    // @napi-rs/keyring ships prebuilt native .node binaries — must stay external
-    external: ['@napi-rs/keyring', '@napi-rs/keyring-linux-x64-gnu', '@napi-rs/keyring-linux-x64-musl', '@napi-rs/keyring-darwin-x64', '@napi-rs/keyring-darwin-arm64', '@napi-rs/keyring-win32-x64-msvc'],
+    // CLI-only packages that must stay external:
+    // - @napi-rs/keyring: ships prebuilt native .node binaries
+    // - @clack/prompts: interactive terminal UI (ESM-only, CJS bundling unsupported)
+    // - @iarna/toml: used only by CLI setup wizard at runtime
+    external: [
+      '@napi-rs/keyring', '@napi-rs/keyring-linux-x64-gnu', '@napi-rs/keyring-linux-x64-musl',
+      '@napi-rs/keyring-darwin-x64', '@napi-rs/keyring-darwin-arm64', '@napi-rs/keyring-win32-x64-msvc',
+      '@clack/prompts', '@iarna/toml',
+    ],
     banner: {
       js: '#!/usr/bin/env node',
     },
