@@ -358,10 +358,10 @@ async function showStatusMenu(): Promise<void> {
 async function configureCredentials(): Promise<void> {
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
 
-    const currentUrl = config.get<string>('baseUrl') || '';
     const baseUrl = await vscode.window.showInputBox({
         prompt: 'Enter OpenGrok server URL',
-        value: currentUrl,
+        value: config.get<string>('baseUrl') || '',
+        placeHolder: 'https://opengrok.company.com/source/',
         ignoreFocusOut: true,
         validateInput: (value) => {
             try {
@@ -377,36 +377,48 @@ async function configureCredentials(): Promise<void> {
     });
     if (!baseUrl) return;
 
-    const currentUsername = config.get<string>('username') || '';
     const username = await vscode.window.showInputBox({
-        prompt: 'Enter your OpenGrok username',
-        value: currentUsername,
-        ignoreFocusOut: true
+        prompt: 'Enter OpenGrok username',
+        value: config.get<string>('username') || '',
+        ignoreFocusOut: true,
     });
     if (!username) return;
 
     const password = await vscode.window.showInputBox({
-        prompt: 'Enter your OpenGrok password',
+        prompt: 'Enter OpenGrok password',
         password: true,
-        ignoreFocusOut: true
+        ignoreFocusOut: true,
     });
     if (!password) return;
 
-    await config.update('baseUrl', baseUrl, vscode.ConfigurationTarget.Global);
-    await config.update('username', username, vscode.ConfigurationTarget.Global);
-
-    // Store password in VS Code SecretStorage (encrypted, per-user, never in settings.json)
-    await secretStorage.store(`opengrok-password-${username}`, password);
-    log(`Credentials saved for user: ${username}`);
+    // Delegate to shared handler — same path as WebView save
+    await handleSaveConfiguration(
+        (msg) => {
+            if (msg['type'] === 'error') {
+                void vscode.window.showErrorMessage(String(msg['message']));
+            }
+        },
+        {
+            baseUrl,
+            username,
+            password,
+            verifySsl: config.get<boolean>('verifySsl') ?? true,
+            proxy: config.get<string>('proxy'),
+            defaultProject: config.get<string>('defaultProject'),
+            contextBudget: config.get<string>('contextBudget'),
+            responseFormatOverride: config.get<string>('responseFormatOverride'),
+            codeMode: config.get<boolean>('codeMode') ?? true,
+            memoryBankDir: config.get<string>('memoryBankDir'),
+            compileDbPaths: config.get<string>('compileDbPaths'),
+            apiVersion: config.get<string>('apiVersion') || 'v1',
+            enableElicitation: config.get<boolean>('enableElicitation') ?? false,
+        }
+    );
 
     void vscode.window.showInformationMessage(
-        'OpenGrok credentials saved securely! Copilot Chat can now search your codebase.',
+        'OpenGrok credentials saved! Copilot Chat can now search your codebase.',
         'Test Connection'
-    ).then(action => {
-        if (action === 'Test Connection') void testConnection();
-    });
-
-    updateStatusBar('ready');
+    ).then(action => { if (action === 'Test Connection') void testConnection(); });
 }
 
 /**
@@ -1026,6 +1038,14 @@ async function handleSaveConfiguration(
     if (!finalPassword) {
         postMessage({ type: 'error', message: 'Password is required' });
         return;
+    }
+
+    // Write to OS keychain so server can auto-read on startup
+    try {
+        const { Entry } = await import('@napi-rs/keyring');
+        new Entry('opengrok-mcp', username).setPassword(finalPassword);
+    } catch {
+        // headless fallback handled separately
     }
 
     // Store password BEFORE config updates so credentials are never lost if a
