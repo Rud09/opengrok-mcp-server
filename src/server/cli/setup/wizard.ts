@@ -41,10 +41,10 @@ export async function runSetup(): Promise<void> {
   if (p.isCancel(budget)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   const verifySsl = await p.confirm({
-    message: 'Verify SSL certificates?',
+    message: 'Verify SSL certificate? (disable only for self-signed or internal CA servers)',
     initialValue: true,
   });
-  if (p.isCancel(verifySsl)) { p.cancel('Setup cancelled'); process.exit(0); }
+  if (p.isCancel(verifySsl)) { p.cancel('Setup cancelled.'); process.exit(0); }
 
   // Store credentials in OS keychain
   if (String(username) && password) {
@@ -90,6 +90,10 @@ export async function runSetup(): Promise<void> {
 
   if (!clients.claudeCode && !clients.vscode && !clients.codex) {
     p.log.warn('No supported MCP clients detected. Install Claude Code CLI, VS Code, or Codex CLI and re-run setup.');
+  }
+
+  if (!verifySsl) {
+    p.note('Add OPENGROK_VERIFY_SSL=false to your MCP client environment config if needed.');
   }
 
   p.outro('Setup complete! Run `opengrok-mcp status` to verify the connection.');

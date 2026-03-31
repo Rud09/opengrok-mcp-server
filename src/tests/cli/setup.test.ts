@@ -11,6 +11,27 @@ const mocks = vi.hoisted(() => ({
   readFileResult: '',
   writeFileCalls: [] as Array<[string, string]>,
   mkdirCalls: 0,
+  verifySslValue: true as boolean | symbol,
+}));
+
+// Mock @clack/prompts for wizard tests
+const clackMocks = vi.hoisted(() => ({
+  intro: vi.fn(),
+  outro: vi.fn(),
+  cancel: vi.fn(),
+  note: vi.fn(),
+  text: vi.fn(),
+  password: vi.fn(),
+  confirm: vi.fn(),
+  select: vi.fn(),
+  spinner: vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })),
+  isCancel: vi.fn((_val: unknown) => false),
+  log: { success: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}));
+
+vi.mock('@clack/prompts', () => clackMocks);
+vi.mock('../../server/cli/keychain.js', () => ({
+  storeCredentials: vi.fn(),
 }));
 
 vi.mock('child_process', () => ({
@@ -264,5 +285,60 @@ OPENGROK_BASE_URL = "https://old.example.com"
     const fs = await import('fs');
     const written = String((fs.writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]);
     expect(written).not.toContain('OPENGROK_USERNAME');
+  });
+});
+
+describe('runSetup wizard — verifySsl prompt', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Stub detect/configure so the wizard doesn't try to spawn child processes
+    vi.doMock('../../server/cli/setup/detect.js', () => ({
+      detectInstalledClients: vi.fn(() => ({ claudeCode: false, vscode: false, codex: false })),
+    }));
+    vi.doMock('../../server/cli/setup/configure.js', () => ({
+      configureClaudeCode: vi.fn(),
+      configureVSCode: vi.fn(),
+      configureCodex: vi.fn(),
+    }));
+    // Default: all prompts return non-cancelled values
+    clackMocks.text.mockResolvedValue('https://og.example.com/source/');
+    clackMocks.password.mockResolvedValue('secret');
+    clackMocks.select.mockResolvedValue('standard');
+    clackMocks.confirm.mockResolvedValue(true);
+    clackMocks.isCancel.mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.doUnmock('../../server/cli/setup/detect.js');
+    vi.doUnmock('../../server/cli/setup/configure.js');
+    vi.resetModules();
+  });
+
+  it('calls confirm prompt for SSL verification', async () => {
+    const { runSetup } = await import('../../server/cli/setup/wizard.js');
+    await runSetup();
+    expect(clackMocks.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('SSL'),
+        initialValue: true,
+      })
+    );
+  });
+
+  it('does NOT show SSL note when verifySsl is true', async () => {
+    clackMocks.confirm.mockResolvedValue(true);
+    const { runSetup } = await import('../../server/cli/setup/wizard.js');
+    await runSetup();
+    expect(clackMocks.note).not.toHaveBeenCalled();
+  });
+
+  it('shows SSL note when verifySsl is false', async () => {
+    clackMocks.confirm.mockResolvedValue(false);
+    const { runSetup } = await import('../../server/cli/setup/wizard.js');
+    await runSetup();
+    expect(clackMocks.note).toHaveBeenCalledWith(
+      expect.stringContaining('OPENGROK_VERIFY_SSL=false')
+    );
   });
 });
