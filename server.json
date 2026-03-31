@@ -3,6 +3,7 @@
   "name": "io.github.IcyHot09/opengrok-mcp-server",
   "title": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases.",
+  "websiteUrl": "https://github.com/IcyHot09/opengrok-mcp-server",
   "repository": {
     "url": "https://github.com/IcyHot09/opengrok-mcp-server",
     "source": "github"
@@ -13,9 +14,81 @@
       "registryType": "npm",
       "identifier": "opengrok-mcp-server",
       "version": "9.0.1",
+      "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
-      }
+      },
+      "environmentVariables": [
+        {
+          "name": "OPENGROK_BASE_URL",
+          "description": "OpenGrok server base URL (e.g. https://opengrok.example.com/source/)",
+          "format": "string",
+          "isRequired": true,
+          "isSecret": false,
+          "placeholder": "https://opengrok.example.com/source/"
+        },
+        {
+          "name": "OPENGROK_USERNAME",
+          "description": "OpenGrok authentication username",
+          "format": "string",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "OPENGROK_PASSWORD",
+          "description": "OpenGrok authentication password. Prefer storing via OS keychain using 'npx opengrok-mcp-server setup'.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "OPENGROK_VERIFY_SSL",
+          "description": "Verify TLS certificates. Set to false for self-signed or internal CA certs.",
+          "format": "boolean",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "true"
+        },
+        {
+          "name": "OPENGROK_CODE_MODE",
+          "description": "Enable Code Mode: 5-tool sandbox interface with env.opengrok.* JavaScript API. Saves 80-95% tokens on large codebases.",
+          "format": "boolean",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "false"
+        },
+        {
+          "name": "OPENGROK_DEFAULT_PROJECT",
+          "description": "Default project to scope all searches. Can be overridden per call.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "OPENGROK_CONTEXT_BUDGET",
+          "description": "Response size tier controlling token usage.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "minimal",
+          "choices": ["minimal", "standard", "generous"]
+        },
+        {
+          "name": "OPENGROK_ENABLE_ELICITATION",
+          "description": "Enable interactive project picker at session start and env.opengrok.elicit() in Code Mode sandbox. Requires a supporting MCP client.",
+          "format": "boolean",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "false"
+        },
+        {
+          "name": "OPENGROK_SAMPLING_MODEL",
+          "description": "Model preference for MCP Sampling (used for error explanation and query reformulation).",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
     }
   ]
 }
