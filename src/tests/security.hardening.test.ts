@@ -11,6 +11,11 @@ describe('buildSafeUrl SSRF protection', () => {
   it('blocks hostname mismatch', () => {
     expect(() => buildSafeUrl(base, '//evil.com/steal')).toThrow(/SSRF/);
   });
+
+  it('blocks buildSafeUrl with private IP base URL', () => {
+    const privateBase = new URL('http://127.0.0.1:8080/');
+    expect(() => buildSafeUrl(privateBase, 'api')).toThrow(/SSRF/);
+  });
 });
 
 describe('isPrivateIp', () => {
@@ -52,5 +57,29 @@ describe('isPrivateIp', () => {
 
   it('allows 0.0.0.0 as private (non-routable)', () => {
     expect(isPrivateIp('0.0.0.0')).toBe(true);
+  });
+
+  it('blocks IPv6 loopback ::1', () => {
+    expect(isPrivateIp('::1')).toBe(true);
+  });
+
+  it('blocks IPv6 unspecified ::', () => {
+    expect(isPrivateIp('::')).toBe(true);
+  });
+
+  it('blocks IPv6 ULA fc00::1', () => {
+    expect(isPrivateIp('fc00::1')).toBe(true);
+  });
+
+  it('blocks IPv6 ULA fd00::1', () => {
+    expect(isPrivateIp('fd00::1')).toBe(true);
+  });
+
+  it('blocks IPv6 link-local fe80::1', () => {
+    expect(isPrivateIp('fe80::1')).toBe(true);
+  });
+
+  it('blocks IPv6 link-local febf::1', () => {
+    expect(isPrivateIp('febf::1')).toBe(true);
   });
 });

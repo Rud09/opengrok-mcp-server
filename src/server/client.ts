@@ -345,7 +345,8 @@ export function isPrivateIp(raw: string): boolean {
       lower === "::" ||
       lower.startsWith("fc") ||
       lower.startsWith("fd") ||
-      lower.startsWith("fe80")
+      // fe80::/10 link-local: fe80 through febf
+      (lower.startsWith("fe") && parseInt(lower.slice(2, 4), 16) >= 0x80 && parseInt(lower.slice(2, 4), 16) <= 0xbf)
     );
   }
 
