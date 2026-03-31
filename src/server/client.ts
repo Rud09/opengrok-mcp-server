@@ -5,6 +5,7 @@
 
 import pRetry, { AbortError } from "p-retry";
 import { URL } from "url";
+import { isIPv4, isIPv6 } from "node:net";
 import { Agent } from "undici";
 import type { Config } from "./config";
 import { logger } from "./logger.js";
@@ -305,15 +306,65 @@ export function assertSafePath(path: string): void {
   }
 }
 
+/** Strip IPv6 brackets and normalize ::ffff:-mapped IPv4 addresses. */
+function unmapIPv6(raw: string): string {
+  const s = raw.replace(/^\[|\]$/g, "");
+  const prefix = s.slice(0, 7).toLowerCase();
+  if (prefix === "::ffff:") {
+    const candidate = s.slice(7);
+    if (isIPv4(candidate)) return candidate;
+  }
+  return s;
+}
+
+/**
+ * Returns true if the IP (v4 or v6 string) is in a private/loopback/link-local range.
+ * Exported for unit testing.
+ */
+export function isPrivateIp(raw: string): boolean {
+  if (raw === "localhost") return true;
+  const ip = unmapIPv6(raw);
+
+  if (isIPv4(ip)) {
+    const parts = ip.split(".").map(Number);
+    const [a, b] = parts;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254)
+    );
+  }
+
+  if (isIPv6(ip)) {
+    const lower = ip.toLowerCase();
+    return (
+      lower === "::1" ||
+      lower === "::" ||
+      lower.startsWith("fc") ||
+      lower.startsWith("fd") ||
+      lower.startsWith("fe80")
+    );
+  }
+
+  return false;
+}
+
 /**
  * Build a URL and verify the resolved host still matches `baseUrl`.
- * Prevents SSRF via crafted project/path strings like `//evil.com/...`.
+ * Also blocks base URLs that resolve to private/loopback addresses (SSRF protection).
  */
 export function buildSafeUrl(baseUrl: URL, ...segments: string[]): URL {
   const joined = segments.map((s) => encodeURIComponent(s).replace(/%2F/g, "/")).join("/");
   const url = new URL(joined, baseUrl);
   if (url.hostname !== baseUrl.hostname || url.port !== baseUrl.port) {
     throw new Error(`SSRF guard: resolved URL "${url}" escapes allowed host "${baseUrl.hostname}"`);
+  }
+  // Block private/loopback IPs in base URL at construction time
+  if (isPrivateIp(baseUrl.hostname)) {
+    throw new Error(`SSRF guard: base URL hostname "${baseUrl.hostname}" is a private/loopback address`);
   }
   return url;
 }
