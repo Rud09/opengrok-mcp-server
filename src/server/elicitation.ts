@@ -8,7 +8,7 @@
  * Guarded by OPENGROK_ENABLE_ELICITATION=true so it's opt-in.
  */
 
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { auditLog } from "./audit.js";
 
 export interface ElicitResult {
@@ -36,13 +36,13 @@ export interface ElicitSchema {
  * Always logs the attempt to the audit trail.
  */
 export async function elicitOrFallback(
-  server: Server,
+  server: McpServer,
   message: string,
   schema: ElicitSchema
 ): Promise<ElicitResult> {
   auditLog({ type: "elicitation_request", detail: message });
   try {
-    const result = await server.elicitInput({
+    const result = await server.server.elicitInput({
       message,
       requestedSchema: schema,
     });

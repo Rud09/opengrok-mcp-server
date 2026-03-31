@@ -12,7 +12,7 @@
  * 8. search tool skips elicitation when OPENGROK_DEFAULT_PROJECT is set
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createServer } from '../server/server.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -121,14 +121,15 @@ describe('elicitOrFallback (unit)', () => {
       typeof import('../server/elicitation.js')
     >('../server/elicitation.js');
 
+    const elicitInput = vi.fn().mockResolvedValue({ action: 'accept', content: { project: 'alpha' } });
     const mockServer = {
-      elicitInput: vi.fn().mockResolvedValue({ action: 'accept', content: { project: 'alpha' } }),
-    } as unknown as Server;
+      server: { elicitInput },
+    } as unknown as McpServer;
 
     const result = await realElicit(mockServer, 'Pick project', schema);
     expect(result.action).toBe('accept');
     expect(result.content?.project).toBe('alpha');
-    expect(mockServer.elicitInput).toHaveBeenCalledOnce();
+    expect(elicitInput).toHaveBeenCalledOnce();
   });
 
   it('returns cancel when elicitInput throws (client not capable)', async () => {
@@ -136,9 +137,10 @@ describe('elicitOrFallback (unit)', () => {
       typeof import('../server/elicitation.js')
     >('../server/elicitation.js');
 
+    const elicitInput = vi.fn().mockRejectedValue(new Error('Client does not support elicitation'));
     const mockServer = {
-      elicitInput: vi.fn().mockRejectedValue(new Error('Client does not support elicitation')),
-    } as unknown as Server;
+      server: { elicitInput },
+    } as unknown as McpServer;
 
     const result = await realElicit(mockServer, 'Pick project', schema);
     expect(result.action).toBe('cancel');
@@ -150,9 +152,10 @@ describe('elicitOrFallback (unit)', () => {
       typeof import('../server/elicitation.js')
     >('../server/elicitation.js');
 
+    const elicitInput = vi.fn().mockResolvedValue({ action: 'decline' });
     const mockServer = {
-      elicitInput: vi.fn().mockResolvedValue({ action: 'decline' }),
-    } as unknown as Server;
+      server: { elicitInput },
+    } as unknown as McpServer;
 
     const result = await realElicit(mockServer, 'Pick project', schema);
     expect(result.action).toBe('decline');

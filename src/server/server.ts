@@ -1899,7 +1899,6 @@ function registerCodeModeTools(
         const budget = BUDGET_LIMITS[getActiveBudget()];
         const sandboxApi = createSandboxAPI(client, memoryBank, {
           getCompileInfoFn,
-          server: server.server,
           mcpServer: server,
           elicitEnabled: config.OPENGROK_ENABLE_ELICITATION,
         });
@@ -2049,7 +2048,7 @@ function registerLegacyTools(
           if (projects.length > 0) {
             const projectNames = projects.map((p) => p.name).slice(0, 20);
             const result = await elicitOrFallback(
-              server.server,
+              server,
               "Which project should I search?",
               {
                 type: "object",

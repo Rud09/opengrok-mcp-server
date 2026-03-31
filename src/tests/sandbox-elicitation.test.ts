@@ -6,7 +6,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createSandboxAPI } from '../server/sandbox.js';
 import type { OpenGrokClient } from '../server/client.js';
 import type { MemoryBank } from '../server/memory-bank.js';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 vi.mock('../server/elicitation.js', async (importOriginal) => {
@@ -107,14 +106,14 @@ describe('createSandboxAPI — elicit()', () => {
   });
 
   it('calls elicitOrFallback and returns accept result', async () => {
-    const mockServer = {} as Server;
+    const mockServer = {} as McpServer;
     vi.mocked(elicitOrFallback).mockResolvedValueOnce({
       action: 'accept',
       content: { path: 'src/auth/AuthService.ts' },
     });
     const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {
       elicitEnabled: true,
-      server: mockServer,
+      mcpServer: mockServer,
     });
     const schema = {
       type: 'object' as const,
@@ -127,11 +126,11 @@ describe('createSandboxAPI — elicit()', () => {
   });
 
   it('calls elicitOrFallback and returns cancel result', async () => {
-    const mockServer = {} as Server;
+    const mockServer = {} as McpServer;
     vi.mocked(elicitOrFallback).mockResolvedValueOnce({ action: 'cancel' });
     const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {
       elicitEnabled: true,
-      server: mockServer,
+      mcpServer: mockServer,
     });
     const result = await api.elicit('Pick project', {
       type: 'object',
@@ -141,11 +140,11 @@ describe('createSandboxAPI — elicit()', () => {
   });
 
   it('calls elicitOrFallback and returns decline result', async () => {
-    const mockServer = {} as Server;
+    const mockServer = {} as McpServer;
     vi.mocked(elicitOrFallback).mockResolvedValueOnce({ action: 'decline' });
     const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {
       elicitEnabled: true,
-      server: mockServer,
+      mcpServer: mockServer,
     });
     const result = await api.elicit('Confirm?', { type: 'object', properties: {} });
     expect(result).toEqual({ action: 'decline' });

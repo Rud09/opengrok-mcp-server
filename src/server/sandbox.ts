@@ -34,7 +34,6 @@ import type { HealthAPIResult } from "./api-types.js";
 import { buildFileOverview, buildCallChain } from "./intelligence.js";
 import { logger } from "./logger.js";
 import { auditLog } from "./audit.js";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { elicitOrFallback, type ElicitSchema, type ElicitResult } from "./elicitation.js";
 
@@ -292,7 +291,6 @@ export interface SandboxAPI {
  */
 export interface SandboxOpts {
   getCompileInfoFn?: (path: string) => Promise<unknown>;
-  server?: Server;
   mcpServer?: McpServer;
   elicitEnabled?: boolean;
 }
@@ -302,7 +300,7 @@ export function createSandboxAPI(
   memoryBank: MemoryBank,
   sandboxOpts: SandboxOpts = {}
 ): SandboxAPI {
-  const { getCompileInfoFn, server, elicitEnabled } = sandboxOpts;
+  const { getCompileInfoFn, mcpServer, elicitEnabled } = sandboxOpts;
   return {
     async search(query, opts = {}) {
       const { searchType = "full", projects, maxResults = 5, startIndex = 0, fileType } = opts;
@@ -448,8 +446,8 @@ export function createSandboxAPI(
     },
 
     async elicit(message, schema) {
-      if (!elicitEnabled || !server) return { action: "cancel" as const };
-      return elicitOrFallback(server, message, schema);
+      if (!elicitEnabled || !mcpServer) return { action: "cancel" as const };
+      return elicitOrFallback(mcpServer, message, schema);
     },
   };
 }
