@@ -262,47 +262,60 @@ export function extractLineRange(
 
 /**
  * Throw if `path` contains traversal sequences that could escape the project
- * root on the remote server. Rejects literal, URL-encoded, double-encoded,
- * and null-byte variants.
+ * root. Rejects literal, URL-encoded, double-encoded, null-byte, Unicode NFD
+ * lookalike, and RTL-override variants.
  */
-export function assertSafePath(path: string): void {
+export function assertSafePath(rawPath: string): void {
+  // Block bidi/zero-width characters that can spoof path display
+  if (/[\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]/.test(rawPath)) {
+    throw new Error(`Unsafe path rejected (bidi/zero-width character): "${rawPath}"`);
+  }
+
+  // Null bytes — never valid
+  if (rawPath.includes('\0') || rawPath.includes('%00') || rawPath.includes('%2500')) {
+    throw new Error(`Unsafe path rejected (null byte): "${rawPath}"`);
+  }
+
   // Decode once to catch single-encoding variants (%2e%2e, %2f)
   let decoded: string;
   try {
-    decoded = decodeURIComponent(path.replace(/\+/g, "%20"));
+    decoded = decodeURIComponent(rawPath.replace(/\+/g, '%20'));
   } catch {
-    // Malformed percent-encoding: treat conservatively as unsafe
-    throw new Error(`Unsafe path rejected (malformed encoding): "${path}"`);
+    throw new Error(`Unsafe path rejected (malformed encoding): "${rawPath}"`);
   }
 
-  // Null bytes — never valid in a path component
-  if (decoded.includes("\0") || path.includes("%00") || path.includes("%2500")) {
-    throw new Error(`Unsafe path rejected (null byte): "${path}"`);
-  }
+  // NFC normalization — collapses NFD lookalike sequences that could spell '..'
+  const normalized = decoded.normalize('NFC').replace(/\\/g, '/');
 
-  // Check on the decoded string for traversal components
-  const normalized = decoded.replace(/\\/g, "/");
+  // Check for traversal using path-component-aware patterns (avoid false
+  // positives on '.../' which is a valid three-dot filename component).
+  // A traversal '..' segment must be bounded by '/' or string boundaries.
+  const lowerNorm = normalized.toLowerCase();
   if (
-    normalized.includes("/../") ||
-    normalized.startsWith("../") ||
-    normalized.endsWith("/..")||
-    normalized === ".." ||
-    normalized.includes("/./") ||
-    normalized.startsWith("./")
+    lowerNorm.includes('/../') ||
+    lowerNorm.startsWith('../') ||
+    lowerNorm === '..' ||
+    lowerNorm.endsWith('/..') ||
+    lowerNorm.includes('/./') ||
+    lowerNorm.startsWith('./')
   ) {
-    throw new Error(`Unsafe path rejected: "${path}"`);
+    throw new Error(`Unsafe path rejected: "${rawPath}"`);
   }
 
-  // Also check the raw path for encoded traversal patterns that survived decoding
-  const rawLower = path.toLowerCase();
-  if (
-    rawLower.includes("%2e%2e") ||
-    rawLower.includes("%2f..") ||
-    rawLower.includes("..%2f") ||
-    rawLower.includes("%252e") ||
-    rawLower.includes("%252f")
-  ) {
-    throw new Error(`Unsafe path rejected (encoded traversal): "${path}"`);
+  // Encoded traversal patterns in the decoded+normalized form
+  const encodedTraversalPatterns = [
+    '..%2f', '%2f..', '%2e%2e', '%252e', '%252f',
+  ];
+  for (const p of encodedTraversalPatterns) {
+    if (lowerNorm.includes(p)) {
+      throw new Error(`Unsafe path rejected: "${rawPath}"`);
+    }
+  }
+
+  // Also check raw path for double-encoded patterns
+  const rawLower = rawPath.toLowerCase();
+  if (rawLower.includes('%252e') || rawLower.includes('%252f')) {
+    throw new Error(`Unsafe path rejected (double-encoded traversal): "${rawPath}"`);
   }
 }
 

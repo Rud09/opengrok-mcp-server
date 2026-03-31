@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSafeUrl, isPrivateIp } from '../server/client.js';
+import { buildSafeUrl, isPrivateIp, assertSafePath } from '../server/client.js';
 
 describe('buildSafeUrl SSRF protection', () => {
   const base = new URL('https://opengrok.company.com/source/');
@@ -81,5 +81,48 @@ describe('isPrivateIp', () => {
 
   it('blocks IPv6 link-local febf::1', () => {
     expect(isPrivateIp('febf::1')).toBe(true);
+  });
+});
+
+describe('assertSafePath traversal protection', () => {
+  it('allows normal paths', () => {
+    expect(() => assertSafePath('src/main/java/Foo.java')).not.toThrow();
+    expect(() => assertSafePath('/project/file.c')).not.toThrow();
+  });
+
+  it('blocks ../ literal', () => {
+    expect(() => assertSafePath('../etc/passwd')).toThrow(/Unsafe/);
+  });
+
+  it('blocks /../../ embedded', () => {
+    expect(() => assertSafePath('foo/../../etc/passwd')).toThrow(/Unsafe/);
+  });
+
+  it('blocks RTL override character U+202E', () => {
+    expect(() => assertSafePath('file\u202e.txt')).toThrow(/Unsafe/);
+  });
+
+  it('blocks zero-width space U+200B', () => {
+    expect(() => assertSafePath('file\u200b/../secret')).toThrow(/Unsafe/);
+  });
+
+  it('blocks %2e%2e encoded', () => {
+    expect(() => assertSafePath('%2e%2e/etc')).toThrow(/Unsafe/);
+  });
+
+  it('blocks null byte', () => {
+    expect(() => assertSafePath('file\0.txt')).toThrow(/Unsafe/);
+  });
+
+  it('blocks double-encoded %252e%252e', () => {
+    expect(() => assertSafePath('%252e%252e/secret')).toThrow(/Unsafe/);
+  });
+
+  it('blocks standalone ..', () => {
+    expect(() => assertSafePath('..')).toThrow(/Unsafe/);
+  });
+
+  it('blocks path ending in /..', () => {
+    expect(() => assertSafePath('foo/..')).toThrow(/Unsafe/);
   });
 });
