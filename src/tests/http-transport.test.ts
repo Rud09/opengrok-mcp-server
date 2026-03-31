@@ -294,10 +294,8 @@ describe("OAuth 2.1 — no auth configured", () => {
   });
 });
 
-describe("OAuth 2.1 discovery + token endpoint (Task 5.3)", () => {
+describe("OAuth 2.1 resource server endpoints (Task 2B)", () => {
   const OAUTH_PORT = BASE_PORT + 500;
-  const CLIENT_ID = "test-client";
-  const CLIENT_SECRET = "test-secret";
   const AUTH_TOKEN = "issued-token";
   let closeOAuth: () => void;
 
@@ -305,70 +303,39 @@ describe("OAuth 2.1 discovery + token endpoint (Task 5.3)", () => {
     const handle = await startHttpTransport(makeFactory(), {
       port: OAUTH_PORT,
       authToken: AUTH_TOKEN,
-      clientId: CLIENT_ID,
-      clientSecret: CLIENT_SECRET,
     });
     closeOAuth = handle.close;
   });
 
   afterAll(() => closeOAuth());
 
-  it("GET /.well-known/oauth-authorization-server returns correct metadata", async () => {
+  it("GET /.well-known/oauth-protected-resource returns RFC 9728 metadata", async () => {
     const res = await httpRequest({
       port: OAUTH_PORT,
       method: "GET",
-      path: "/.well-known/oauth-authorization-server",
+      path: "/.well-known/oauth-protected-resource",
     });
     expect(res.status).toBe(200);
     const doc = JSON.parse(res.body) as Record<string, unknown>;
-    expect(doc.issuer).toBe(`http://127.0.0.1:${OAUTH_PORT}`);
-    expect(doc.token_endpoint).toBe(`http://127.0.0.1:${OAUTH_PORT}/token`);
-    expect(doc.grant_types_supported).toContain("client_credentials");
-    expect(doc.token_endpoint_auth_methods_supported).toContain("client_secret_basic");
+    expect(doc.resource).toBeDefined();
+    expect(Array.isArray(doc.authorization_servers)).toBe(true);
+    expect(doc.bearer_methods_supported).toContain("header");
+    expect(res.headers["cache-control"]).toContain("max-age=3600");
   });
 
-  it("POST /token with valid Basic credentials returns access_token", async () => {
-    const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
-    const res = await httpRequest({
-      port: OAUTH_PORT,
-      method: "POST",
-      path: "/token",
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        "Content-Type": "application/json",
-      },
-      body: "",
-    });
-    expect(res.status).toBe(200);
+  it("POST /token returns 404 with resource-server description", async () => {
+    const res = await httpRequest({ port: OAUTH_PORT, method: "POST", path: "/token", body: "" });
+    expect(res.status).toBe(404);
     const data = JSON.parse(res.body) as Record<string, unknown>;
-    expect(data.access_token).toBe(AUTH_TOKEN);
-    expect(data.token_type).toBe("Bearer");
-    expect(data.expires_in).toBe(3600);
+    expect(data.error).toBe("not_found");
+    expect(typeof data.error_description).toBe("string");
   });
 
-  it("POST /token with wrong credentials returns 401", async () => {
-    const credentials = Buffer.from(`${CLIENT_ID}:wrong-secret`).toString("base64");
-    const res = await httpRequest({
-      port: OAUTH_PORT,
-      method: "POST",
-      path: "/token",
-      headers: { Authorization: `Basic ${credentials}` },
-      body: "",
-    });
-    expect(res.status).toBe(401);
+  it("GET /token also returns 404", async () => {
+    const res = await httpRequest({ port: OAUTH_PORT, method: "GET", path: "/token" });
+    expect(res.status).toBe(404);
     const data = JSON.parse(res.body) as Record<string, unknown>;
-    expect(data.error).toBe("invalid_client");
-  });
-
-  it("POST /token returns 404 when no clientId/clientSecret configured", async () => {
-    const noTokenPort = BASE_PORT + 600;
-    const { close } = await startHttpTransport(makeFactory(), { port: noTokenPort });
-    try {
-      const res = await httpRequest({ port: noTokenPort, method: "POST", path: "/token", body: "" });
-      expect(res.status).toBe(404);
-    } finally {
-      close();
-    }
+    expect(data.error).toBe("not_found");
   });
 });
 

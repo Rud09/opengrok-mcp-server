@@ -5,7 +5,8 @@
  * Supports multiple simultaneous clients via per-session transport instances.
  * Each connecting client gets an isolated McpServer instance with full tool access.
  *
- * OAuth 2.1 Bearer token auth, token endpoint, and discovery endpoint are also served here.
+ * OAuth 2.1 resource-server endpoints (RFC 9728 protected resource metadata) are served here.
+ * This server does NOT issue tokens — obtain tokens from your authorization server.
  *
  * stdio transport is unaffected — this is purely additive.
  */
@@ -15,6 +16,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { logger } from "./logger.js";
 import { parseRbacConfig, hasPermission, type Role } from "./rbac.js";
 
@@ -23,10 +25,6 @@ export interface HttpTransportOptions {
   host?: string;
   /** If set, all /mcp requests must carry `Authorization: Bearer <authToken>`. */
   authToken?: string;
-  /** OAuth 2.1 client_credentials client ID (enables /token endpoint). */
-  clientId?: string;
-  /** OAuth 2.1 client_credentials client secret. */
-  clientSecret?: string;
   /** Maximum concurrent sessions before new connections are rejected with 503. Default: 100 */
   maxSessions?: number;
   /** RBAC config: 'token1:admin,token2:readonly' format (Task 5.10) */
@@ -84,68 +82,62 @@ function rejectUnauthorized(res: ServerResponse): void {
   res.end(JSON.stringify({ error: "unauthorized", error_description: "Bearer token required" }));
 }
 
-
-
 // ---------------------------------------------------------------------------
-// OAuth 2.1 helpers
+// OAuth 2.1 JWT validation (resource server)
 // ---------------------------------------------------------------------------
 
-/** Build the OAuth 2.1 authorization server metadata document (RFC 8414). */
-function buildOAuthMetadata(baseUrl: string): Record<string, unknown> {
-  return {
-    issuer: baseUrl,
-    token_endpoint: `${baseUrl}/token`,
-    token_endpoint_auth_methods_supported: ["client_secret_basic"],
-    grant_types_supported: ["client_credentials"],
-    response_types_supported: ["token"],
-  };
-}
+let _jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
 /**
- * Handle a POST /token request for client_credentials grant.
- * Validates Basic auth credentials against clientId/clientSecret.
- * Returns a Bearer access_token equal to the configured authToken (if set),
- * or a newly minted random UUID otherwise.
+ * Map OAuth 2.1 scopes to an RBAC Role.
+ *
+ * Default scope→role mapping:
+ *   opengrok:admin  → admin
+ *   opengrok:write  → developer
+ *   opengrok:read   → readonly
+ *
+ * Override via OPENGROK_SCOPE_MAP env var (comma-separated "scope:role" pairs,
+ * e.g. "my:admin:admin,my:write:developer").
  */
-async function handleTokenRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
-  opts: { clientId: string; clientSecret: string; authToken: string },
-  readBody: (req: IncomingMessage) => Promise<unknown>
-): Promise<void> {
-  // Support both HTTP Basic auth and form-body client_id/client_secret
-  let clientId: string | null = null;
-  let clientSecret: string | null = null;
-
-  const authHeader = req.headers.authorization;
-  if (authHeader?.startsWith("Basic ")) {
-    const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
-    const sep = decoded.indexOf(":");
-    if (sep !== -1) {
-      clientId = decoded.slice(0, sep);
-      clientSecret = decoded.slice(sep + 1);
+export function scopeToRole(scopes: string | string[]): Role {
+  const scopeList = Array.isArray(scopes) ? scopes : String(scopes).split(' ');
+  // Allow custom scope mapping via env var: "my:admin:admin,my:write:developer"
+  const customMap: Record<string, Role> = {};
+  const scopeMapEnv = process.env.OPENGROK_SCOPE_MAP ?? '';
+  for (const pair of scopeMapEnv.split(',')) {
+    const parts = pair.trim().split(':');
+    if (parts.length >= 2) {
+      const role = parts[parts.length - 1] as Role;
+      const scope = parts.slice(0, -1).join(':');
+      customMap[scope] = role;
     }
   }
-
-  // Fall back to request body
-  if (!clientId || !clientSecret) {
-    const body = await readBody(req);
-    if (body && typeof body === "object") {
-      const b = body as Record<string, string>;
-      clientId = b["client_id"] ?? null;
-      clientSecret = b["client_secret"] ?? null;
-    }
+  const defaultMap: Record<string, Role> = {
+    'opengrok:admin': 'admin',
+    'opengrok:write': 'developer',
+    'opengrok:read': 'readonly',
+    ...customMap,
+  };
+  for (const [scope, role] of Object.entries(defaultMap)) {
+    if (scopeList.includes(scope)) return role;
   }
+  return 'readonly';
+}
 
-  if (!clientId || !clientSecret || clientId !== opts.clientId || clientSecret !== opts.clientSecret) {
-    res.writeHead(401, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "invalid_client" }));
-    return;
+async function validateJwt(token: string): Promise<Role | null> {
+  const jwksUri = process.env.OPENGROK_JWKS_URI;
+  if (!jwksUri) return null;
+  try {
+    if (!_jwks) _jwks = createRemoteJWKSet(new URL(jwksUri));
+    const { payload } = await jwtVerify(token, _jwks, {
+      audience: process.env.OPENGROK_RESOURCE_URI,
+    });
+    const scopes = String((payload as JWTPayload & { scope?: string; scp?: string }).scope ??
+                           (payload as JWTPayload & { scp?: string }).scp ?? '');
+    return scopeToRole(scopes);
+  } catch {
+    return null;
   }
-
-  const accessToken = opts.authToken || randomUUID();
-  res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-  res.end(JSON.stringify({ access_token: accessToken, token_type: "Bearer", expires_in: 3600 }));
 }
 
 /**
@@ -159,8 +151,12 @@ export async function startHttpTransport(
   serverFactory: McpServerFactory,
   opts: HttpTransportOptions
 ): Promise<{ close: () => void }> {
-  const { port, host = "127.0.0.1", authToken = "", clientId = "", clientSecret = "", maxSessions = 100, rbacTokens = "" } = opts;
+  const { port, host = "127.0.0.1", authToken = "", maxSessions = 100, rbacTokens = "" } = opts;
   const rbacConfig = parseRbacConfig(rbacTokens);
+
+  if (process.env.OPENGROK_STRICT_OAUTH === 'true' && !process.env.OPENGROK_JWKS_URI) {
+    throw new Error('OPENGROK_STRICT_OAUTH=true requires OPENGROK_JWKS_URI to be set');
+  }
 
   // Active sessions: Mcp-Session-Id → { transport, server, meta }
   const sessions = new Map<string, TransportHandle>();
@@ -198,20 +194,38 @@ export async function startHttpTransport(
   };
 
   /** Extract bearer token from Authorization header and return role (or null for unknown/denied). */
-  const extractRole = (req: IncomingMessage): Role | null => {
+  const extractRole = async (req: IncomingMessage): Promise<Role | null> => {
     const auth = req.headers.authorization;
+    const rbacActive = rbacConfig.tokens.size > 0;
+
     if (!auth?.startsWith('Bearer ')) {
-      // No token — fail-safe: if RBAC active, deny; if no RBAC, allow as admin (local dev)
-      return rbacConfig.tokens.size > 0 ? null : 'admin';
+      // No token — fail-safe:
+      // • RBAC configured → deny (null)
+      // • static authToken configured → deny (null)
+      // • nothing configured → allow as admin (local dev)
+      if (rbacActive || authToken) return null;
+      return 'admin';
     }
     const token = auth.slice(7);
 
-    // Static auth token check (local dev only)
-    if (authToken && token === authToken) return rbacConfig.tokens.get(token) ?? 'admin';
+    // Static auth token (local dev — disabled in strict mode)
+    if (authToken && process.env.OPENGROK_STRICT_OAUTH !== 'true') {
+      try {
+        const a = Buffer.from(token, 'utf8');
+        const b = Buffer.from(authToken, 'utf8');
+        if (a.length === b.length && timingSafeEqual(a, b)) {
+          return rbacConfig.tokens.get(token) ?? 'admin';
+        }
+      } catch { /* length mismatch handled by !== check */ }
+    }
 
-    const role = rbacConfig.tokens.get(token);
-    if (!role && rbacConfig.tokens.size > 0) return null; // unknown token + RBAC active = deny
-    return role ?? 'admin';
+    // RBAC static token map
+    const rbacRole = rbacConfig.tokens.get(token);
+    if (rbacRole) return rbacRole;
+    if (rbacActive && !process.env.OPENGROK_JWKS_URI) return null;
+
+    // JWT validation (falls back to null if JWKS not configured)
+    return validateJwt(token);
   };
 
   /** Check if a request body is an MCP tool call, and validate RBAC if so. Returns null if permission denied. */
@@ -286,7 +300,7 @@ export async function startHttpTransport(
         }
 
         // Extract role from bearer token (RBAC)
-        const role = extractRole(req);
+        const role = await extractRole(req);
         if (role === null) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'forbidden', error_description: 'Unknown or missing token' }));
@@ -399,87 +413,84 @@ export async function startHttpTransport(
   };
 
   const httpServer = createHttpServer((req, res) => {
-    setCorsHeaders(req, res);
+    void (async () => {
+      setCorsHeaders(req, res);
 
-    if (req.method === "OPTIONS") {
-      res.writeHead(204).end();
-      return;
-    }
+      if (req.method === "OPTIONS") {
+        res.writeHead(204).end();
+        return;
+      }
 
-    const url = req.url?.split("?")[0];
+      const url = req.url?.split("?")[0];
 
-    // OAuth 2.1 discovery endpoint (RFC 8414)
-    if (url === "/.well-known/oauth-authorization-server" && req.method === "GET") {
-      const baseUrl = `http://${host}:${port}`;
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(buildOAuthMetadata(baseUrl)));
-      return;
-    }
+      // RFC 9728 — OAuth 2.1 protected resource metadata
+      if (url === '/.well-known/oauth-protected-resource' && req.method === 'GET') {
+        const resourceUri = process.env.OPENGROK_RESOURCE_URI ?? `http://${host}:${port}`;
+        const authServers = (process.env.OPENGROK_AUTH_SERVERS ?? '')
+          .split(',').map(s => s.trim()).filter(Boolean);
+        const metadata = {
+          resource: resourceUri,
+          authorization_servers: authServers,
+          bearer_methods_supported: ['header'],
+        };
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=3600' });
+        res.end(JSON.stringify(metadata));
+        return;
+      }
 
-    // OAuth 2.1 token endpoint — only active when clientId/clientSecret are configured
-    if (url === "/token" && req.method === "POST") {
-      if (!clientId || !clientSecret) {
+      // /token endpoint removed — this server is an OAuth 2.1 resource server only
+      if (url === '/token') {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'not_found',
+          error_description: 'This server is an OAuth 2.1 resource server. Obtain tokens from your authorization server.',
+        }));
+        return;
+      }
+
+      // Debug/admin endpoint — active session stats.
+      if (url === "/mcp/sessions" && req.method === "GET") {
+        const sessionList = Array.from(sessions.entries()).map(([sid, h]) => ({
+          sessionId: sid,
+          createdAt: h.meta.createdAt.toISOString(),
+          lastActivity: h.meta.lastActivity.toISOString(),
+          requestCount: h.meta.requestCount,
+        }));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ activeSessionCount: sessions.size, maxSessions, sessions: sessionList }));
+        return;
+      }
+
+      if (url !== "/mcp") {
         res.writeHead(404).end("Not Found");
         return;
       }
-      void handleTokenRequest(req, res, { clientId, clientSecret, authToken }, readBody);
-      return;
-    }
 
-    // Debug/admin endpoint — active session stats.
-    if (url === "/mcp/sessions" && req.method === "GET") {
-      const sessionList = Array.from(sessions.entries()).map(([sid, h]) => ({
-        sessionId: sid,
-        createdAt: h.meta.createdAt.toISOString(),
-        lastActivity: h.meta.lastActivity.toISOString(),
-        requestCount: h.meta.requestCount,
-      }));
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ activeSessionCount: sessions.size, maxSessions, sessions: sessionList }));
-      return;
-    }
+      // Bearer token validation for /mcp
+      // Only enforce auth for new sessions (initialize requests without session ID)
+      // Existing sessions are identified by session ID header
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      const isExistingSession = sessionId && sessions.has(sessionId);
 
-    if (url !== "/mcp") {
-      res.writeHead(404).end("Not Found");
-      return;
-    }
-
-    // Bearer token validation for /mcp
-    // Only enforce auth for new sessions (initialize requests without session ID)
-    // Existing sessions are identified by session ID header
-    const sessionId = req.headers["mcp-session-id"] as string | undefined;
-    const isExistingSession = sessionId && sessions.has(sessionId);
-
-    if (!isExistingSession) {
-      // New request: validate bearer token
-      const auth = req.headers.authorization;
-      const hasBearer = auth?.startsWith("Bearer ");
-      const bearerToken = hasBearer && auth ? auth.slice(7) : null;
-
-      if (rbacConfig.tokens.size > 0) {
-        // RBAC mode: require token to be in RBAC config
-        if (!bearerToken || !rbacConfig.tokens.has(bearerToken)) {
-          rejectUnauthorized(res);
-          return;
-        }
-      } else if (authToken) {
-        // Standard auth mode: require exact token match
-        if (!validateBearerToken(req, authToken)) {
+      if (!isExistingSession) {
+        // New request: validate bearer token
+        const role = await extractRole(req);
+        if (role === null) {
           rejectUnauthorized(res);
           return;
         }
       }
-    }
 
-    if (req.method === "POST") {
-      void handlePost(req, res);
-    } else if (req.method === "GET") {
-      void handleGet(req, res);
-    } else if (req.method === "DELETE") {
-      void handleDelete(req, res);
-    } else {
-      res.writeHead(405).end("Method Not Allowed");
-    }
+      if (req.method === "POST") {
+        await handlePost(req, res);
+      } else if (req.method === "GET") {
+        await handleGet(req, res);
+      } else if (req.method === "DELETE") {
+        await handleDelete(req, res);
+      } else {
+        res.writeHead(405).end("Method Not Allowed");
+      }
+    })();
   });
 
   return new Promise((resolve, reject) => {
@@ -500,4 +511,3 @@ export async function startHttpTransport(
     httpServer.once("error", reject);
   });
 }
-
