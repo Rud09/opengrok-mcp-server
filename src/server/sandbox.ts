@@ -36,6 +36,7 @@ import { logger } from "./logger.js";
 import { auditLog } from "./audit.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { elicitOrFallback, type ElicitSchema, type ElicitResult } from "./elicitation.js";
+import { sampleOrNull } from "./sampling.js";
 
 // ---------------------------------------------------------------------------
 // Buffer layout constants (must match sandbox-worker.ts)
@@ -107,6 +108,10 @@ export const API_SPEC = {
     "Always pass project as a string, not an array.",
     "env.opengrok.traceCallChain() callees direction returns empty (requires AST, not yet supported).",
     "env.opengrok.readMemory() returns undefined for uninitialized files — handle gracefully.",
+    "When findFile() or search() returns multiple path matches and you cannot determine the correct file, call env.opengrok.elicit() with an enum of the top paths (≤10) before fetching content.",
+    "When search() returns 0 results, check result._suggestions first — reformulation candidates may already be present. Call env.opengrok.sample() only if _suggestions is absent or unhelpful.",
+    "When elicit() returns action !== 'accept', return a clear cancellation message — do not proceed with a default or guessed value.",
+    "env.opengrok.sample() returns null on unsupported clients — always null-guard the return value.",
   ],
 
   return_rules: [
@@ -210,6 +215,27 @@ export const API_SPEC = {
       mode: "'overwrite' | 'append' (default: 'overwrite')",
       note: "Always call writeMemory at session end to persist findings.",
     },
+    elicit: {
+      signature: "env.opengrok.elicit(message, schema)",
+      schema: "{ type: 'object', properties: Record<string, { type: 'string'|'number'|'boolean', description?: string, enum?: string[], default?: string|number|boolean }>, required?: string[] }",
+      returns: "{ action: 'accept'|'decline'|'cancel', content?: Record<string, string|number|boolean> }",
+      note: [
+        "Pause and ask the user for input. Use when multiple files match and you cannot determine the correct one.",
+        "enum arrays are capped at 10 items (UI limit).",
+        "Always handle action !== 'accept': return a clear message, never guess.",
+        "Requires OPENGROK_ENABLE_ELICITATION=true and a supporting MCP client.",
+      ],
+    },
+    sample: {
+      signature: "env.opengrok.sample(prompt, opts?)",
+      opts: "{ maxTokens?: number, systemPrompt?: string }",
+      returns: "string | null — null when the client does not support sampling",
+      note: [
+        "Request an AI-generated string for query reformulation or summarization.",
+        "Always null-check: const s = env.opengrok.sample(...); if (s) { ... }",
+        "Prefer checking result._suggestions before calling sample() for zero-result reformulation.",
+      ],
+    },
   },
 
   example: `
@@ -222,6 +248,36 @@ const content = env.opengrok.getFileContent(first.project, first.path, {
   endLine: first.matches[0].lineNumber + 10
 });
 return \`\${first.path}:\${first.matches[0].lineNumber}\\n\${content.content}\`;
+`.trim(),
+
+  disambiguationExample: `
+// File disambiguation: multiple matches → ask user, then fetch
+const found = env.opengrok.findFile("AuthService*", { maxResults: 10 });
+if (found.results.length === 0) return "No file found matching AuthService*";
+if (found.results.length === 1) {
+  const r = found.results[0];
+  return env.opengrok.getFileContent(r.project, r.path).content;
+}
+const paths = found.results.map(r => r.path).slice(0, 10);
+const choice = env.opengrok.elicit("Multiple files match. Which one?", {
+  type: "object",
+  properties: { path: { type: "string", enum: paths, description: "File to fetch" } },
+  required: ["path"],
+});
+if (choice.action !== "accept") return "Cancelled.";
+const match = found.results.find(r => r.path === choice.content.path);
+return env.opengrok.getFileContent(match.project, choice.content.path).content;
+`.trim(),
+
+  zeroResultExample: `
+// Zero-result handling: check _suggestions, fall back to sample()
+const results = env.opengrok.search("handelCrash", { searchType: "defs" });
+if (results.totalCount === 0) {
+  const suggestions = results._suggestions?.join(", ");
+  if (suggestions) return \`No results. Try: \${suggestions}\`;
+  const s = env.opengrok.sample(\`"handelCrash" returned 0 defs results. Suggest 3 alternative symbol names.\`);
+  return s ? \`No results. Try: \${s}\` : "No results found.";
+}
 `.trim(),
 };
 
@@ -277,6 +333,10 @@ export interface SandboxAPI {
     message: string,
     schema: ElicitSchema
   ): Promise<ElicitResult>;
+  sample(
+    prompt: string,
+    opts?: { maxTokens?: number; systemPrompt?: string }
+  ): Promise<string | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +364,32 @@ export function createSandboxAPI(
   return {
     async search(query, opts = {}) {
       const { searchType = "full", projects, maxResults = 5, startIndex = 0, fileType } = opts;
-      return client.search(query, searchType as "full" | "defs" | "refs" | "path" | "hist", projects, maxResults, startIndex, fileType);
+      const result = await client.search(
+        query,
+        searchType as "full" | "defs" | "refs" | "path" | "hist",
+        projects, maxResults, startIndex, fileType
+      );
+      if (result.totalCount === 0 && mcpServer) {
+        const raw = await sampleOrNull(mcpServer, [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text:
+                `Code search for "${query}" returned 0 results. ` +
+                `Suggest 3 alternative search terms, comma-separated, no explanation.`,
+            },
+          },
+        ], {
+          maxTokens: 60,
+          systemPrompt: "You are a code search assistant. Be terse.",
+        });
+        if (raw) {
+          (result as unknown as Record<string, unknown>)._suggestions =
+            raw.split(",").map((s: string) => s.trim()).filter(Boolean).slice(0, 3);
+        }
+      }
+      return result;
     },
 
     async batchSearch(queries, opts = {}) {
@@ -448,6 +533,16 @@ export function createSandboxAPI(
     async elicit(message, schema) {
       if (!elicitEnabled || !mcpServer) return { action: "cancel" as const };
       return elicitOrFallback(mcpServer, message, schema);
+    },
+
+    async sample(prompt, sampleCallOpts = {}) {
+      if (!mcpServer) return null;
+      return sampleOrNull(mcpServer, [
+        { role: "user", content: { type: "text", text: prompt } },
+      ], {
+        maxTokens: sampleCallOpts.maxTokens ?? 256,
+        systemPrompt: sampleCallOpts.systemPrompt ?? "",
+      });
     },
   };
 }

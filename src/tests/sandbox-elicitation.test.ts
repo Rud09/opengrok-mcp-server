@@ -150,3 +150,187 @@ describe('createSandboxAPI — elicit()', () => {
     expect(result).toEqual({ action: 'decline' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 3: sample()
+// ---------------------------------------------------------------------------
+
+describe('createSandboxAPI — sample()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns null when mcpServer is absent', async () => {
+    const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {});
+    const result = await api.sample('suggest search terms for foo');
+    expect(result).toBeNull();
+    expect(sampleOrNull).not.toHaveBeenCalled();
+  });
+
+  it('calls sampleOrNull with correct params and returns generated text', async () => {
+    const mockMcpServer = {} as McpServer;
+    vi.mocked(sampleOrNull).mockResolvedValueOnce('handleCrash, crash_handler, onCrash');
+    const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {
+      mcpServer: mockMcpServer,
+    });
+    const result = await api.sample('suggest alternatives for handleCrash');
+    expect(sampleOrNull).toHaveBeenCalledWith(
+      mockMcpServer,
+      [{ role: 'user', content: { type: 'text', text: 'suggest alternatives for handleCrash' } }],
+      expect.objectContaining({ maxTokens: 256, systemPrompt: '' })
+    );
+    expect(result).toBe('handleCrash, crash_handler, onCrash');
+  });
+
+  it('forwards maxTokens and systemPrompt opts', async () => {
+    const mockMcpServer = {} as McpServer;
+    vi.mocked(sampleOrNull).mockResolvedValueOnce('foo');
+    const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {
+      mcpServer: mockMcpServer,
+    });
+    await api.sample('prompt', { maxTokens: 100, systemPrompt: 'Be terse.' });
+    expect(sampleOrNull).toHaveBeenCalledWith(
+      mockMcpServer,
+      expect.any(Array),
+      expect.objectContaining({ maxTokens: 100, systemPrompt: 'Be terse.' })
+    );
+  });
+
+  it('returns null when sampleOrNull returns null', async () => {
+    const mockMcpServer = {} as McpServer;
+    vi.mocked(sampleOrNull).mockResolvedValueOnce(null);
+    const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {
+      mcpServer: mockMcpServer,
+    });
+    const result = await api.sample('suggest something');
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 4: zero-result _suggestions injection in search()
+// ---------------------------------------------------------------------------
+
+describe('createSandboxAPI — search() zero-result _suggestions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('injects _suggestions when totalCount === 0 and sampling returns text', async () => {
+    const mockClient = makeMinimalClient();
+    const mockMcpServer = {} as McpServer;
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      query: 'handelCrash', searchType: 'defs', totalCount: 0,
+      timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+    vi.mocked(sampleOrNull).mockResolvedValueOnce('handleCrash, crash_handler, onCrash');
+
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer });
+    const result = await api.search('handelCrash', { searchType: 'defs' }) as Record<string, unknown>;
+
+    expect(result.totalCount).toBe(0);
+    expect(result._suggestions).toEqual(['handleCrash', 'crash_handler', 'onCrash']);
+  });
+
+  it('does not inject _suggestions when totalCount > 0', async () => {
+    const mockClient = makeMinimalClient();
+    const mockMcpServer = {} as McpServer;
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      query: 'foo', searchType: 'full', totalCount: 3,
+      timeMs: 1, results: [{ project: 'p', path: 'a.ts', matches: [] }], startIndex: 0, endIndex: 3,
+    });
+
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer });
+    const result = await api.search('foo') as Record<string, unknown>;
+
+    expect(result.totalCount).toBe(3);
+    expect(result._suggestions).toBeUndefined();
+    expect(sampleOrNull).not.toHaveBeenCalled();
+  });
+
+  it('does not inject _suggestions when mcpServer is absent', async () => {
+    const mockClient = makeMinimalClient();
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      query: 'foo', searchType: 'full', totalCount: 0,
+      timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), {});
+    const result = await api.search('foo') as Record<string, unknown>;
+
+    expect(result._suggestions).toBeUndefined();
+    expect(sampleOrNull).not.toHaveBeenCalled();
+  });
+
+  it('does not inject _suggestions when sampleOrNull returns null', async () => {
+    const mockClient = makeMinimalClient();
+    const mockMcpServer = {} as McpServer;
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      query: 'foo', searchType: 'full', totalCount: 0,
+      timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+    vi.mocked(sampleOrNull).mockResolvedValueOnce(null);
+
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer });
+    const result = await api.search('foo') as Record<string, unknown>;
+
+    expect(result._suggestions).toBeUndefined();
+  });
+
+  it('trims whitespace and limits to 3 suggestions', async () => {
+    const mockClient = makeMinimalClient();
+    const mockMcpServer = {} as McpServer;
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      query: 'x', searchType: 'full', totalCount: 0,
+      timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+    vi.mocked(sampleOrNull).mockResolvedValueOnce(' foo , bar , baz , qux ');
+
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer });
+    const result = await api.search('x') as Record<string, unknown>;
+
+    expect(result._suggestions).toEqual(['foo', 'bar', 'baz']); // capped at 3
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 5: API_SPEC has elicit and sample entries
+// ---------------------------------------------------------------------------
+
+import { API_SPEC } from '../server/sandbox.js';
+
+describe('API_SPEC', () => {
+  it('has elicit method entry', () => {
+    expect(API_SPEC.methods).toHaveProperty('elicit');
+    const e = (API_SPEC.methods as Record<string, unknown>).elicit as Record<string, unknown>;
+    expect(e.signature).toContain('env.opengrok.elicit');
+    expect(e.returns).toContain('accept');
+  });
+
+  it('has sample method entry', () => {
+    expect(API_SPEC.methods).toHaveProperty('sample');
+    const s = (API_SPEC.methods as Record<string, unknown>).sample as Record<string, unknown>;
+    expect(s.signature).toContain('env.opengrok.sample');
+    expect(s.returns).toContain('null');
+  });
+
+  it('has disambiguationExample', () => {
+    expect(API_SPEC).toHaveProperty('disambiguationExample');
+    expect(typeof (API_SPEC as Record<string, unknown>).disambiguationExample).toBe('string');
+  });
+
+  it('has zeroResultExample', () => {
+    expect(API_SPEC).toHaveProperty('zeroResultExample');
+    expect(typeof (API_SPEC as Record<string, unknown>).zeroResultExample).toBe('string');
+  });
+
+  it('important[] contains elicit guidance', () => {
+    const hasElicitGuidance = API_SPEC.important.some(line => line.includes('elicit()'));
+    expect(hasElicitGuidance).toBe(true);
+  });
+
+  it('important[] contains sample guidance', () => {
+    const hasSampleGuidance = API_SPEC.important.some(line => line.includes('sample()'));
+    expect(hasSampleGuidance).toBe(true);
+  });
+});
