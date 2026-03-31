@@ -93,7 +93,7 @@ Manages credentials (VS Code SecretStorage + encrypted temp files), registers th
 | `OPENGROK_VERIFY_SSL` | `true` (default) / `false` — disable for self-signed certs |
 | `OPENGROK_PROXY` | HTTP proxy URL |
 | `OPENGROK_CONTEXT_BUDGET` | `minimal` (4 KB) / `standard` (8 KB) / `generous` (16 KB) |
-| `OPENGROK_CODE_MODE` | Enable 2-tool Code Mode |
+| `OPENGROK_CODE_MODE` | Enable Code Mode (5 tools: opengrok_api, opengrok_execute + 3 memory tools) |
 | `OPENGROK_MEMORY_BANK_DIR` | Override memory-bank directory |
 | `OPENGROK_DEFAULT_PROJECT` | Default project to scope searches to |
 | `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | Force `markdown`, `json`, `tsv`, `toon`, `yaml`, or `text` for all tool responses |
