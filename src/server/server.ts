@@ -11,8 +11,7 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
-/** Extended annotation type for tools that support Claude's interleaved thinking. */
-type CodeModeAnnotations = ToolAnnotations & { "x-supports-interleaving": true };
+
 import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
@@ -483,24 +482,20 @@ const READ_ONLY_LOCAL: ToolAnnotations = {
   openWorldHint: false,
 };
 
-// Code Mode tools carry an extra x-supports-interleaving hint.
-// Typed as CodeModeAnnotations (extends ToolAnnotations) so TypeScript
-// verifies the field is present; structural subtyping allows passing it
-// wherever ToolAnnotations is expected without an unsafe cast.
-const CODE_MODE_API_ANNOTATIONS: CodeModeAnnotations = {
+// Code Mode tools are well-suited for Claude's extended thinking between tool calls,
+// but enabling that is a client-side API concern — no MCP annotation needed.
+const CODE_MODE_API_ANNOTATIONS: ToolAnnotations = {
   readOnlyHint: true,
   openWorldHint: false,
   idempotentHint: true,
   destructiveHint: false,
-  "x-supports-interleaving": true,
 };
 
-const CODE_MODE_EXECUTE_ANNOTATIONS: CodeModeAnnotations = {
+const CODE_MODE_EXECUTE_ANNOTATIONS: ToolAnnotations = {
   readOnlyHint: false,
   openWorldHint: true,
   idempotentHint: false,
   destructiveHint: false,
-  "x-supports-interleaving": true,
 };
 
 // ---------------------------------------------------------------------------
@@ -1644,9 +1639,10 @@ export function createServer(
     registerCodeModeTools(server, client, config, memoryBank, local, toolRateLimiter);
     registerMemoryTools(server, memoryBank, config);
   } else {
-    // Standard mode: all individual tools + memory tools.
-    // registerLegacyTools internally calls registerMemoryTools when memoryBank is provided.
-    registerLegacyTools(server, client, config, local, false, memoryBank, toolRateLimiter);
+    // Standard mode: 23 legacy tools only. Memory tools are Code Mode only.
+    // Compact descriptions when budget=minimal to save ~1,400 tokens.
+    const compactDescriptions = config.OPENGROK_CONTEXT_BUDGET === "minimal";
+    registerLegacyTools(server, client, config, local, compactDescriptions, undefined, toolRateLimiter);
   }
 
   // Task 4.5: Register memory files as MCP Resources
@@ -1869,7 +1865,6 @@ function registerCodeModeTools(
       title: "OpenGrok API Reference",
       description: "Return the full Code Mode API specification.",
       inputSchema: { _ : z.string().optional().describe("(no input required)") },
-      // x-supports-interleaving: extended thinking hint for Claude (Task 5.9)
       annotations: CODE_MODE_API_ANNOTATIONS,
     },
     () => {
@@ -1893,7 +1888,6 @@ function registerCodeModeTools(
       inputSchema: {
         code: z.string().min(1).describe("JS function body; use env.opengrok.* for API calls; return a value."),
       },
-      // x-supports-interleaving: extended thinking hint for Claude (Task 5.9)
       annotations: CODE_MODE_EXECUTE_ANNOTATIONS,
     },
     async (args) => {
@@ -2016,11 +2010,11 @@ function registerLegacyTools(
   client: OpenGrokClient,
   config: Config,
   local: LocalLayer,
-  codeMode: boolean,
+  compactDescriptions: boolean,
   memoryBank?: MemoryBank,
   toolRateLimiter?: ToolRateLimiter
 ): void {
-  const desc = (full: string, compact: string): string => codeMode ? compact : full;
+  const desc = (full: string, compact: string): string => compactDescriptions ? compact : full;
   TOOL_REGISTRATION_ORDER.push("opengrok_search_code");
   server.registerTool(
     "opengrok_search_code",
