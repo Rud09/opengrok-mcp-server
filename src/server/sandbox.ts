@@ -34,9 +34,6 @@ import type { HealthAPIResult } from "./api-types.js";
 import { buildFileOverview, buildCallChain } from "./intelligence.js";
 import { logger } from "./logger.js";
 import { auditLog } from "./audit.js";
-import { elicitOrFallback } from "./elicitation.js";
-import type { ElicitSchema } from "./elicitation.js";
-import { sampleOrNull } from "./sampling.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -300,7 +297,7 @@ export function createSandboxAPI(
   memoryBank: MemoryBank,
   sandboxOpts: SandboxOpts = {}
 ): SandboxAPI {
-  const { getCompileInfoFn, server, mcpServer, elicitEnabled } = sandboxOpts;
+  const { getCompileInfoFn } = sandboxOpts;
   return {
     async search(query, opts = {}) {
       const { searchType = "full", projects, maxResults = 5, startIndex = 0, fileType } = opts;

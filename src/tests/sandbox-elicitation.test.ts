@@ -1,24 +1,11 @@
 /**
- * Unit tests for createSandboxAPI — elicit/sample/suggestions.
- * Mocks elicitation.js and sampling.js to avoid real MCP client dependency.
+ * Unit tests for createSandboxAPI opts object refactoring.
+ * Elicit/sample/suggestions tests added in Tasks 2–5.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createSandboxAPI } from '../server/sandbox.js';
 import type { OpenGrokClient } from '../server/client.js';
 import type { MemoryBank } from '../server/memory-bank.js';
-
-vi.mock('../server/elicitation.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../server/elicitation.js')>();
-  return { ...original, elicitOrFallback: vi.fn() };
-});
-
-vi.mock('../server/sampling.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../server/sampling.js')>();
-  return { ...original, sampleOrNull: vi.fn() };
-});
-
-import { elicitOrFallback } from '../server/elicitation.js';
-import { sampleOrNull } from '../server/sampling.js';
 
 function makeMinimalClient(): OpenGrokClient {
   return {
