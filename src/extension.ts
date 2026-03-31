@@ -400,8 +400,15 @@ async function configureCredentials(): Promise<void> {
         value: currentUrl,
         ignoreFocusOut: true,
         validateInput: (value) => {
-            try { new URL(value); return null; }
-            catch { return 'Please enter a valid URL'; }
+            try {
+                const parsed = new URL(value);
+                if (parsed.protocol === 'http:') {
+                    return 'Warning: HTTP detected — credentials will be sent unencrypted. Use HTTPS for production.';
+                }
+                return null;
+            } catch {
+                return 'Please enter a valid URL (e.g. https://opengrok.company.com/source/)';
+            }
         }
     });
     if (!baseUrl) return;
@@ -676,13 +683,17 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
 
         const password = await secretStorage.get(`opengrok-password-${username}`);
         const baseUrl = config.get<string>('baseUrl') || '';
-        const verifySsl = config.get<boolean>('verifySsl') ?? false;
+        const verifySsl = config.get<boolean>('verifySsl') ?? true;
         const proxy = config.get<string>('proxy');
+        const apiVersion = config.get<string>('apiVersion') || 'v1';
+        const enableElicitation = config.get<boolean>('enableElicitation') ?? false;
 
         const env: Record<string, string> = {
             OPENGROK_BASE_URL: baseUrl,
             OPENGROK_USERNAME: username,
             OPENGROK_VERIFY_SSL: verifySsl ? 'true' : 'false',
+            OPENGROK_API_VERSION: apiVersion,
+            OPENGROK_ENABLE_ELICITATION: enableElicitation ? 'true' : 'false',
         };
 
         const codeMode = config.get<boolean>('codeMode') ?? true;
