@@ -200,11 +200,17 @@
     "release:major": "npm run version:major && npm run compile && npm run package-server && npm run vsix"
   },
   "dependencies": {
+    "@clack/prompts": "^1.1.0",
+    "@iarna/toml": "^2.2.5",
     "@jitl/quickjs-ng-wasmfile-release-sync": "^0.31.0",
     "@modelcontextprotocol/sdk": "1.28.0",
+    "@napi-rs/keyring": "^1.2.0",
     "@sebastianwessel/quickjs": "^3.0.1",
     "@toon-format/toon": "^2.1.0",
+    "he": "^1.2.0",
+    "jose": "^6.2.2",
     "js-yaml": "^4.1.1",
+    "minimatch": "^10.2.5",
     "node-html-parser": "^6.1.0",
     "p-retry": "^7.0.0",
     "undici": "^7.24.2",
@@ -214,7 +220,9 @@
     "test-exclude": "^8.0.0"
   },
   "devDependencies": {
+    "@types/he": "^1.2.3",
     "@types/js-yaml": "^4.0.9",
+    "@types/minimatch": "^5.1.2",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^8.56.1",
