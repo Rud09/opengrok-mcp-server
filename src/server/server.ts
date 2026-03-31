@@ -1860,7 +1860,7 @@ function registerCodeModeTools(
       // x-supports-interleaving: extended thinking hint for Claude (Task 5.9)
       annotations: CODE_MODE_API_ANNOTATIONS,
     },
-    async () => {
+    () => {
       auditLog({ type: "tool_invoke", tool: "opengrok_api" });
       try {
         const specText = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
@@ -1892,7 +1892,7 @@ function registerCodeModeTools(
       try {
         const budget = BUDGET_LIMITS[getActiveBudget()];
         const sandboxApi = createSandboxAPI(client, memoryBank, getCompileInfoFn);
-        const workerHandle = await workerPool.acquire();
+        const workerHandle = workerPool.acquire();
         let result: string;
         try {
           result = await executeInSandbox(
@@ -1960,7 +1960,7 @@ function registerCodeModeTools(
       },
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
-    async (args) => {
+    (args) => {
       try {
         const task = taskRegistry.getTask(args.taskId);
         if (!task) {
@@ -2835,7 +2835,7 @@ function registerToolDocResources(server: McpServer): void {
     server.resource(
       'opengrok-tool-docs',
       new ResourceTemplate('opengrok-docs://tools/{name}', { list: undefined }),
-      async (uri, variables) => {
+      (uri, variables) => {
         const name = String(variables['name'] ?? '');
         const doc = TOOL_DOCS[name];
         if (!doc) {
@@ -3062,13 +3062,12 @@ class ToolRateLimiter {
 function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, config: Config): void {
   // On SIGHUP, reload config and notify if code mode changed
   process.on("SIGHUP", () => {
-    void (async () => {
-      try {
-        auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
-        logger.info("Received SIGHUP, reloading config...");
-        
-        // Re-read config from environment
-        const newConfig = loadConfig();
+    try {
+      auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
+      logger.info("Received SIGHUP, reloading config...");
+
+      // Re-read config from environment
+      const newConfig = loadConfig();
         
         // Check if code mode changed
         if (newConfig.OPENGROK_CODE_MODE !== config.OPENGROK_CODE_MODE) {
@@ -3082,10 +3081,9 @@ function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, co
             detail: `SIGHUP: Code Mode toggled to ${newConfig.OPENGROK_CODE_MODE}` 
           });
         }
-      } catch (err) {
-        logger.error("SIGHUP reload failed", { error: String(err) });
-      }
-    })();
+    } catch (err) {
+      logger.error("SIGHUP reload failed", { error: String(err) });
+    }
   });
 }
 

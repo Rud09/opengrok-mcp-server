@@ -106,9 +106,9 @@ function stripHtmlTags(text: string): string {
     // Named HTML entities
     .replace(/&(lt|gt|amp|quot|apos|nbsp|#39);/g, (_, e) => /* v8 ignore next */ HTML_NAMED_ENTITIES[e] ?? _)
     // Decimal numeric references: &#60; → '<'
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(parseInt(d, 10)))
     // Hex numeric references: &#x3C; → '<'
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h: string) => String.fromCodePoint(parseInt(h, 16)));
 }
 
 const LANGUAGE_MAP: Record<string, string> = {

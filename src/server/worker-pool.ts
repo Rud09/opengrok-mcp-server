@@ -24,7 +24,7 @@ export class SandboxWorkerPool {
   private readonly idleTimeoutMs = 30_000;
   private idleTimers = new Map<WorkerHandle, ReturnType<typeof setTimeout>>();
 
-  async acquire(): Promise<WorkerHandle> {
+  acquire(): WorkerHandle {
     const handle = this.idle.pop();
     if (handle) {
       const timer = this.idleTimers.get(handle);

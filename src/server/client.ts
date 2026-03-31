@@ -79,7 +79,8 @@ class RateLimiter {
 
       if (this.tokensMs >= this.intervalMs) {
         this.tokensMs -= this.intervalMs;
-        this.queue.shift()!();
+        const next = this.queue.shift();
+        if (next) next();
       } else {
         const waitMs = this.intervalMs - this.tokensMs;
         await sleep(Math.ceil(waitMs));

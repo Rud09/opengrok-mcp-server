@@ -88,7 +88,7 @@ function cleanupAllCredentialFiles(): void {
  */
 function getExtensionVersion(): string {
     const ext = vscode.extensions.getExtension('IcyHot09.opengrok-mcp-server');
-    return ext?.packageJSON.version || '0.0.0';
+    return String(ext?.packageJSON.version ?? '0.0.0');
 }
 
 /**
@@ -833,10 +833,10 @@ function openConfigurationPanel(context: vscode.ExtensionContext): void {
                         await _sendCurrentConfig(configPanel.webview);
                         break;
                     case 'testConnection':
-                        await _handleTestConnection(configPanel.webview, message.data);
+                        await _handleTestConnection(configPanel.webview, message.data as { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string });
                         break;
                     case 'saveConfiguration':
-                        await _handleSaveConfiguration(configPanel.webview, message.data);
+                        await _handleSaveConfiguration(configPanel.webview, message.data as { baseUrl: string; username: string; password?: string; proxy?: string; verifySsl: boolean; defaultProject?: string; contextBudget?: string; responseFormatOverride?: string; codeMode?: boolean; memoryBankDir?: string; compileDbPaths?: string; codeModeChanged?: boolean; apiVersion?: string });
                         break;
                 }
             } catch (error: unknown) {
