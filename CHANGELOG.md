@@ -148,8 +148,8 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 - `validateOrigin()` dead function removed
 - `OPENGROK_ALLOWED_CLIENT_IDS` config removed
 
-### 📊 Tool Count: 26 total
-- Standard mode: 23 tools (no memory tools)
+### 📊 Tool Count: 25 total
+- Standard mode: 20 tools (no memory tools)
 - Code Mode: 5 tools (opengrok_api + opengrok_execute + 3 memory tools)
 
 ---

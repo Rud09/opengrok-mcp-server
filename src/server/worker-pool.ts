@@ -56,10 +56,11 @@ export class SandboxWorkerPool {
   }
 
   async drain(): Promise<void> {
-    for (const [handle, timer] of this.idleTimers) {
+    const terminateAll = [...this.idleTimers.entries()].map(([handle, timer]) => {
       clearTimeout(timer);
-      await handle.terminate();
-    }
+      return handle.terminate();
+    });
+    await Promise.all(terminateAll);
     this.idle = [];
     this.idleTimers.clear();
   }
