@@ -277,7 +277,7 @@ Use opengrok_execute to run JavaScript with env.opengrok.* API methods.
 All methods are synchronous in the sandbox.
 
 ## SANDBOX LIMITS
-- Execution timeout: 9 seconds (hard kill)
+- Execution timeout: 9 s (VM interrupt) + 10 s hard kill (worker terminated)
 - Memory limit: 128 MB
 - Do NOT use Promise.all() — the Atomics bridge serializes all calls from inside the VM.
   Use env.opengrok.batchSearch() instead for parallel queries.
