@@ -9,13 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Highlights
 
-### 🎨 v9.1 — UI Consistency & Feature Completeness
-
-Five previously env-only settings surfaced across all UI surfaces (WebView, CLI wizard, VS Code Settings): Files API Cache, AI Sampling Model, AI Sampling Token Budget, Audit Log File, and Request Rate Limit. Labels and descriptions made canonical across all surfaces. Context budget default bug fixed (`minimal`→`standard`). Quick Configure command removed. **1,078 tests.**
-
 ### 💬 v9.0 — Code Mode Interactive Prompts & LLM Sampling
 
 `env.opengrok.elicit()` and `env.opengrok.sample()` bring interactive user prompts and AI-powered query reformulation directly into the Code Mode sandbox. Zero-result searches auto-inject `_suggestions` when sampling is available. `opengrok_api` gains a session-start project picker. `elicitOrFallback` migrated from deprecated `Server` to `McpServer`. **1,115 tests, ≥89% coverage.**
+
+- 🎨 **v9.1** — Five env-only settings surfaced in all UI surfaces (WebView, CLI wizard, VS Code Settings): Files API Cache, AI Sampling Model, AI Sampling Token Budget, Audit Log File, Request Rate Limit. Context budget default corrected (`minimal`→`standard`). Quick Configure command removed. `opengrok_api` and `opengrok_read_memory` no longer budget-capped (static/managed content must not be truncated). **1,078 tests.**
 
 ### 🔑 v8.0 — Security Hardening & OS Keychain Integration
 
@@ -81,6 +79,8 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 **Bug fixes:**
 - `extension.ts` context budget fallback corrected from `'minimal'` to `'standard'` (was inconsistent with `package.json` default and CLI wizard)
+- `opengrok_api`: removed `capResponse()` — API spec (~7 KB YAML) is static reference data that must be returned complete; `minimal` budget (4 KB cap) was truncating it, breaking Code Mode entirely
+- `opengrok_read_memory`: removed `capResponse()` — memory bank files have their own write-time size limits (4 KB / 32 KB); the budget cap was redundantly truncating `investigation-log.md` to 4 KB instead of its 32 KB maximum
 
 **Removed:**
 - `opengrok-mcp.configure` ("Quick Configure") command removed — redundant with the Configuration Manager WebView panel; `activationEvents` entry also removed
@@ -92,10 +92,6 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 - New `src/tests/configure.test.ts` with 11 unit tests covering `buildEnv()` for all 5 new fields
 - `buildEnv()` exported from `configure.ts` for testability
 - **1,078 tests total** — all passing
-
-**Bug fixes (re-release):**
-- `opengrok_api`: removed `capResponse()` — API spec is static reference data that must be returned complete; with `minimal` budget (4 KB cap) the ~7 KB YAML was truncated, breaking Code Mode entirely
-- `opengrok_read_memory`: removed `capResponse()` — memory bank files have their own write-time size limits (4 KB / 32 KB); the budget cap was redundantly truncating `investigation-log.md` to 4 KB instead of its 32 KB maximum
 
 ---
 
