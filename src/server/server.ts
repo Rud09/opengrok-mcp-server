@@ -2952,9 +2952,10 @@ function registerToolDocResources(server: McpServer): void {
   }
 
   try {
-    server.resource(
+    server.registerResource(
       'opengrok-tool-docs',
       new ResourceTemplate('opengrok-docs://tools/{name}', { list: undefined }),
+      {},
       (uri, variables) => {
         const name = String(variables['name'] ?? '');
         const doc = TOOL_DOCS[name];
