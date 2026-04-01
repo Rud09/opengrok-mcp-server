@@ -59,6 +59,30 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.1.9] - 2026-04-01
+
+### 🔍 MCP Audit Fixes
+
+**Schema validation:**
+- `SearchPatternArgs`: added `.refine()` to validate regex before sending to OpenGrok — malformed patterns now fail fast with a clear message instead of surfacing an API error
+- `GetCompileInfoArgs`: added `.refine()` for path traversal and bidi-character safety (null bytes, `../` sequences, URL-encoded variants) — mirrors the `assertSafePath` guard already applied inside the HTTP client
+
+**Memory bank:**
+- `MemoryBank.write`: replaced pre-reject throw with graceful trim when append combined size exceeds limit — existing content is trimmed to headroom before the new entry is appended; the write never rejects for size reasons
+- `MemoryBank.trimLogFromTop`: fixed off-by-one in both last-resort byte-truncation branches — the `trimNote` prefix was not subtracted from the truncation window, allowing results up to `maxBytes + 32` bytes
+
+**MCP Resources:**
+- Added static `opengrok-docs://api` resource exposing the full Code Mode API spec as `text/yaml`; compliant clients can pre-fetch to avoid calling `opengrok_api` and paying the token cost every session
+
+**Prompts:**
+- Added `debug-issue` prompt: guides the LLM through error→throw-site→callers→file-history→blame investigation workflow (4th prompt alongside `investigate-symbol`, `find-feature`, `review-file`)
+
+**Tests:**
+- `memory-bank.test.ts`: updated pre-reject test to verify graceful trim behaviour; added assertion that final written content is ≤ 32768 bytes and contains the new entry
+- **1,075 tests total** — all passing
+
+---
+
 ## [9.1.8] - 2026-04-01
 
 ### ✨ UI Consistency & Feature Completeness
