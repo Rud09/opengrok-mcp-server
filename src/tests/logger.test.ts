@@ -51,4 +51,11 @@ describe('logger', () => {
     logger.info('no meta');
     expect(stderrSpy.mock.calls[0][1]).toBe('');
   });
+
+  it('redacts sensitive keys in meta objects', () => {
+    logger.info('auth attempt', { password: 'secret123', username: 'alice' });
+    const sanitized = stderrSpy.mock.calls[0][1] as Record<string, unknown>;
+    expect(sanitized.password).toBe('[REDACTED]');
+    expect(sanitized.username).toBe('alice');
+  });
 });

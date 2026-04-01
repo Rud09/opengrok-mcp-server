@@ -116,6 +116,17 @@ describe('auditLog', () => {
     expect(fs.existsSync(tmpFile)).toBe(false);
   });
 
+  it('exportAuditLogAsCSV sanitizes formula-injection characters in fields', async () => {
+    configureAuditLog(tmpFile);
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    auditLog({ type: 'tool_invoke', tool: '=cmd|/C calc', project: 'p1' });
+    spy.mockRestore();
+    await getAuditWriteQueue();
+    const csv = exportAuditLogAsCSV(tmpFile);
+    // Fields starting with '=' should be prefixed with ' to prevent formula injection
+    expect(csv).toContain("'=cmd");
+  });
+
   it('exportAuditLogAsCSV round-trips to CSV', async () => {
     configureAuditLog(tmpFile);
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);

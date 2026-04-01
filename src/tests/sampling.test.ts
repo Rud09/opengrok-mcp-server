@@ -129,6 +129,22 @@ describe('sampleOrNull', () => {
     expect(result).toBe('Here is the explanation.');
   });
 
+  it('returns null when content type is text but text property is undefined', async () => {
+    const mockServer = {
+      server: {
+        createMessage: vi.fn().mockResolvedValue({
+          model: 'test-model',
+          role: 'assistant',
+          content: { type: 'text' }, // text property absent → content.text ?? null returns null
+        }),
+      },
+    };
+    const result = await sampleOrNull(mockServer as never, [
+      { role: 'user', content: { type: 'text', text: 'test' } },
+    ]);
+    expect(result).toBeNull();
+  });
+
   it('returns null when content type is not text', async () => {
     const mockServer = {
       server: {

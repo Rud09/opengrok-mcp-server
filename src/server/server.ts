@@ -75,18 +75,6 @@ import {
   FindFileArgs,
   WhatChangedArgs,
   DependencyMapArgs,
-  SearchResultsOutput,
-  FileContentOutput,
-  ProjectsListOutput,
-  BatchSearchOutput,
-  SymbolContextOutput,
-  FileHistoryOutput,
-  FileSymbolsOutput,
-  WhatChangedOutput,
-  DependencyMapOutput,
-  BlameOutput,
-  FileDiffOutput,
-  CallGraphOutput,
 } from "./models.js";
 import type {
   FileContent,
@@ -250,6 +238,7 @@ The \`response_format\` parameter controls output. Default is "auto":
 - file content → text (raw)
 - other → markdown
 - toon → ultra-compact search results (~60% token savings, search tools only)
+- json → JSON in content text (for programmatic use; auto never selects this)
 Override per-call or globally with OPENGROK_RESPONSE_FORMAT_OVERRIDE.
 
 ## RATE LIMITS
@@ -784,9 +773,9 @@ function makeToolError(name: string, err: unknown): ToolResult {
  * Shared helper: format a tool response, routing to compact formats via selectFormat.
  * Applies capResponse to protect LLM context windows.
  *
- * structuredContent is ONLY included when response_format="json" is explicitly
- * set (or forced via global override). LLMs see both content and structuredContent,
- * so always including it wastes 200–800 tokens per call with duplicate data.
+ * When response_format="json", structured data is JSON-serialised into content[0].text
+ * so programmatic consumers can parse it. No structuredContent is ever set — these
+ * tools carry no outputSchema, so the SDK does not require it.
  */
 function formatResponse(
   textMarkdown: string,
@@ -805,8 +794,6 @@ function formatResponse(
   }
   return {
     content: [{ type: "text", text }],
-    // Only include structuredContent for programmatic consumers (explicit json format)
-    ...(effective === "json" ? { structuredContent: structured } : {}),
   };
 }
 
@@ -1810,32 +1797,21 @@ function registerMemoryTools(
       title: "Memory Bank Status",
       description: "Show current memory bank file sizes and modification times.",
       inputSchema: {},
-      outputSchema: {
-        files: z.array(z.object({
-          filename: z.string(),
-          bytes: z.number().optional(),
-          preview: z.string().optional(),
-          empty: z.boolean(),
-        })).describe("Status of each memory bank file"),
-      },
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
     async () => {
       auditLog({ type: "tool_invoke", tool: "opengrok_memory_status" });
       try {
         const lines: string[] = ["# OpenGrok Memory Status"];
-        const fileStatuses: Array<{ filename: string; bytes?: number; preview?: string; empty: boolean }> = [];
         for (const filename of ALLOWED_FILES) {
           // Use statFile() — reads only the first 256 bytes for preview instead of
           // loading the entire file (investigation-log.md can be up to 32 KB).
           const stat = await memoryBank.statFile(filename);
           if (!stat) {
             lines.push(`- ${filename}: empty`);
-            fileStatuses.push({ filename, empty: true });
           } else {
             const { bytes, preview } = stat;
             lines.push(`- ${filename}: ${bytes}B — "${preview}"`);
-            fileStatuses.push({ filename, bytes, preview, empty: false });
           }
         }
         lines.push("");
@@ -1843,7 +1819,6 @@ function registerMemoryTools(
         lines.push("built-in memory tool (/memory command) — it auto-loads at every session.");
         return {
           content: [{ type: "text", text: lines.join("\n") }],
-          structuredContent: { files: fileStatuses },
         };
       } catch (err) {
         return makeToolError("opengrok_memory_status", err);
@@ -2156,7 +2131,6 @@ function registerLegacyTools(
         "Search code (full-text or symbol)"
       ),
       inputSchema: SearchCodeArgs.shape,
-      outputSchema: SearchResultsOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2276,7 +2250,6 @@ function registerLegacyTools(
         "Read file lines (use start_line+end_line)"
       ),
       inputSchema: GetFileContentArgs.shape,
-      outputSchema: FileContentOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2301,7 +2274,6 @@ function registerLegacyTools(
       title: "Get File History",
       description: desc("Show git commit history for a file.", "File commit history"),
       inputSchema: GetFileHistoryArgs.shape,
-      outputSchema: FileHistoryOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2312,27 +2284,23 @@ function registerLegacyTools(
           args.path,
           args.max_entries
         );
-        const structured = {
-          _meta: {
-            tool: "opengrok_get_file_history",
-            project: args.project,
-            path: args.path,
-            fetchedAt: new Date().toISOString(),
-            version: __VERSION__,
-          },
-          entries: history.entries.map((e) => ({
-            revision: e.revision,
-            author: e.author,
-            date: e.date,
-            message: e.message,
-          })),
-        };
+        const fmt = selectFormat("generic", args.response_format);
+        if (fmt === "json") {
+          const data = {
+            entries: history.entries.map((e) => ({
+              revision: e.revision,
+              author: e.author,
+              date: e.date,
+              message: e.message,
+            })),
+          };
+          return { content: [{ type: "text" as const, text: capResponse(JSON.stringify(data, null, 2)) }] };
+        }
         return {
           content: [
             { type: "text" as const, text: capResponse(formatFileHistory(history)) },
             { type: "resource_link" as const, uri: buildXrefUri(config.OPENGROK_BASE_URL, args.project, args.path), name: args.path, mimeType: getMimeType(args.path) },
           ],
-          structuredContent: structured as unknown as Record<string, unknown>,
         };
       } catch (err) {
         return makeToolError("opengrok_get_file_history", err);
@@ -2350,7 +2318,6 @@ function registerLegacyTools(
         "Diff two file revisions"
       ),
       inputSchema: GetFileDiffArgs.shape,
-      outputSchema: FileDiffOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2360,23 +2327,6 @@ function registerLegacyTools(
         const fmt = selectFormat("generic", args.response_format);
         return {
           content: [{ type: "text" as const, text: capResponse(formatFileDiff(diff, fmt)) }],
-          structuredContent: {
-            _meta: {
-              tool: "opengrok_get_file_diff",
-              project: args.project,
-              path: args.path,
-              rev1: args.rev1,
-              rev2: args.rev2,
-              fetchedAt: new Date().toISOString(),
-              version: __VERSION__,
-            },
-            stats: diff.stats,
-            hunks: diff.hunks.map(h => ({
-              oldStart: h.oldStart, oldCount: h.oldCount,
-              newStart: h.newStart, newCount: h.newCount,
-              lines: h.lines.length,
-            })),
-          } as unknown as Record<string, unknown>,
         };
       } catch (err) {
         return makeToolError("opengrok_get_file_diff", err);
@@ -2408,7 +2358,6 @@ function registerLegacyTools(
       title: "List Projects",
       description: desc("List all indexed OpenGrok projects.", "List all indexed projects"),
       inputSchema: ListProjectsArgs.shape,
-      outputSchema: ProjectsListOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2477,7 +2426,6 @@ function registerLegacyTools(
         "Run 2–5 parallel searches"
       ),
       inputSchema: BatchSearchArgs.shape,
-      outputSchema: BatchSearchOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2525,7 +2473,6 @@ function registerLegacyTools(
         "Symbol definition, header and refs"
       ),
       inputSchema: GetSymbolContextArgs.shape,
-      outputSchema: SymbolContextOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2548,11 +2495,8 @@ function registerLegacyTools(
         } else {
           displayText = capResponse(text);
         }
-        // structuredContent is always returned here because this tool declares an outputSchema —
-        // the MCP SDK requires structuredContent when outputSchema is set.
         return {
           content: [{ type: "text", text: displayText }],
-          structuredContent: structured as unknown as Record<string, unknown>,
         };
       } catch (err) {
         return makeToolError("opengrok_get_symbol_context", err);
@@ -2569,15 +2513,6 @@ function registerLegacyTools(
         "Server connectivity and index status"
       ),
       inputSchema: IndexHealthArgs.shape,
-      outputSchema: {
-        connected: z.boolean().describe("Whether the OpenGrok server is reachable"),
-        latencyMs: z.number().optional().describe("Round-trip latency in milliseconds"),
-        indexedProjects: z.number().describe("Number of indexed projects"),
-        latencyTrend: z.enum(["stable", "increasing", "first_check"]).describe("Latency trend since last check"),
-        stalenessScore: z.enum(["healthy", "possibly_stale", "likely_stale"]).describe("Index freshness estimate"),
-        warnings: z.array(z.string()).describe("Any connectivity or index warnings"),
-        message: z.string().describe("Human-readable status message"),
-      },
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2637,7 +2572,6 @@ function registerLegacyTools(
         if (format === "json") {
           return {
             content: [{ type: "text", text: JSON.stringify(health, null, 2) }],
-            structuredContent: health,
           };
         }
 
@@ -2652,11 +2586,8 @@ function registerLegacyTools(
           ...(health.warnings.length > 0 ? [`- **Warnings:** ${health.warnings.join(", ")}`] : []),
         ].join("\n");
 
-        // structuredContent is always included because this tool declares an outputSchema —
-        // the MCP spec requires structuredContent on every non-error response when outputSchema is set.
         return {
           content: [{ type: "text", text: lines }],
-          structuredContent: health,
         };
       } catch (err) {
         return makeToolError("opengrok_index_health", err);
@@ -2699,27 +2630,19 @@ function registerLegacyTools(
         "File symbols list"
       ),
       inputSchema: GetFileSymbolsArgs.shape,
-      outputSchema: FileSymbolsOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_get_file_symbols" });
       try {
         const result = await client.getFileSymbols(args.project, args.path);
-        const structured = {
-          _meta: {
-            tool: "opengrok_get_file_symbols",
-            project: args.project,
-            path: args.path,
-            fetchedAt: new Date().toISOString(),
-            version: __VERSION__,
-          },
-          symbols: result.symbols.map((s) => ({
-            name: s.symbol,
-            type: s.type,
-            line: s.line,
-          })),
-        };
+        const fmt = selectFormat("generic", args.response_format);
+        if (fmt === "json") {
+          const data = {
+            symbols: result.symbols.map((s) => ({ name: s.symbol, type: s.type, line: s.line })),
+          };
+          return { content: [{ type: "text" as const, text: capResponse(JSON.stringify(data, null, 2)) }] };
+        }
         if (!result.symbols.length) {
           return {
             content: [
@@ -2728,7 +2651,6 @@ function registerLegacyTools(
                 text: `No symbols found for ${args.path} in project ${args.project}. The file may not be indexed or the OpenGrok instance does not support the /api/v1/file/defs endpoint.`,
               },
             ],
-            structuredContent: structured as unknown as Record<string, unknown>,
           };
         }
         return {
@@ -2736,7 +2658,6 @@ function registerLegacyTools(
             { type: "text" as const, text: capResponse(formatFileSymbols(result)) },
             { type: "resource_link" as const, uri: buildXrefUri(config.OPENGROK_BASE_URL, args.project, args.path), name: args.path, mimeType: getMimeType(args.path) },
           ],
-          structuredContent: structured as unknown as Record<string, unknown>,
         };
       } catch (err) {
         return makeToolError("opengrok_get_file_symbols", err);
@@ -2753,7 +2674,6 @@ function registerLegacyTools(
         "Callers and callees of a symbol"
       ),
       inputSchema: CallGraphArgs.shape,
-      outputSchema: CallGraphOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2763,28 +2683,18 @@ function registerLegacyTools(
         const results = await client.getCallGraph(args.project, args.symbol);
         const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
         const maxBytes = MAX_RESPONSE_BYTES_OVERRIDE ?? BUDGET_LIMITS[getActiveBudget()].maxResponseBytes;
-        const text = pickSearchFormatter(fmt, maxBytes)(results);
-        const structured = {
-          _meta: {
-            tool: "opengrok_call_graph",
-            project: args.project,
-            symbol: args.symbol,
-            fetchedAt: new Date().toISOString(),
-            version: __VERSION__,
-          },
-          results: results.results.map((r: SearchResult) => ({
-            file: r.path,
-            project: r.project,
-            lines: r.matches.map((m: SearchMatch) => ({
-              number: m.lineNumber,
-              content: m.lineContent,
+        if (fmt === "json") {
+          const data = {
+            results: results.results.map((r: SearchResult) => ({
+              file: r.path,
+              project: r.project,
+              lines: r.matches.map((m: SearchMatch) => ({ number: m.lineNumber, content: m.lineContent })),
             })),
-          })),
-        };
+          };
+          return { content: [{ type: "text", text: capResponse(JSON.stringify(data, null, 2)) }] };
+        }
         return {
-          content: [{ type: "text", text }],
-          // outputSchema is declared — structuredContent must always be present on non-error responses.
-          structuredContent: structured as unknown as Record<string, unknown>,
+          content: [{ type: "text", text: pickSearchFormatter(fmt, maxBytes)(results) }],
         };
       } catch (err) {
         return makeToolError("opengrok_call_graph", err);
@@ -2801,7 +2711,6 @@ function registerLegacyTools(
         "Recent line changes grouped by commit"
       ),
       inputSchema: WhatChangedArgs.shape,
-      outputSchema: WhatChangedOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2811,48 +2720,32 @@ function registerLegacyTools(
           client.getFileHistory(args.project, args.path),
           client.getAnnotate(args.project, args.path),
         ]);
-        const text = formatWhatChanged(history, annotation, args.since_days);
-
-        // Build structured changes from the same logic as formatWhatChanged
-        const cutoff = new Date();
-        cutoff.setDate(cutoff.getDate() - args.since_days);
-        const recentRevisions = new Set<string>();
-        for (const entry of history.entries) {
-          const entryDate = new Date(entry.date);
-          if (!isNaN(entryDate.getTime()) && entryDate >= cutoff) {
-            recentRevisions.add(entry.revision);
+        const fmt = selectFormat("generic", args.response_format);
+        if (fmt === "json") {
+          const cutoff = new Date();
+          cutoff.setDate(cutoff.getDate() - args.since_days);
+          const recentRevisions = new Set<string>();
+          for (const entry of history.entries) {
+            const entryDate = new Date(entry.date);
+            if (!isNaN(entryDate.getTime()) && entryDate >= cutoff) {
+              recentRevisions.add(entry.revision);
+            }
           }
-        }
-        const byRevision = new Map<string, { author: string; date: string; lines: number[] }>();
-        for (const line of annotation.lines) {
-          if (!recentRevisions.has(line.revision)) continue;
-          let group = byRevision.get(line.revision);
-          if (!group) {
-            group = { author: line.author, date: line.date, lines: [] };
-            byRevision.set(line.revision, group);
+          const byRevision = new Map<string, { author: string; date: string; lines: number[] }>();
+          for (const line of annotation.lines) {
+            if (!recentRevisions.has(line.revision)) continue;
+            let group = byRevision.get(line.revision);
+            if (!group) {
+              group = { author: line.author, date: line.date, lines: [] };
+              byRevision.set(line.revision, group);
+            }
+            group.lines.push(line.lineNumber);
           }
-          group.lines.push(line.lineNumber);
+          const changes = [...byRevision.entries()].map(([commit, { author, date, lines }]) => ({ commit, author, date, lines }));
+          return { content: [{ type: "text" as const, text: capResponse(JSON.stringify({ changes }, null, 2)) }] };
         }
-        const changes = [...byRevision.entries()].map(([commit, { author, date, lines }]) => ({
-          commit,
-          author,
-          date,
-          lines,
-        }));
-
-        const structured = {
-          _meta: {
-            tool: "opengrok_what_changed",
-            project: args.project,
-            path: args.path,
-            fetchedAt: new Date().toISOString(),
-            version: __VERSION__,
-          },
-          changes,
-        };
         return {
-          content: [{ type: "text" as const, text: capResponse(text) }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          content: [{ type: "text" as const, text: capResponse(formatWhatChanged(history, annotation, args.since_days)) }],
         };
       } catch (err) {
         return makeToolError("opengrok_what_changed", err);
@@ -2869,38 +2762,33 @@ function registerLegacyTools(
         "Git blame annotation"
       ),
       inputSchema: BlameArgs.shape,
-      outputSchema: BlameOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_blame" });
       try {
         const annotations = await client.getAnnotate(args.project, args.path);
-        const text = formatBlame(annotations, args.line_start, args.line_end, args.include_diff);
-
-        let displayLines = annotations.lines;
-        if (args.line_start !== undefined || args.line_end !== undefined) {
-          /* v8 ignore start */
-          const s = args.line_start ?? 1;
-          const e = args.line_end ?? Infinity;
-          /* v8 ignore stop */
-          displayLines = annotations.lines.filter((l) => l.lineNumber >= s && l.lineNumber <= e);
-        }
-
-        const structured: z.infer<typeof BlameOutput> = {
-          _meta: { tool: "opengrok_blame", project: args.project, path: args.path, fetchedAt: new Date().toISOString(), version: __VERSION__ },
-          entries: displayLines.map((l) => ({
+        const fmt = selectFormat("generic", args.response_format);
+        if (fmt === "json") {
+          let displayLines = annotations.lines;
+          if (args.line_start !== undefined || args.line_end !== undefined) {
+            /* v8 ignore start */
+            const s = args.line_start ?? 1;
+            const e = args.line_end ?? Infinity;
+            /* v8 ignore stop */
+            displayLines = annotations.lines.filter((l) => l.lineNumber >= s && l.lineNumber <= e);
+          }
+          const entries = displayLines.map((l) => ({
             line: l.lineNumber,
             commit: l.revision ?? "",
             author: l.author ?? "",
             date: l.date ?? "",
             content: l.content,
-          })),
-        };
-
+          }));
+          return { content: [{ type: "text", text: capResponse(JSON.stringify({ entries }, null, 2)) }] };
+        }
         return {
-          content: [{ type: "text", text: capResponse(text) }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          content: [{ type: "text", text: capResponse(formatBlame(annotations, args.line_start, args.line_end, args.include_diff)) }],
         };
       } catch (err) {
         return makeToolError("opengrok_blame", err);
@@ -2917,7 +2805,6 @@ function registerLegacyTools(
         "Include/import dependency graph"
       ),
       inputSchema: DependencyMapArgs.shape,
-      outputSchema: DependencyMapOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2925,21 +2812,13 @@ function registerLegacyTools(
       if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_dependency_map");
       try {
         const nodes = await buildDependencyGraph(client, args.project, args.path, args.depth, args.direction);
+        const fmt = selectFormat("generic", args.response_format);
+        if (fmt === "json") {
+          const data = { nodes: nodes.map((n) => ({ path: n.path, level: n.level, direction: n.direction })) };
+          return { content: [{ type: "text" as const, text: capResponse(JSON.stringify(data, null, 2)) }] };
+        }
+
         const text = formatDependencyMap(args.path, args.depth, nodes);
-        const structured = {
-          _meta: {
-            tool: "opengrok_dependency_map",
-            project: args.project,
-            path: args.path,
-            fetchedAt: new Date().toISOString(),
-            version: __VERSION__,
-          },
-          nodes: nodes.map((n) => ({
-            path: n.path,
-            level: n.level,
-            direction: n.direction,
-          })),
-        };
 
         // For large graphs, use MCP Sampling to generate an intelligent summary
         let summarySection = "";
@@ -2961,7 +2840,6 @@ function registerLegacyTools(
 
         return {
           content: [{ type: "text" as const, text: capResponse(text + summarySection) }],
-          structuredContent: structured as unknown as Record<string, unknown>,
         };
       } catch (err) {
         return makeToolError("opengrok_dependency_map", err);

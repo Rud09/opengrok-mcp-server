@@ -1,7 +1,7 @@
 /**
  * Integration smoke tests for McpServer registerTool() path (Phase 7.5).
  * Wires McpServer with a mock client and verifies tool handlers return
- * correct structuredContent, text, and isError responses.
+ * correct text and isError responses.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createServer } from '../server/server.js';

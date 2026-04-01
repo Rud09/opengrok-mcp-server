@@ -254,6 +254,7 @@ function makeSymbolMockClient() {
     listProjects: vi.fn(),
     getAnnotate: vi.fn(),
     getFileSymbols: vi.fn(),
+    getCallGraph: vi.fn(),
     testConnection: vi.fn(),
     close: vi.fn(),
   };
@@ -495,6 +496,18 @@ describe('opengrok_search_pattern — tool registration and call', () => {
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? '';
     expect(text).toContain('Error');
   });
+
+  it('rejects invalid regex pattern via schema validation', async () => {
+    const { mcpClient } = await createStandardClient();
+    // The SearchPatternArgs schema has a refine validator that catches invalid regex;
+    // the MCP SDK should return a validation error, not call the tool handler.
+    const result = await mcpClient.callTool({
+      name: 'opengrok_search_pattern',
+      arguments: { pattern: '[invalid' },
+    });
+    // Zod refine returns false → MCP SDK wraps as isError
+    expect(result.isError).toBe(true);
+  });
 });
 
 // -----------------------------------------------------------------------
@@ -662,11 +675,11 @@ describe('opengrok_blame — tool registration and call', () => {
 });
 
 // -----------------------------------------------------------------------
-// Task 4.2 / 4.3 — outputSchema + _meta + resource links
+// Task 4.2 / 4.3 — format handling + resource links
 // -----------------------------------------------------------------------
 
-describe('opengrok_get_file_history — outputSchema + _meta + resource link', () => {
-  it('returns structuredContent with _meta and entries', async () => {
+describe('opengrok_get_file_history — format handling + resource link', () => {
+  it('returns markdown text with history entries in auto mode', async () => {
     const { mcpClient, ogClient } = await createStandardClient();
     ogClient.getFileHistory.mockResolvedValue({
       project: 'proj',
@@ -679,24 +692,34 @@ describe('opengrok_get_file_history — outputSchema + _meta + resource link', (
       name: 'opengrok_get_file_history',
       arguments: { project: 'proj', path: '/src/EventLoop.cpp' },
     });
-    const sc = result.structuredContent as Record<string, unknown> | undefined;
-    expect(sc).toBeDefined();
-    const meta = (sc as Record<string, unknown>)._meta as Record<string, unknown>;
-    expect(meta).toBeDefined();
-    expect(meta.tool).toBe('opengrok_get_file_history');
-    expect(meta.project).toBe('proj');
-    expect(meta.path).toBe('/src/EventLoop.cpp');
-    expect(typeof meta.fetchedAt).toBe('string');
-    expect(typeof meta.version).toBe('string');
-    const entries = (sc as Record<string, unknown>).entries as unknown[];
-    expect(Array.isArray(entries)).toBe(true);
-    expect(entries).toHaveLength(1);
-    const entry = entries[0] as Record<string, unknown>;
-    expect(entry.revision).toBe('abc12345');
-    expect(entry.author).toBe('Alice');
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    expect(text).toContain('abc12345');
+    expect(text).toContain('Alice');
   });
 
-  it('includes resource_link content item', async () => {
+  it('returns JSON in content when response_format=json', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getFileHistory.mockResolvedValue({
+      project: 'proj',
+      path: '/src/EventLoop.cpp',
+      entries: [
+        { revision: 'abc12345', author: 'Alice', date: '2025-01-01', message: 'initial commit' },
+      ],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_get_file_history',
+      arguments: { project: 'proj', path: '/src/EventLoop.cpp', response_format: 'json' },
+    });
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    const parsed = JSON.parse(text) as { entries: { revision: string; author: string }[] };
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.entries[0].revision).toBe('abc12345');
+    expect(parsed.entries[0].author).toBe('Alice');
+  });
+
+  it('includes resource_link content item in auto mode', async () => {
     const { mcpClient, ogClient } = await createStandardClient();
     ogClient.getFileHistory.mockResolvedValue({
       project: 'proj',
@@ -714,8 +737,8 @@ describe('opengrok_get_file_history — outputSchema + _meta + resource link', (
   });
 });
 
-describe('opengrok_get_file_symbols — outputSchema + _meta + resource link', () => {
-  it('returns structuredContent with _meta and symbols', async () => {
+describe('opengrok_get_file_symbols — format handling + resource link', () => {
+  it('returns formatted text with symbols in auto mode', async () => {
     const { mcpClient, ogClient } = await createStandardClient();
     ogClient.getFileSymbols.mockResolvedValue({
       project: 'proj',
@@ -728,18 +751,31 @@ describe('opengrok_get_file_symbols — outputSchema + _meta + resource link', (
       name: 'opengrok_get_file_symbols',
       arguments: { project: 'proj', path: '/src/Foo.cpp' },
     });
-    const sc = result.structuredContent as Record<string, unknown>;
-    expect(sc).toBeDefined();
-    const meta = sc._meta as Record<string, unknown>;
-    expect(meta.tool).toBe('opengrok_get_file_symbols');
-    expect(meta.project).toBe('proj');
-    const symbols = sc.symbols as unknown[];
-    expect(Array.isArray(symbols)).toBe(true);
-    expect(symbols).toHaveLength(1);
-    const sym = symbols[0] as Record<string, unknown>;
-    expect(sym.name).toBe('doSomething');
-    expect(sym.type).toBe('function');
-    expect(sym.line).toBe(10);
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    expect(text).toContain('doSomething');
+  });
+
+  it('returns JSON in content when response_format=json', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getFileSymbols.mockResolvedValue({
+      project: 'proj',
+      path: '/src/Foo.cpp',
+      symbols: [
+        { symbol: 'doSomething', type: 'function', signature: null, line: 10, lineStart: 10, lineEnd: 20, namespace: null },
+      ],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_get_file_symbols',
+      arguments: { project: 'proj', path: '/src/Foo.cpp', response_format: 'json' },
+    });
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    const parsed = JSON.parse(text) as { symbols: { name: string; type: string; line: number }[] };
+    expect(parsed.symbols).toHaveLength(1);
+    expect(parsed.symbols[0].name).toBe('doSomething');
+    expect(parsed.symbols[0].type).toBe('function');
+    expect(parsed.symbols[0].line).toBe(10);
   });
 
   it('includes resource_link when symbols are found', async () => {
@@ -761,7 +797,7 @@ describe('opengrok_get_file_symbols — outputSchema + _meta + resource link', (
     expect((resourceLink as { uri: string }).uri).toContain('/src/Foo.cpp');
   });
 
-  it('returns structuredContent with empty symbols when none found', async () => {
+  it('returns text message when no symbols found', async () => {
     const { mcpClient, ogClient } = await createStandardClient();
     ogClient.getFileSymbols.mockResolvedValue({
       project: 'proj',
@@ -772,15 +808,14 @@ describe('opengrok_get_file_symbols — outputSchema + _meta + resource link', (
       name: 'opengrok_get_file_symbols',
       arguments: { project: 'proj', path: '/src/Empty.cpp' },
     });
-    const sc = result.structuredContent as Record<string, unknown>;
-    expect(sc).toBeDefined();
-    expect((sc._meta as Record<string, unknown>).tool).toBe('opengrok_get_file_symbols');
-    expect((sc.symbols as unknown[])).toHaveLength(0);
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    expect(text).toContain('No symbols found');
   });
 });
 
-describe('opengrok_what_changed — outputSchema + _meta', () => {
-  it('returns structuredContent with _meta and changes', async () => {
+describe('opengrok_what_changed — format handling', () => {
+  it('returns formatted text in auto mode', async () => {
     const { mcpClient, ogClient } = await createStandardClient();
     const recentDate = new Date();
     recentDate.setDate(recentDate.getDate() - 1);
@@ -802,27 +837,47 @@ describe('opengrok_what_changed — outputSchema + _meta', () => {
       name: 'opengrok_what_changed',
       arguments: { project: 'proj', path: 'src/EventLoop.cpp', since_days: 7 },
     });
-    const sc = result.structuredContent as Record<string, unknown>;
-    expect(sc).toBeDefined();
-    const meta = sc._meta as Record<string, unknown>;
-    expect(meta.tool).toBe('opengrok_what_changed');
-    expect(meta.project).toBe('proj');
-    expect(meta.path).toBe('src/EventLoop.cpp');
-    expect(typeof meta.fetchedAt).toBe('string');
-    const changes = sc.changes as unknown[];
-    expect(Array.isArray(changes)).toBe(true);
-    expect(changes).toHaveLength(1);
-    const change = changes[0] as Record<string, unknown>;
-    expect(change.commit).toBe('abc12345');
-    expect(change.author).toBe('Alice');
-    expect(Array.isArray(change.lines)).toBe(true);
-    expect(change.lines).toContain(10);
-    expect(change.lines).toContain(11);
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    expect(text).toContain('abc12345');
+    expect(text).toContain('Alice');
+  });
+
+  it('returns JSON in content when response_format=json', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    const recentDate = new Date();
+    recentDate.setDate(recentDate.getDate() - 1);
+    const recentDateStr = recentDate.toISOString().slice(0, 10);
+    ogClient.getFileHistory.mockResolvedValue({
+      project: 'proj',
+      path: 'src/EventLoop.cpp',
+      entries: [{ revision: 'abc12345', author: 'Alice', date: recentDateStr, message: 'fix bug' }],
+    });
+    ogClient.getAnnotate.mockResolvedValue({
+      project: 'proj',
+      path: 'src/EventLoop.cpp',
+      lines: [
+        { lineNumber: 10, revision: 'abc12345', author: 'Alice', date: recentDateStr, content: 'code' },
+        { lineNumber: 11, revision: 'abc12345', author: 'Alice', date: recentDateStr, content: 'more' },
+      ],
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_what_changed',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', since_days: 7, response_format: 'json' },
+    });
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    const parsed = JSON.parse(text) as { changes: { commit: string; author: string; lines: number[] }[] };
+    expect(parsed.changes).toHaveLength(1);
+    expect(parsed.changes[0].commit).toBe('abc12345');
+    expect(parsed.changes[0].author).toBe('Alice');
+    expect(parsed.changes[0].lines).toContain(10);
+    expect(parsed.changes[0].lines).toContain(11);
   });
 });
 
-describe('opengrok_dependency_map — outputSchema + _meta', () => {
-  it('returns structuredContent with _meta and nodes', async () => {
+describe('opengrok_dependency_map — format handling', () => {
+  it('returns formatted text in auto mode', async () => {
     const { mcpClient, ogClient } = await createStandardClient();
     // dependency_map uses search internally via buildDependencyGraph
     ogClient.search.mockResolvedValue({
@@ -833,13 +888,110 @@ describe('opengrok_dependency_map — outputSchema + _meta', () => {
       name: 'opengrok_dependency_map',
       arguments: { project: 'proj', path: '/src/EventLoop.h', depth: 1, direction: 'both' },
     });
-    const sc = result.structuredContent as Record<string, unknown>;
-    expect(sc).toBeDefined();
-    const meta = sc._meta as Record<string, unknown>;
-    expect(meta.tool).toBe('opengrok_dependency_map');
-    expect(meta.project).toBe('proj');
-    expect(meta.path).toBe('/src/EventLoop.h');
-    expect(typeof meta.fetchedAt).toBe('string');
-    expect(Array.isArray(sc.nodes)).toBe(true);
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    expect(text.length).toBeGreaterThan(0);
+  });
+
+  it('returns JSON in content when response_format=json', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.search.mockResolvedValue({
+      query: '', searchType: 'refs', totalCount: 0, timeMs: 1,
+      results: [], startIndex: 0, endIndex: 0,
+    });
+    const result = await mcpClient.callTool({
+      name: 'opengrok_dependency_map',
+      arguments: { project: 'proj', path: '/src/EventLoop.h', depth: 1, direction: 'both', response_format: 'json' },
+    });
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    const parsed = JSON.parse(text) as { nodes: unknown[] };
+    expect(Array.isArray(parsed.nodes)).toBe(true);
+  });
+});
+
+describe('opengrok_blame — json format', () => {
+  const sampleAnnotated = {
+    project: 'proj',
+    path: 'src/EventLoop.cpp',
+    lines: [
+      { lineNumber: 1, revision: 'abc12345', author: 'alice', date: '2024-01-15', content: 'void EventLoop::run() {' },
+      { lineNumber: 2, revision: 'def67890', author: 'bob',   date: '2024-02-20', content: '  while (running_) {' },
+      { lineNumber: 3, revision: undefined,  author: undefined, date: undefined,  content: 'no meta line' },
+    ],
+  };
+
+  it('returns JSON entries array when response_format=json', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', response_format: 'json' },
+    });
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    const parsed = JSON.parse(text) as { entries: { line: number; commit: string; author: string }[] };
+    expect(Array.isArray(parsed.entries)).toBe(true);
+    expect(parsed.entries[0].commit).toBe('abc12345');
+    expect(parsed.entries[0].author).toBe('alice');
+    // Line 3 has undefined revision/author/date — covers the ?? "" fallback branches
+    expect(parsed.entries[2].commit).toBe('');
+    expect(parsed.entries[2].author).toBe('');
+    expect(parsed.entries[2].date).toBe('');
+  });
+
+  it('filters to line range when line_start is set and response_format=json', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getAnnotate.mockResolvedValue(sampleAnnotated);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_blame',
+      arguments: { project: 'proj', path: 'src/EventLoop.cpp', line_start: 1, line_end: 1, response_format: 'json' },
+    });
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    const parsed = JSON.parse(text) as { entries: { line: number }[] };
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.entries[0].line).toBe(1);
+  });
+});
+
+describe('opengrok_call_graph — format handling', () => {
+  const sampleCallGraph = {
+    query: 'MyFunc',
+    searchType: 'refs',
+    totalCount: 1,
+    timeMs: 5,
+    results: [
+      { project: 'proj', path: '/src/main.cpp', matches: [{ lineNumber: 10, lineContent: 'MyFunc();' }] },
+    ],
+    startIndex: 0,
+    endIndex: 1,
+  };
+
+  it('returns JSON results array when response_format=json', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getCallGraph.mockResolvedValue(sampleCallGraph);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_call_graph',
+      arguments: { project: 'proj', symbol: 'MyFunc', response_format: 'json' },
+    });
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    const parsed = JSON.parse(text) as { results: { file: string; lines: unknown[] }[] };
+    expect(Array.isArray(parsed.results)).toBe(true);
+    expect(parsed.results[0].file).toBe('/src/main.cpp');
+    expect(parsed.results[0].lines).toHaveLength(1);
+  });
+
+  it('returns formatted text in auto mode (non-json path)', async () => {
+    const { mcpClient, ogClient } = await createStandardClient();
+    ogClient.getCallGraph.mockResolvedValue(sampleCallGraph);
+    const result = await mcpClient.callTool({
+      name: 'opengrok_call_graph',
+      arguments: { project: 'proj', symbol: 'MyFunc' },
+    });
+    expect(result.structuredContent).toBeUndefined();
+    const text = (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).toContain('MyFunc');
   });
 });
