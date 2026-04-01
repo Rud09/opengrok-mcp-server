@@ -745,7 +745,7 @@ export class OpenGrokClient {
       path: normalizedPath,
       content,
       lineCount: totalLines,
-      sizeBytes: Buffer.byteLength(content, "utf8"),
+      sizeBytes: Buffer.byteLength(fullContent, "utf8"),
       startLine,
     };
   }
@@ -783,6 +783,13 @@ export class OpenGrokClient {
   async getAnnotate(project: string, path: string): Promise<AnnotatedFile> {
     assertSafePath(path);
     const normalizedPath = path.replace(/^\/+/, "");
+    const cacheKey = `annotate:${project}:${normalizedPath}`;
+
+    /* v8 ignore next -- cache hit path */
+    const cachedJson = this.fileCache?.get(cacheKey);
+    if (cachedJson !== undefined) {
+      return JSON.parse(cachedJson) as AnnotatedFile;
+    }
 
     // Use cached endpoint style if known, otherwise probe
     /* v8 ignore start */
@@ -796,7 +803,10 @@ export class OpenGrokClient {
         const response = await this.request(annotateUrl, TIMEOUTS.file, "text/html, */*");
         const html = await response.text();
         this.annotateEndpoint = 'annotate';
-        return parseAnnotate(html, project, normalizedPath);
+        const result = parseAnnotate(html, project, normalizedPath);
+        /* v8 ignore next -- cache set */
+        this.fileCache?.set(cacheKey, JSON.stringify(result), estimateBytes(result));
+        return result;
       } catch {
         /* v8 ignore start -- tested via fetch spy in client-internals; V8 coverage merge issue */
         if (this.annotateEndpoint === 'annotate') {
@@ -816,7 +826,9 @@ export class OpenGrokClient {
     const response = await this.request(xrefUrl, TIMEOUTS.file, "text/html, */*");
     const html = await response.text();
     this.annotateEndpoint = 'xref';
-    return parseAnnotate(html, project, normalizedPath);
+    const result = parseAnnotate(html, project, normalizedPath);
+    this.fileCache?.set(cacheKey, JSON.stringify(result), estimateBytes(result));
+    return result;
     /* v8 ignore stop */
   }
 
@@ -910,7 +922,6 @@ export class OpenGrokClient {
     try {
       const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/projects`);
       const response = await this.request(url, TIMEOUTS.default);
-      if (!response.ok) return false;
       const json = await response.json() as unknown;
       // Accept both array (API v1) and object (API v2) responses
       return Array.isArray(json) || (typeof json === "object" && json !== null);
@@ -944,7 +955,13 @@ export class OpenGrokClient {
         url.searchParams.set("project", project);
         const response = await this.request(url, TIMEOUTS.search, "application/json");
         const data = (await response.json()) as Record<string, unknown>;
-        return parseSearchResponse(data, "refs", symbol);
+        // Only use the v2 response if it matches the expected search-results shape.
+        // A call-graph response has a different structure and would parse as empty results
+        // without throwing, blocking the v1 fallback.
+        if (data && typeof data === "object" && "results" in data) {
+          return parseSearchResponse(data, "refs", symbol);
+        }
+        // Response format doesn't match — fall through to v1
       } catch {
         // Fall through to v1 fallback on any error
       }
@@ -981,6 +998,10 @@ export class OpenGrokClient {
     const response = await this.request(url, TIMEOUTS.file, "text/html, */*");
     const html = await response.text();
     return parseFileDiff(html, project, normalizedPath, rev1, rev2);
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl.toString();
   }
 
   async close(): Promise<void> {

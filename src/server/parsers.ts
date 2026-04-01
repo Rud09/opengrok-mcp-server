@@ -557,8 +557,9 @@ export function parseFileSymbols(html: string): FileSymbol[] {
 // Regex patterns for extracting line data from OpenGrok unified diff HTML.
 // Each line within a <td> is separated by <br/> and contains one of:
 const DEL_LINE_RE = /<del\s+class="d">(\d+)<\/del>([\s\S]*)/;     // deleted line
-const ADD_LINE_RE = /<span\s+class="a it">(\d+)<\/span>([\s\S]*)/; // added line
-const CTX_LINE_RE = /<span\s+class="it">(\d+)<\/span>([\s\S]*)/;   // context line
+// Class-membership matching: handles any attribute order (e.g. "a it", "it a", "it ln a").
+const ADD_LINE_RE = /<span\s+class="[^"]*\ba\b[^"]*">(\d+)<\/span>([\s\S]*)/; // added line (has class "a")
+const CTX_LINE_RE = /<span\s+class="[^"]*\bit\b[^"]*">(\d+)<\/span>([\s\S]*)/; // context line (has class "it"; ADD checked first)
 
 /** Strip HTML tags from a string. */
 function stripTags(s: string): string {
@@ -651,8 +652,8 @@ export function parseFileDiff(
     const currNew = curr.newLineNumber ?? curr.oldLineNumber ?? 0;
 
     // A gap > 1 in effective line numbering signals collapsed context between hunks.
-    // This applies regardless of what type the previous line was (context, added, OR removed).
-    if (currNew - prevNew > 1 && curr.type === 'context') {
+    // This applies regardless of what type the current line is (context, added, OR removed).
+    if (currNew - prevNew > 1) {
       hunks.push(buildHunk(currentHunkLines));
       currentHunkLines = [];
     }

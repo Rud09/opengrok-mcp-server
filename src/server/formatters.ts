@@ -74,9 +74,12 @@ export function selectFormat(
 
 // Max lines returned for a full-file read (no line range specified).
 // Override with OPENGROK_MAX_INLINE_LINES env var.
-const _rawMaxInlineLines = process.env.OPENGROK_MAX_INLINE_LINES ?? '';
-const _parsedMaxInlineLines = _rawMaxInlineLines !== '' ? parseInt(_rawMaxInlineLines, 10) : NaN;
-const MAX_INLINE_LINES = !Number.isNaN(_parsedMaxInlineLines) ? _parsedMaxInlineLines : 200; // B8: NaN guard
+// Evaluated at call time so SIGHUP config reloads are respected.
+function getMaxInlineLines(): number {
+  const v = process.env.OPENGROK_MAX_INLINE_LINES ?? '';
+  const n = v !== '' ? parseInt(v, 10) : NaN;
+  return !Number.isNaN(n) ? n : 200;
+}
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -215,12 +218,13 @@ export function formatFileContent(
     `${filename} (${content.project}) -- ${content.lineCount} lines, ${content.sizeBytes.toLocaleString()} bytes`
   );
 
+  const maxLines = getMaxInlineLines();
   const contentLines = content.content.split("\n");
   let truncated = false;
   let displayLines = contentLines;
 
-  if (contentLines.length > MAX_INLINE_LINES) {
-    displayLines = contentLines.slice(0, MAX_INLINE_LINES);
+  if (contentLines.length > maxLines) {
+    displayLines = contentLines.slice(0, maxLines);
     truncated = true;
   }
 
@@ -239,7 +243,7 @@ export function formatFileContent(
 
   if (truncated) {
     lines.push(
-      `*Showing first ${MAX_INLINE_LINES} of ${content.lineCount} lines. Use start_line/end_line to read specific sections.*`
+      `*Showing first ${maxLines} of ${content.lineCount} lines. Use start_line/end_line to read specific sections.*`
     );
   }
 
@@ -433,20 +437,21 @@ export function formatBlame(
     return lines.join("\n");
   }
 
+  // Cap at 500 lines for range requests, 200 for full-file.
+  // Without a cap, blame on large files produces thousands of table rows that
+  // capResponse truncates mid-row, producing malformed markdown.
+  const BLAME_CAP = lineStart !== undefined || lineEnd !== undefined ? 500 : 200;
   let displayLines = annotate.lines;
   if (lineStart !== undefined || lineEnd !== undefined) {
     /* v8 ignore start -- coverage misreports ?? for undefined */
     const s = lineStart ?? 1;
     const e = lineEnd ?? Infinity;
     /* v8 ignore stop */
-    displayLines = annotate.lines.filter(
-      (l) => l.lineNumber >= s && l.lineNumber <= e
-    );
+    displayLines = annotate.lines
+      .filter((l) => l.lineNumber >= s && l.lineNumber <= e)
+      .slice(0, BLAME_CAP);
   } else {
-    // Default cap: 200 lines to prevent unbounded output on large files.
-    // Without a range, blame on a 50k-line file would produce 50k table rows
-    // that capResponse then truncates mid-row, producing malformed markdown.
-    displayLines = annotate.lines.slice(0, 200);
+    displayLines = annotate.lines.slice(0, BLAME_CAP);
   }
 
   if (!displayLines.length) {
@@ -1075,16 +1080,18 @@ export function formatSymbolContextYAML(result: SymbolContextResult): string {
  */
 export function formatFileContentText(content: FileContent): string {
   const filename = /* v8 ignore next */ content.path.split("/").pop() ?? content.path;
+  const maxLines = getMaxInlineLines();
   const startL = content.startLine ?? 1;
-  const endL = startL + content.lineCount - 1;
-  const header = `-- ${filename} (${content.project}) L${startL}-${endL} --\n`;
-
   const contentLines = content.content.split("\n");
   let displayLines = contentLines;
 
-  if (contentLines.length > MAX_INLINE_LINES) {
-    displayLines = contentLines.slice(0, MAX_INLINE_LINES);
+  if (contentLines.length > maxLines) {
+    displayLines = contentLines.slice(0, maxLines);
   }
+
+  // endL is based on the actual range in content, not the full file line count.
+  const endL = startL + displayLines.length - 1;
+  const header = `-- ${filename} (${content.project}) L${startL}-${endL} --\n`;
 
   const lines: string[] = [];
   for (const [i, line] of displayLines.entries()) {

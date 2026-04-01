@@ -223,9 +223,8 @@ export class MemoryBank {
         }
       }
 
-      if (mode === "append" && filename === "investigation-log.md") {
-        const now = new Date();
-        const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      if (filename === "investigation-log.md") {
+        const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
         if (!content.trimStart().startsWith("## ")) {
           content = `## ${timestamp}: Session Update\n${content}`;
         }
@@ -363,10 +362,10 @@ export class MemoryBank {
     const final = trimNote + recent.join("");
     if (Buffer.byteLength(final, "utf8") <= maxBytes) return final;
 
-    // Last resort: byte truncate
+    // Last resort: byte truncate — subtract trimNote bytes so total stays within maxBytes
     return (
       trimNote +
-      Buffer.from(recent.join(""), "utf8").subarray(0, maxBytes).toString("utf8")
+      Buffer.from(recent.join(""), "utf8").subarray(0, Math.max(0, maxBytes - noteBytes)).toString("utf8")
     );
   }
 
@@ -393,7 +392,7 @@ export class MemoryBank {
 
       try {
         const raw = await fsp.readFile(filePath, "utf8");
-        if (raw.trimStart().startsWith(STUB_SENTINEL_PREFIX.slice(0, 20))) continue; // stub
+        if (raw.trimStart().startsWith(STUB_SENTINEL_PREFIX)) continue; // stub
 
         const stat = await fsp.stat(filePath);
         const ageMins = Math.round((Date.now() - stat.mtimeMs) / 60_000);

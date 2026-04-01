@@ -69,7 +69,12 @@ export function configureClaudeCode(config: McpConfig): void {
   }
 }
 
-export function configureVSCode(config: McpConfig): void {
+/**
+ * Configure VS Code MCP settings.
+ * Returns the fallback file path if `code --add-mcp` was unavailable and a
+ * .vscode/mcp.json file was written instead, or undefined if the CLI succeeded.
+ */
+export function configureVSCode(config: McpConfig): string | undefined {
   const env = buildEnv(config);
 
   // Try `code --add-mcp` first (VS Code 1.100+)
@@ -85,7 +90,7 @@ export function configureVSCode(config: McpConfig): void {
     shell: false,
   });
 
-  if (result.status === 0) return;
+  if (result.status === 0) return undefined;
 
   // Fallback: write .vscode/mcp.json in the current working directory
   const vscodeDir = join(process.cwd(), '.vscode');
@@ -113,6 +118,7 @@ export function configureVSCode(config: McpConfig): void {
   };
 
   writeFileSync(mcpJsonPath, JSON.stringify({ ...existing, servers }, null, 2), 'utf8');
+  return mcpJsonPath;
 }
 
 export function configureCodex(config: McpConfig): void {

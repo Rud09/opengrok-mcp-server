@@ -1503,17 +1503,14 @@ async function dispatchTool(
       const args = IndexHealthArgs.parse(rawArgs);
       const format = selectFormat("generic", args.response_format);
       
-      // dispatchTool is a test/legacy path — each call gets its own latency tracker
-      let lastHealthCheckLatencyMs: number | null = null;
-      
       const start = Date.now();
       const ok = await client.testConnection();
       const latencyMs = Date.now() - start;
-      
+
       // Collect project count and any warnings
       let indexedProjects = 0;
       const warnings: string[] = [];
-      
+
       try {
         const projects = await client.listProjects();
         indexedProjects = projects.length;
@@ -1521,22 +1518,18 @@ async function dispatchTool(
         // err intentionally unused
         warnings.push("Could not retrieve project list");
       }
-      
-      // Compute staleness signals (Task 5.8)
-      let latencyTrend: "stable" | "increasing" | "first_check" = "first_check";
+
+      // dispatchTool is a stateless test/legacy path — latency trend requires the
+      // module-level tracker in registerLegacyTools, so always report "first_check" here.
+      const latencyTrend: "stable" | "increasing" | "first_check" = "first_check";
       let stalenessScore: "healthy" | "possibly_stale" | "likely_stale" = "healthy";
-      
-      if (lastHealthCheckLatencyMs !== null) {
-        latencyTrend = latencyMs > lastHealthCheckLatencyMs * 1.5 ? "increasing" : "stable";
-      }
-      lastHealthCheckLatencyMs = latencyMs;
       
       // Staleness heuristics:
       // 1. High latency (>500ms) suggests server load or indexing activity
       // 2. Increasing latency trend suggests growing load
       // 3. No projects indexed suggests potential issue
       if (latencyMs > 500) {
-        stalenessScore = latencyTrend === "increasing" ? "likely_stale" : "possibly_stale";
+        stalenessScore = "possibly_stale";
       }
       if (indexedProjects === 0 && ok) {
         warnings.push("No projects indexed");
@@ -2976,7 +2969,7 @@ function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): voi
  */
 function sanitizePromptArg(value: string): string {
   return value
-    .replace(/`([^`]*)`/g, (_, inner) => inner.replace(/[<>]/g, ""))  // strip backtick delimiters and angle brackets inside
+    .replace(/`([^`]*)`/g, (_, inner: string) => inner.replace(/[<>]/g, ""))  // strip backtick delimiters and angle brackets inside
     .replace(/[\r\n]+/g, " ")                                          // collapse newlines → space
     .trim()
     .slice(0, 256);                                        // hard cap to prevent oversized inputs
@@ -3242,14 +3235,16 @@ function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, co
         
         // Check if code mode changed
         if (newConfig.OPENGROK_CODE_MODE !== config.OPENGROK_CODE_MODE) {
-          logger.info(
-            `Code Mode changed: ${config.OPENGROK_CODE_MODE} → ${newConfig.OPENGROK_CODE_MODE}`,
-            { detail: "Notifying clients of tool list change" }
+          // Tool registrations are fixed at startup — sending toolListChanged would be
+          // misleading since clients would re-query and receive the original list.
+          // Code Mode changes require a server restart to take effect.
+          logger.warn(
+            `Code Mode changed: ${config.OPENGROK_CODE_MODE} → ${newConfig.OPENGROK_CODE_MODE}. ` +
+            `Restart the server for the new tool set to take effect.`
           );
-          server.sendToolListChanged();
-          auditLog({ 
-            type: "config_load", 
-            detail: `SIGHUP: Code Mode toggled to ${newConfig.OPENGROK_CODE_MODE}` 
+          auditLog({
+            type: "config_load",
+            detail: `SIGHUP: Code Mode toggled to ${newConfig.OPENGROK_CODE_MODE} (restart required)`
           });
         }
     } catch (err) {
@@ -3366,7 +3361,7 @@ function sanitizeErrorMessage(message: string): string {
   sanitized = sanitized.replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [REDACTED]");
   sanitized = sanitized.replace(/:[^:@\s]+@/g, ":***@");
   sanitized = sanitized.replace(
-    /\/(?:home|tmp|var|usr|build|opt|mnt|srv)(?:\/\S+)/g,
+    /\/(?:home|Users|tmp|var|usr|build|opt|mnt|srv)(?:\/\S+)/g,
     "[path]"
   );
   sanitized = sanitized.replace(

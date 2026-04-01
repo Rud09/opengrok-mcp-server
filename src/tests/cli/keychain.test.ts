@@ -34,6 +34,7 @@ vi.mock('@napi-rs/keyring', () => {
 
 vi.mock('../../server/config.js', () => ({
   getConfigDirectory: () => os.tmpdir(),
+  updateCredentialRotationTimestamp: () => { /* no-op in tests */ },
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

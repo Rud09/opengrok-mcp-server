@@ -14,6 +14,7 @@ export async function runSetup(): Promise<void> {
       if (!v) return 'Enter a valid URL';
       try {
         const parsed = new URL(v);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return 'URL must use http:// or https://';
         if (parsed.protocol === 'http:') return 'Warning: HTTP sends credentials unencrypted. Use HTTPS for production.';
       } catch { return 'Enter a valid URL'; }
     },
@@ -225,8 +226,12 @@ export async function runSetup(): Promise<void> {
   if (clients.vscode) {
     spin.start('Configuring VS Code / Copilot CLI...');
     try {
-      configureVSCode(mcpConfig);
-      spin.stop('VS Code configured \u2713');
+      const fallbackPath = configureVSCode(mcpConfig);
+      if (fallbackPath) {
+        spin.stop(`VS Code configured \u2713 (wrote ${fallbackPath})`);
+      } else {
+        spin.stop('VS Code configured \u2713');
+      }
     } catch (e) {
       spin.stop(`VS Code: ${(e as Error).message}`);
     }

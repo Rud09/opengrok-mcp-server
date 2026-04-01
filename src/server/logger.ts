@@ -32,7 +32,7 @@ function sanitizeMeta(meta: unknown): unknown {
       } else if (typeof v === "string") {
         out[k] = redactString(v);
       } else {
-        out[k] = v;
+        out[k] = sanitizeMeta(v);
       }
     }
     return out;
@@ -48,7 +48,7 @@ function redactString(s: string): string {
   // Bearer / token schemes
   r = r.replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [REDACTED]");
   // Absolute filesystem paths that may reveal internal infrastructure
-  r = r.replace(/\/(?:home|tmp|var|usr|build|opt|mnt|srv)(?:\/\S+)/g, "[path]");
+  r = r.replace(/\/(?:home|Users|tmp|var|usr|build|opt|mnt|srv)(?:\/\S+)/g, "[path]");
   r = r.replace(/[A-Z]:\\(?:Users|Windows|Program Files|build)(?:\\\S+)/gi, "[path]");
   return r;
 }

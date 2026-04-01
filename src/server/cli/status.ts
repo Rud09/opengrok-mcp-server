@@ -25,7 +25,7 @@ export async function runStatus(): Promise<void> {
     console.log(`  Projects:  (unreachable — ${(e as Error).message})`);
   }
 
-  const mode = process.env['OPENGROK_CODE_MODE'] === 'true' ? 'Code Mode (5 tools)' : 'Standard Mode';
+  const mode = config.OPENGROK_CODE_MODE ? 'Code Mode (5 tools)' : 'Standard Mode';
   const budget = config.OPENGROK_CONTEXT_BUDGET ?? 'standard';
   console.log(`  Mode:      ${mode}`);
   console.log(`  Budget:    ${budget}`);

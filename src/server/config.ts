@@ -195,12 +195,6 @@ export function loadConfig(overrides?: Record<string, string>): Config {
   const data = result.data;
   const password = data.OPENGROK_PASSWORD;
 
-  // Update credential rotation timestamp only when an actual password is present
-  if (password) {
-    const configDir = getConfigDirectory();
-    updateCredentialRotationTimestamp(configDir);
-  }
-
   // Warn if username is set but no password provided
   if (data.OPENGROK_USERNAME && !password) {
     logger.warn("OPENGROK_USERNAME is set but OPENGROK_PASSWORD is empty. Authentication may fail.");

@@ -70,7 +70,7 @@ export function sanitizeSandboxError(err: unknown): string {
   message = message.replace(/\bnode:internal\/\S+/g, "<node-internal>");
   // Strip absolute filesystem paths (must start with a directory separator after the drive, not URL paths)
   // Matches Unix absolute paths like /home/user/file or /tmp/something but NOT /api/v1/projects
-  message = message.replace(/(?<![a-zA-Z0-9_-])\/(?:home|tmp|var|usr|etc|proc|opt|root|mnt|srv|run)\/[\w.:/\-]+/g, "<path>");
+  message = message.replace(/(?<![a-zA-Z0-9_-])\/(?:home|Users|tmp|var|usr|etc|proc|opt|root|mnt|srv|run)\/[\w.:/\-]+/g, "<path>");
   // Strip Windows absolute paths
   message = message.replace(/[A-Za-z]:\\[\S]+/g, "<path>");
   message = message.replace(/\\\\[\S]+/g, "<path>");
@@ -364,11 +364,13 @@ export function createSandboxAPI(
   return {
     async search(query, opts = {}) {
       const { searchType = "full", projects, maxResults = 5, startIndex = 0, fileType } = opts;
-      const result = await client.search(
+      const cached = await client.search(
         query,
         searchType as "full" | "defs" | "refs" | "path" | "hist",
         projects, maxResults, startIndex, fileType
       );
+      // Shallow-clone before any mutation so the TTLCache entry is not modified.
+      const result = { ...cached };
       if (result.totalCount === 0 && mcpServer) {
         const raw = await sampleOrNull(mcpServer, [
           {
@@ -405,8 +407,9 @@ export function createSandboxAPI(
 
     async getSymbolContext(symbol, opts = {}) {
       const { projects, contextLines = 10, maxRefs = 5, includeHeader = true, fileType } = opts;
+      // maxResults=5 covers both the definition lookup and the C++ header search below.
       const [defResults, refResults] = await Promise.all([
-        client.search(symbol, "defs", projects, 3, 0, fileType),
+        client.search(symbol, "defs", projects, 5, 0, fileType),
         client.search(symbol, "refs", projects, maxRefs, 0, fileType),
       ]);
 
@@ -430,8 +433,8 @@ export function createSandboxAPI(
 
       let header;
       if (includeHeader && defResult.path.match(/\.(cpp|cc|cxx)$/i)) {
-        const headerResults = await client.search(symbol, "defs", projects, 5, 0, fileType);
-        const headerMatch = headerResults.results.find((r) => r.path.match(/\.(h|hpp|hxx)$/i));
+        // Reuse the defResults already fetched above (maxResults=5) — no second search needed.
+        const headerMatch = defResults.results.find((r) => r.path.match(/\.(h|hpp|hxx)$/i));
         if (headerMatch?.matches.length) {
           const hLine = headerMatch.matches[0].lineNumber;
           const hContent = await client.getFileContent(
@@ -512,7 +515,7 @@ export function createSandboxAPI(
       const result: HealthAPIResult = {
         connected,
         latencyMs: Date.now() - start,
-        baseUrl: "",
+        baseUrl: client.getBaseUrl(),
       };
       return result;
     },

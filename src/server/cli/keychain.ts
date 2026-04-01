@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as os from 'os';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { getConfigDirectory } from '../config.js';
+import { getConfigDirectory, updateCredentialRotationTimestamp } from '../config.js';
 
 const SERVICE = 'opengrok-mcp';
 
@@ -25,10 +25,12 @@ export function storeCredentials(
   if (entry) {
     try {
       entry.setPassword(password);
+      updateCredentialRotationTimestamp(getConfigDirectory());
       return;
     } catch { /* fall through to file fallback */ }
   }
   storeInEncryptedFile(username, password);
+  updateCredentialRotationTimestamp(getConfigDirectory());
 }
 
 export function retrievePassword(username: string): string | null {
@@ -55,8 +57,15 @@ export function deleteCredentials(username: string): void {
 }
 
 function deriveFileKey(username: string): string {
-  // Derive a deterministic key from machine identity so no key file is needed.
-  // The key is specific to this machine and username — not exportable to other machines.
+  // Platform-only key — stable across hostname changes (hostname-based key broke on
+  // DHCP reassignment, VPN, container restarts, and renames).
+  return crypto.createHash('sha256')
+    .update(`opengrok-mcp:${username}:${os.platform()}`)
+    .digest('hex');
+}
+
+function deriveLegacyFileKey(username: string): string {
+  // Old key format that included hostname — kept only for transparent migration.
   return crypto.createHash('sha256')
     .update(`opengrok-mcp:${username}:${os.hostname()}:${os.platform()}`)
     .digest('hex');
@@ -77,7 +86,16 @@ function retrieveFromEncryptedFile(username: string): string | null {
   try {
     const encrypted = readFileSync(encPath, 'utf8').trim();
     const key = deriveFileKey(username);
-    return decryptWithGcm(encrypted, key);
+    try {
+      return decryptWithGcm(encrypted, key);
+    } catch {
+      // Try legacy hostname-based key for transparent one-time migration.
+      const legacyKey = deriveLegacyFileKey(username);
+      const password = decryptWithGcm(encrypted, legacyKey);
+      // Re-encrypt under the new stable key so future reads succeed.
+      storeInEncryptedFile(username, password);
+      return password;
+    }
   } catch {
     return null;
   }

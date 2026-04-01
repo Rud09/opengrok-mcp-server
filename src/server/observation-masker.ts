@@ -94,9 +94,9 @@ export class ObservationMasker {
     const lineMatches = [...result.matchAll(/[L:](\d{1,6})\b/g)].slice(0, 10);
     const lines = [...new Set(lineMatches.map((m) => m[0]))];
 
-    // Extract symbol names (CamelCase, UPPER_CASE, snake_case identifiers)
+    // Extract symbol names (CamelCase, UPPER_CASE, snake_case, Java getters/setters)
     const symbolMatches = [
-      ...result.matchAll(/\b([A-Z][A-Za-z0-9]{2,}|[A-Z_]{3,}|get[A-Z]\w+|set[A-Z]\w+)\b/g),
+      ...result.matchAll(/\b([A-Z][A-Za-z0-9]{2,}|[A-Z_]{3,}|[a-z][a-z0-9]*(?:_[a-z0-9]+)+|get[A-Z]\w+|set[A-Z]\w+)\b/g),
     ].slice(0, 8);
     const symbols = [...new Set(symbolMatches.map((m) => m[0]))];
 
