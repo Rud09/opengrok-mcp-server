@@ -188,10 +188,17 @@ describe('configureVSCode', () => {
     );
   });
 
-  it('throws when code --add-mcp fails', async () => {
+  it('falls back to writing .vscode/mcp.json when code --add-mcp fails', async () => {
     mocks.spawnSyncStatus = 1;
+    mocks.writeFileCalls = [];
+    mocks.mkdirCalls = 0;
     const { configureVSCode } = await import('../../server/cli/setup/configure.js');
-    expect(() => configureVSCode({ url: 'https://og.example.com' })).toThrow(/failed/);
+    // Should NOT throw — falls back to writing .vscode/mcp.json
+    expect(() => configureVSCode({ url: 'https://og.example.com' })).not.toThrow();
+    // Should have written the fallback .vscode/mcp.json file
+    expect(mocks.writeFileCalls.length).toBeGreaterThan(0);
+    const writtenPath = mocks.writeFileCalls[0]?.[0] ?? '';
+    expect(writtenPath).toMatch(/mcp\.json$/);
   });
 
   it('includes OPENGROK_USERNAME in MCP definition when username is provided', async () => {

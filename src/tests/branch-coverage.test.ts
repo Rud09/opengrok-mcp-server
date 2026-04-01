@@ -63,8 +63,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     OPENGROK_BASE_URL: 'https://example.com/source/',
     OPENGROK_USERNAME: 'user',
     OPENGROK_PASSWORD: 'pass',
-    OPENGROK_PASSWORD_FILE: '',
-    OPENGROK_PASSWORD_KEY: '',
     OPENGROK_VERIFY_SSL: true,
     OPENGROK_TIMEOUT: 30,
     OPENGROK_DEFAULT_MAX_RESULTS: 25,
@@ -790,46 +788,6 @@ describe('compile-info.ts branch coverage', () => {
       const info = [...index.values()][0];
       expect(info.includes.length).toBeGreaterThanOrEqual(1);
     } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-});
-
-// -----------------------------------------------------------------------
-// config.ts branch coverage — secureDeleteFile fallback
-// -----------------------------------------------------------------------
-
-describe('config.ts branch coverage', () => {
-  it('secureDeleteFile handles overwrite failure gracefully', async () => {
-    // This is exercised when encrypted credential file cannot be overwritten
-    // with random data (e.g., read-only file). Since secureDeleteFile is private,
-    // we test through loadConfig with an encrypted file on a read-only mount.
-    // For unit tests, just verify the function doesn't crash with an unreadable file.
-    const { loadConfig, resetConfig } = await import('../server/config.js');
-    const savedEnv = { ...process.env };
-
-    resetConfig();
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'og-sec-'));
-    const credFile = path.join(tmpDir, 'cred.txt');
-    fs.writeFileSync(credFile, 'plaintext-password');
-
-    process.env.OPENGROK_BASE_URL = 'https://example.com/source/';
-    process.env.OPENGROK_PASSWORD = '';
-    process.env.OPENGROK_PASSWORD_FILE = credFile;
-    // No key = legacy plaintext mode
-    delete process.env.OPENGROK_PASSWORD_KEY;
-
-    try {
-      const config = loadConfig();
-      expect(config.OPENGROK_PASSWORD).toBe('plaintext-password');
-      // File should have been deleted
-      expect(fs.existsSync(credFile)).toBe(false);
-    } finally {
-      for (const key of Object.keys(process.env)) {
-        if (!(key in savedEnv)) delete process.env[key];
-      }
-      Object.assign(process.env, savedEnv);
-      resetConfig();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

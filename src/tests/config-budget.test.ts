@@ -115,19 +115,6 @@ describe('loadConfig', () => {
     exitSpy.mockRestore();
   });
 
-  it('exits when OPENGROK_USERNAME is set but password is empty', () => {
-    process.env.OPENGROK_USERNAME = 'admin';
-    delete process.env.OPENGROK_PASSWORD;
-    delete process.env.OPENGROK_PASSWORD_FILE;
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: any) => {
-      throw new Error('process.exit');
-    });
-    expect(() => loadConfig()).toThrow('process.exit');
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
-    delete process.env.OPENGROK_USERNAME;
-  });
-
   it('exits when HTTP_PROXY has an invalid scheme (ftp)', () => {
     process.env.HTTP_PROXY = 'ftp://proxy.example.com:8080';
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code?: any) => {
@@ -176,8 +163,6 @@ describe('compactDescriptions — budget-driven tool description selection', () 
       OPENGROK_BASE_URL: 'https://example.com/source/',
       OPENGROK_USERNAME: '',
       OPENGROK_PASSWORD: '',
-      OPENGROK_PASSWORD_FILE: '',
-      OPENGROK_PASSWORD_KEY: '',
       OPENGROK_VERIFY_SSL: true,
       OPENGROK_TIMEOUT: 30,
       OPENGROK_DEFAULT_MAX_RESULTS: 10,

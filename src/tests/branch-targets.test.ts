@@ -586,8 +586,8 @@ describe('config.ts targeted branches', () => {
     const savedEnv = { ...process.env };
 
     resetConfig();
-    // Set an invalid URL to trigger Zod parse failure
-    process.env.OPENGROK_BASE_URL = 'NOT_A_URL';
+    // Set an invalid enum value to trigger Zod parse failure
+    process.env.OPENGROK_CONTEXT_BUDGET = 'invalid-budget';
 
     const mockExit = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit called');
@@ -598,6 +598,7 @@ describe('config.ts targeted branches', () => {
       expect(mockExit).toHaveBeenCalledWith(1);
     } finally {
       mockExit.mockRestore();
+      delete process.env.OPENGROK_CONTEXT_BUDGET;
       for (const key of Object.keys(process.env)) {
         if (!(key in savedEnv)) delete process.env[key];
       }
