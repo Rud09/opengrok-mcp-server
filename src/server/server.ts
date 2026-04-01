@@ -1437,7 +1437,54 @@ async function handleGetCompileInfo(
 }
 
 // ---------------------------------------------------------------------------
-// Central dispatcher — kept for backward-compatible test exports
+// Shared execute functions — used by both dispatchTool and registerLegacyTools
+// to eliminate duplicated logic between the two paths (M2).
+// ---------------------------------------------------------------------------
+
+async function executeBrowseDirectory(
+  args: z.infer<typeof BrowseDirectoryArgs>,
+  client: OpenGrokClient
+): Promise<string> {
+  const entries = await client.browseDirectory(args.project, args.path);
+  return formatDirectoryListing(entries, args.project, args.path);
+}
+
+async function executeGetFileAnnotate(
+  args: z.infer<typeof GetFileAnnotateArgs>,
+  client: OpenGrokClient
+): Promise<string> {
+  const annotated = await client.getAnnotate(args.project, args.path);
+  return formatAnnotate(annotated, args.start_line, args.end_line);
+}
+
+async function executeSearchSuggest(
+  args: z.infer<typeof SearchSuggestArgs>,
+  client: OpenGrokClient
+): Promise<string> {
+  try {
+    const result = await client.suggest(args.query, args.project, args.field);
+    if (result.suggestions.length) {
+      return "Suggestions:\n" + result.suggestions.map((s) => `  ${s}`).join("\n");
+    }
+    if (result.time === 0) {
+      return "No suggestions found. The suggester index appears to be empty — an OpenGrok admin may need to rebuild it.";
+    }
+    return "No suggestions found.";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("404") || msg.includes("405") ||
+        (err as { status?: number }).status === 404 ||
+        (err as { status?: number }).status === 405) {
+      return "Suggestions are not available on this OpenGrok instance (suggester endpoint returned 404/405). Use opengrok_search_code instead.";
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Central dispatcher — kept for backward-compatible test exports.
+// @deprecated Tests should use registered tool handlers via client.callTool()
+// via InMemoryTransport instead. dispatchTool will be removed in a future cleanup.
 // ---------------------------------------------------------------------------
 
 async function dispatchTool(
@@ -1497,8 +1544,7 @@ async function dispatchTool(
 
     case "opengrok_browse_directory": {
       const args = BrowseDirectoryArgs.parse(rawArgs);
-      const entries = await client.browseDirectory(args.project, args.path);
-      return formatDirectoryListing(entries, args.project, args.path);
+      return executeBrowseDirectory(args, client);
     }
 
     case "opengrok_list_projects": {
@@ -1509,28 +1555,12 @@ async function dispatchTool(
 
     case "opengrok_get_file_annotate": {
       const args = GetFileAnnotateArgs.parse(rawArgs);
-      const annotated = await client.getAnnotate(args.project, args.path);
-      return formatAnnotate(annotated, args.start_line, args.end_line);
+      return executeGetFileAnnotate(args, client);
     }
 
     case "opengrok_search_suggest": {
       const args = SearchSuggestArgs.parse(rawArgs);
-      try {
-        const result = await client.suggest(args.query, args.project, args.field);
-        if (result.suggestions.length) {
-          return "Suggestions:\n" + result.suggestions.map((s) => `  ${s}`).join("\n");
-        }
-        if (result.time === 0) {
-          return "No suggestions found. The suggester index appears to be empty — an OpenGrok admin may need to rebuild it.";
-        }
-        return "No suggestions found.";
-      } catch (err) {
-        const status = (err as { status?: number }).status;
-        if (status === 404 || status === 405) {
-          return "Suggestions are not available on this OpenGrok instance (suggester endpoint returned 404/405).";
-        }
-        throw err;
-      }
+      return executeSearchSuggest(args, client);
     }
 
     case "opengrok_batch_search": {
@@ -1540,6 +1570,9 @@ async function dispatchTool(
     }
 
     case "opengrok_search_and_read":
+      // rawArgs are unvalidated here — parse is required. Unlike the registered MCP handler
+      // (which receives args already validated by the SDK), dispatchTool is the legacy test
+      // path and receives raw Record<string, unknown>.
       return handleSearchAndRead(SearchAndReadArgs.parse(rawArgs), client, config);
 
     case "opengrok_get_symbol_context": {
@@ -2112,6 +2145,8 @@ function registerLegacyTools(
   // Rolling window of last 3 latency samples — reduces false-positive "increasing" signals
   // caused by normal single-sample variance (e.g. 200ms → 305ms → 190ms).
   const latencyHistory: number[] = [];
+  // Only warm the cache once per session — subsequent health checks don't need to re-warm.
+  let cacheWarmed = false;
   server.registerTool(
     "opengrok_search_code",
     {
@@ -2360,15 +2395,7 @@ function registerLegacyTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_browse_directory" });
       try {
-        const entries = await client.browseDirectory(args.project, args.path);
-        return {
-          content: [
-            {
-              type: "text",
-              text: capResponse(formatDirectoryListing(entries, args.project, args.path)),
-            },
-          ],
-        };
+        return { content: [{ type: "text", text: capResponse(await executeBrowseDirectory(args, client)) }] };
       } catch (err) {
         return makeToolError("opengrok_browse_directory", err);
       }
@@ -2412,15 +2439,7 @@ function registerLegacyTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_get_file_annotate" });
       try {
-        const annotated = await client.getAnnotate(args.project, args.path);
-        return {
-          content: [
-            {
-              type: "text",
-              text: capResponse(formatAnnotate(annotated, args.start_line, args.end_line)),
-            },
-          ],
-        };
+        return { content: [{ type: "text", text: capResponse(await executeGetFileAnnotate(args, client)) }] };
       } catch (err) {
         return makeToolError("opengrok_get_file_annotate", err);
       }
@@ -2438,29 +2457,8 @@ function registerLegacyTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_search_suggest" });
       try {
-        const result = await client.suggest(args.query, args.project, args.field);
-        let text: string;
-        if (result.suggestions.length) {
-          text = "Suggestions:\n" + result.suggestions.map((s) => `  ${s}`).join("\n");
-        } else if (result.time === 0) {
-          text =
-            "No suggestions found. The suggester index appears to be empty — an OpenGrok admin may need to rebuild it.";
-        } else {
-          text = "No suggestions found.";
-        }
-        return { content: [{ type: "text", text: capResponse(text) }] };
+        return { content: [{ type: "text", text: capResponse(await executeSearchSuggest(args, client)) }] };
       } catch (err) {
-        // 404/405 means the suggester endpoint is not available on this server
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("404") || msg.includes("405")) {
-          return {
-            content: [{
-              type: "text",
-              text: "Search suggestions are not supported by this OpenGrok instance. " +
-                "Use opengrok_search_code instead.",
-            }],
-          };
-        }
         return makeToolError("opengrok_search_suggest", err);
       }
     }
@@ -2625,8 +2623,9 @@ function registerLegacyTools(
           stalenessScore = "possibly_stale";
         }
 
-        if (ok) {
+        if (ok && !cacheWarmed) {
           client.warmCache();
+          cacheWarmed = true;
         }
 
         const message = ok

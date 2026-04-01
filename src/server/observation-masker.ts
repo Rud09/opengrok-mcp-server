@@ -86,8 +86,10 @@ export class ObservationMasker {
    * Discards raw code content (re-fetchable from OpenGrok).
    */
   private extractSummary(tool: string, result: string): string {
-    // Extract file paths (project/path.cpp patterns)
-    const pathMatches = [...result.matchAll(/\b[a-zA-Z_][\w.-]*(?:\/[a-zA-Z_][\w.-]*)+\.[a-zA-Z0-9]+\b/g)].slice(0, 5);
+    // Extract file paths (project/path.cpp patterns).
+    // Each component must be ≥2 chars with no dots (excludes version strings like v1.2.3).
+    // Extension must start with a letter and be ≥2 chars (excludes numeric suffixes like .3).
+    const pathMatches = [...result.matchAll(/\b[a-zA-Z_][a-zA-Z0-9_-]{1,}(?:\/[a-zA-Z_][a-zA-Z0-9_-]{1,})+\.[a-zA-Z][a-zA-Z0-9]{1,}\b/g)].slice(0, 5);
     const paths = [...new Set(pathMatches.map((m) => m[0]))];
 
     // Extract line number references (L123 or :123)
