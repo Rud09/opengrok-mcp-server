@@ -92,16 +92,19 @@ export function parseDirectoryListing(
   if (!table) {
     // Fallback: links within /xref/project/
     const escapedProject = project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const seenPaths = new Set<string>();
     for (const a of root.querySelectorAll("a[href]")) {
       const href = /* v8 ignore next */ a.getAttribute("href") ?? "";
       const m = new RegExp(`/xref/${escapedProject}/(.+)$`).exec(href);
       if (!m) continue;
-      const entryPath = m[1];
-      if (entryPath.replace(/\/$/, "") === currentPath.replace(/\/$/, "")) continue;
+      const entryPath = m[1].replace(/\/$/, "");
+      if (entryPath === currentPath.replace(/\/$/, "")) continue;
+      if (seenPaths.has(entryPath)) continue;
+      seenPaths.add(entryPath);
       entries.push({
-        name: /* v8 ignore next */ entryPath.replace(/\/$/, "").split("/").pop() ?? entryPath,
+        name: /* v8 ignore next */ entryPath.split("/").pop() ?? entryPath,
         isDirectory: href.endsWith("/"),
-        path: entryPath.replace(/\/$/, ""),
+        path: entryPath,
       });
     }
     return entries;

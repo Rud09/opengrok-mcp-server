@@ -572,9 +572,10 @@ function downloadToFile(url: URL, destPath: string, verifySsl: boolean, redirect
                 if (statusCode >= 300 && statusCode < 400 && location) {
                     res.resume();
                     const redirectUrl = new URL(location);
-                    // Block redirects to untrusted hosts or protocol downgrades
-                    if (redirectUrl.hostname !== url.hostname || redirectUrl.protocol !== url.protocol) {
-                        reject(new Error(`Redirect to untrusted destination blocked: ${redirectUrl.protocol}//${redirectUrl.hostname}`));
+                    // Block protocol downgrades (HTTPS → HTTP); cross-origin HTTPS redirects
+                    // are allowed so GitHub CDN (objects.githubusercontent.com) redirects work.
+                    if (url.protocol === 'https:' && redirectUrl.protocol !== 'https:') {
+                        reject(new Error(`Redirect blocked — protocol downgrade to ${redirectUrl.protocol}`));
                         return;
                     }
                     downloadToFile(redirectUrl, destPath, verifySsl, redirectsLeft - 1, headers)
