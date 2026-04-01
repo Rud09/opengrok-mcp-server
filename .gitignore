@@ -33,7 +33,9 @@ test-output.txt
 
 # Plans and specs
 plans/
+**/plans/
 specs/
+**/specs/
 
 # Git worktrees
 .worktrees/
