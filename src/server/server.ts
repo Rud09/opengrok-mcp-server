@@ -2964,9 +2964,10 @@ function registerToolDocResources(server: McpServer): void {
   // require ResourceTemplate, which is only available on the low-level API. The static API is used
   // above for the fixed URI; this is the intentional split.
   try {
-    server.resource(
+    server.registerResource(
       'opengrok-tool-docs',
       new ResourceTemplate('opengrok-docs://tools/{name}', { list: undefined }),
+      { description: "Per-tool documentation page. URI pattern: opengrok-docs://tools/{name}", mimeType: "text/markdown" },
       (uri, variables) => {
         const name = String(variables['name'] ?? '');
         const doc = TOOL_DOCS[name];
@@ -2990,12 +2991,22 @@ function registerToolDocResources(server: McpServer): void {
 function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): void {
   for (const filename of ALLOWED_FILES) {
     const uri = `opengrok-memory://${filename}`;
+    const filePath = path.join(memoryBank.bankDir, filename);
+    let size: number | undefined;
+    try {
+      // Snapshot size at registration time; advisory only — memory bank writes
+      // update the file on disk but do not re-register the resource.
+      size = fs.statSync(filePath).size;
+    } catch {
+      // file doesn't exist yet — omit size
+    }
     server.registerResource(
       filename,
       uri,
       {
         description: `OpenGrok memory bank file: ${filename}`,
         mimeType: "text/markdown",
+        ...(size !== undefined && { size }),
       },
       async () => {
         const content = await memoryBank.read(filename) ?? "";

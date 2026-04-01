@@ -175,6 +175,20 @@ describe('Task 4.5 — MCP Resources', () => {
     }
   });
 
+  it('memory bank resources expose size field when files exist', async () => {
+    await bank.write('active-task.md', '# Task\nSome content here.', 'overwrite');
+    const { client, cleanup } = await createTestClient(bank);
+    try {
+      const { resources } = await client.listResources();
+      const activeTask = resources.find((r) => r.uri === 'opengrok-memory://active-task.md');
+      expect(activeTask).toBeDefined();
+      expect(typeof activeTask!.size).toBe('number');
+      expect(activeTask!.size).toBeGreaterThan(0);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('resources are NOT registered when memoryBank is omitted', async () => {
     const ogClient = makeMockClient();
     const config = makeConfig();
