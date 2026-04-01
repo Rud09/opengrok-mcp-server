@@ -64,7 +64,6 @@ All three are bundled by esbuild (`esbuild.js`). The build also copies `emscript
 - **`audit.ts`** — `auditLog()`: structured audit logging to stderr + optional `OPENGROK_AUDIT_LOG_FILE` (CSV/JSON). All tool invocations emit audit events.
 - **`elicitation.ts`** — MCP Elicitation wrapper: `server.elicitInput()` for project-picker form with graceful fallback for unsupported clients.
 - **`sampling.ts`** — `sampleOrNull()`: production MCP Sampling with retry/backoff/10 s timeout/model preference. Used for error explanation and graph summarization.
-- **`task-registry.ts`** — In-memory async task store for `opengrok_execute`. `createTask()`/`completeTask()`/`failTask()`/`getTask()` with 30-min TTL for running tasks.
 - **`http-transport.ts`** — Streamable HTTP transport (`OPENGROK_HTTP_PORT`). Per-session McpServer factory, session TTL sweep, CORS allowlist (`OPENGROK_ALLOWED_ORIGINS`), security headers (CSP, X-Frame-Options, X-Content-Type-Options). OAuth 2.1 resource server: JWT validation via `jose`, no `/token` endpoint, RFC 9728 metadata at `/.well-known/oauth-protected-resource`. RBAC enforcement.
 - **`rbac.ts`** — RBAC engine: admin/developer/readonly roles, `hasPermission()`, `parseRbacConfig()`, `ROLE_PERMISSIONS` map, fail-safe readonly default.
 - **`file-cache.ts`** — `FileReferenceCache`: SHA-256 content-addressed cache for `investigation-log.md` (`OPENGROK_ENABLE_FILES_API`).

@@ -140,7 +140,7 @@ describe('registerTool handlers — opengrok_batch_search structured output', ()
     const result = await dispatchTool('opengrok_batch_search', {
       queries: [{ query: 'foo', search_type: 'full', max_results: 5 }],
     }, client as never, config, emptyLocal());
-    expect(result).toContain('Batch search');
+    // default format is "auto" which selects TSV for search results
     expect(result).toContain('foo');
   });
 });

@@ -244,6 +244,7 @@ The \`response_format\` parameter controls output. Default is "auto":
 - symbol context → YAML (hierarchical)
 - file content → text (raw)
 - other → markdown
+- toon → ultra-compact search results (~60% token savings, search tools only)
 Override per-call or globally with OPENGROK_RESPONSE_FORMAT_OVERRIDE.
 
 ## MEMORY
@@ -1031,7 +1032,7 @@ async function executeGetFileContent(
   },
   client: OpenGrokClient,
   local: LocalLayer
-): Promise<{ text: string; structured: FileContent }> {
+): Promise<{ text: string; structured: FileContent; warning?: string }> {
   let content: FileContent | null = null;
 
   if (local.enabled && local.index.size > 0) {
@@ -1059,10 +1060,10 @@ async function executeGetFileContent(
   const fmt = selectFormat("code", args.response_format);
   const text = fmt === "text" ? formatFileContentText(content) : formatFileContent(content);
 
-  // Warn on full-file fetch (no line range)
+  // Warn on full-file fetch (no line range) — returned separately so it doesn't contaminate the file text.
   if (!args.start_line && !args.end_line && content.lineCount > 50) {
-    const warning = `⚠️ Full file fetch (${content.lineCount} lines). Use opengrok_get_file_symbols first, then fetch only the lines you need.\n`;
-    return { text: warning + text, structured: content };
+    const warning = `Full file fetch (${content.lineCount} lines). Use opengrok_get_file_symbols first, then fetch only the lines you need.`;
+    return { text, structured: content, warning };
   }
 
   return { text, structured: content };
@@ -1943,7 +1944,7 @@ function registerCodeModeTools(
     {
       title: "OpenGrok API Reference",
       description: "Return the full Code Mode API specification.",
-      inputSchema: { _ : z.string().optional().describe("(no input required)") },
+      inputSchema: {},
       annotations: CODE_MODE_API_ANNOTATIONS,
     },
     async () => {
@@ -2006,6 +2007,9 @@ function registerCodeModeTools(
 
       try {
         const budget = BUDGET_LIMITS[getActiveBudget()];
+        // sandboxApi is intentionally created per execution: this gives each invocation a fresh
+        // write-call counter (MAX_SANDBOX_WRITES_PER_EXECUTION = 5 per call).
+        // If a per-session write limit is needed in the future, create this once alongside `masker`.
         const sandboxApi = createSandboxAPI(client, memoryBank, {
           getCompileInfoFn,
           mcpServer: server,
@@ -2188,14 +2192,13 @@ function registerLegacyTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_search_pattern" });
       try {
-        const parsed = SearchPatternArgs.parse(args);
         const results = await client.searchPattern({
-          pattern: parsed.pattern,
-          projects: applyDefaultProject(parsed.projects, config),
-          fileType: parsed.file_type,
-          maxResults: parsed.max_results,
+          pattern: args.pattern,
+          projects: applyDefaultProject(args.projects, config),
+          fileType: args.file_type,
+          maxResults: args.max_results,
         });
-        const fmt = selectFormat("search", parsed.response_format as ResponseFormat | undefined);
+        const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
         const maxBytes = MAX_RESPONSE_BYTES_OVERRIDE ?? BUDGET_LIMITS[getActiveBudget()].maxResponseBytes;
         const text = pickSearchFormatter(fmt, maxBytes)(results);
         return { content: [{ type: "text", text: capResponse(text) }] };
@@ -2221,8 +2224,12 @@ function registerLegacyTools(
       auditLog({ type: "tool_invoke", tool: "opengrok_get_file_content" });
       try {
         const format = args.response_format ?? "auto";
-        const { text, structured } = await executeGetFileContent(args, client, local);
-        return formatResponse(text, structured as unknown as Record<string, unknown>, format, "code");
+        const { text, structured, warning } = await executeGetFileContent(args, client, local);
+        const result = formatResponse(text, structured as unknown as Record<string, unknown>, format, "code");
+        if (warning) {
+          return { ...result, content: [{ type: "text" as const, text: `[NOTE] ${warning}` }, ...result.content] };
+        }
+        return result;
       } catch (err) {
         return makeToolError("opengrok_get_file_content", err);
       }
@@ -2519,6 +2526,8 @@ function registerLegacyTools(
         } else {
           displayText = capResponse(text);
         }
+        // structuredContent is always returned here because this tool declares an outputSchema —
+        // the MCP SDK requires structuredContent when outputSchema is set.
         return {
           content: [{ type: "text", text: displayText }],
           structuredContent: structured as unknown as Record<string, unknown>,
@@ -2763,16 +2772,15 @@ function registerLegacyTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_what_changed" });
       try {
-        const parsed = WhatChangedArgs.parse(args);
         const [history, annotation] = await Promise.all([
-          client.getFileHistory(parsed.project, parsed.path),
-          client.getAnnotate(parsed.project, parsed.path),
+          client.getFileHistory(args.project, args.path),
+          client.getAnnotate(args.project, args.path),
         ]);
-        const text = formatWhatChanged(history, annotation, parsed.since_days);
+        const text = formatWhatChanged(history, annotation, args.since_days);
 
         // Build structured changes from the same logic as formatWhatChanged
         const cutoff = new Date();
-        cutoff.setDate(cutoff.getDate() - parsed.since_days);
+        cutoff.setDate(cutoff.getDate() - args.since_days);
         const recentRevisions = new Set<string>();
         for (const entry of history.entries) {
           const entryDate = new Date(entry.date);
@@ -2800,8 +2808,8 @@ function registerLegacyTools(
         const structured = {
           _meta: {
             tool: "opengrok_what_changed",
-            project: parsed.project,
-            path: parsed.path,
+            project: args.project,
+            path: args.path,
             fetchedAt: new Date().toISOString(),
             version: __VERSION__,
           },
@@ -2832,21 +2840,20 @@ function registerLegacyTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_blame" });
       try {
-        const parsed = BlameArgs.parse(args);
-        const annotations = await client.getAnnotate(parsed.project, parsed.path);
-        const text = formatBlame(annotations, parsed.line_start, parsed.line_end, parsed.include_diff);
+        const annotations = await client.getAnnotate(args.project, args.path);
+        const text = formatBlame(annotations, args.line_start, args.line_end, args.include_diff);
 
         let displayLines = annotations.lines;
-        if (parsed.line_start !== undefined || parsed.line_end !== undefined) {
+        if (args.line_start !== undefined || args.line_end !== undefined) {
           /* v8 ignore start */
-          const s = parsed.line_start ?? 1;
-          const e = parsed.line_end ?? Infinity;
+          const s = args.line_start ?? 1;
+          const e = args.line_end ?? Infinity;
           /* v8 ignore stop */
           displayLines = annotations.lines.filter((l) => l.lineNumber >= s && l.lineNumber <= e);
         }
 
         const structured: z.infer<typeof BlameOutput> = {
-          _meta: { tool: "opengrok_blame", project: parsed.project, path: parsed.path, fetchedAt: new Date().toISOString(), version: VERSION },
+          _meta: { tool: "opengrok_blame", project: args.project, path: args.path, fetchedAt: new Date().toISOString(), version: VERSION },
           entries: displayLines.map((l) => ({
             line: l.lineNumber,
             commit: l.revision ?? "",
@@ -2882,14 +2889,13 @@ function registerLegacyTools(
       auditLog({ type: "tool_invoke", tool: "opengrok_dependency_map" });
       if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_dependency_map");
       try {
-        const parsed = DependencyMapArgs.parse(args);
-        const nodes = await buildDependencyGraph(client, parsed.project, parsed.path, parsed.depth, parsed.direction);
-        const text = formatDependencyMap(parsed.path, parsed.depth, nodes);
+        const nodes = await buildDependencyGraph(client, args.project, args.path, args.depth, args.direction);
+        const text = formatDependencyMap(args.path, args.depth, nodes);
         const structured = {
           _meta: {
             tool: "opengrok_dependency_map",
-            project: parsed.project,
-            path: parsed.path,
+            project: args.project,
+            path: args.path,
             fetchedAt: new Date().toISOString(),
             version: __VERSION__,
           },
@@ -2909,7 +2915,7 @@ function registerLegacyTools(
               role: "user",
               content: {
                 type: "text",
-                text: `This dependency graph for \`${parsed.path}\` has ${nodes.length} nodes:\n${nodeList}${nodes.length > 30 ? `\n  ... and ${nodes.length - 30} more` : ""}\n\nIn 2-3 sentences, summarize the key dependency structure and any notable patterns.`,
+                text: `This dependency graph for \`${args.path}\` has ${nodes.length} nodes:\n${nodeList}${nodes.length > 30 ? `\n  ... and ${nodes.length - 30} more` : ""}\n\nIn 2-3 sentences, summarize the key dependency structure and any notable patterns.`,
               },
             },
           ], { maxTokens: 200, systemPrompt: "You are a code architecture analyst. Be concise and precise." });
@@ -2947,10 +2953,14 @@ function registerToolDocResources(server: McpServer): void {
         return { contents: [{ uri: "opengrok-docs://api", mimeType: "text/yaml", text: _apiSpecYaml }] };
       }
     );
-  } catch {
-    // skip gracefully if SDK version doesn't support it
+  } catch (err) {
+    logger.warn("Failed to register opengrok-api-spec resource:", err);
   }
 
+  // NOTE: `server.resource()` (low-level API) is used here instead of `server.registerResource()`
+  // because the high-level API only supports static URIs. Parameterized URIs (opengrok-docs://tools/{name})
+  // require ResourceTemplate, which is only available on the low-level API. The static API is used
+  // above for the fixed URI; this is the intentional split.
   try {
     server.resource(
       'opengrok-tool-docs',
@@ -2966,8 +2976,8 @@ function registerToolDocResources(server: McpServer): void {
         };
       }
     );
-  } catch {
-    // Resource registration may not be supported in all SDK versions — skip gracefully
+  } catch (err) {
+    logger.warn("Failed to register parameterized tool-docs resource (SDK version may not support ResourceTemplate):", err);
   }
 }
 
@@ -3313,7 +3323,6 @@ export function startHealthCheckPolling(server: McpServer, client: OpenGrokClien
         if (ok !== lastConnected) {
           lastConnected = ok;
           logger.info(`Connectivity status changed: ${ok ? "connected" : "disconnected"}`);
-          server.sendToolListChanged();
           auditLog({
             type: "config_load",
             detail: `Connectivity status changed to ${ok ? "connected" : "disconnected"}`
@@ -3432,9 +3441,10 @@ function getCredentialAgeWarning(): string | null {
 
 /**
  * Build a dependency graph for a file by searching up to `depth` levels.
- * "uses"    — finds files that this file imports/includes (full-text search for
- *             include/import/require/use directives within the target file's content).
- *             Uses "full" search on import/include patterns to find what the file depends on.
+ * "uses"    — finds files that this file's basename appears in via full-text search.
+ *             NOTE: this is a keyword search for the filename string, not structural import
+ *             analysis. Results may include files that merely mention the name (e.g.,
+ *             documentation or test fixtures) in addition to files that actually import it.
  * "used_by" — finds files that reference/call symbols from this file (refs search by filename).
  */
 const DEPENDENCY_GRAPH_MAX_NODES = 50;
@@ -3530,6 +3540,7 @@ async function buildDependencyGraph(
 // ---------------------------------------------------------------------------
 
 export {
+  sanitizeErrorMessage,
   capResponse as _capResponse,
   sanitizeErrorMessage as _sanitizeErrorMessage,
   resolveFileFromIndex as _resolveFileFromIndex,

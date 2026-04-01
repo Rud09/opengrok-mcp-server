@@ -10,7 +10,7 @@ import { z } from "zod";
 // text (raw code, minimal overhead), auto (server picks best format per response type).
 const RESPONSE_FORMAT = z
   .enum(["markdown", "json", "tsv", "yaml", "text", "toon", "auto"])
-  .default("markdown")
+  .default("auto")
   .optional()
   .describe("Output format: markdown, json, tsv, toon, yaml, text, or auto.");
 

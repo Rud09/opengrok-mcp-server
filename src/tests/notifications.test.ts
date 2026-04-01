@@ -134,7 +134,9 @@ describe('Task 4.9: notifications/tools/list_changed', () => {
       vi.useRealTimers();
     });
 
-    it('sends notification when connectivity changes', async () => {
+    it('does not send tool-list notification when connectivity changes', async () => {
+      // sendToolListChanged is semantically wrong on connectivity change — the tool list
+      // did not change, only reachability did. Health check polling logs the change only.
       vi.useFakeTimers();
       const client = makeMockClient();
       let connectionStatus = true;
@@ -152,9 +154,9 @@ describe('Task 4.9: notifications/tools/list_changed', () => {
       // Change connectivity status
       connectionStatus = false;
 
-      // Second poll — disconnected, should trigger notification
+      // Second poll — disconnected; should NOT send sendToolListChanged
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
-      expect(server.sendToolListChanged).toHaveBeenCalled();
+      expect(server.sendToolListChanged).not.toHaveBeenCalled();
 
       // Clean up
       clearInterval(intervalId);

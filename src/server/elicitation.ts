@@ -37,8 +37,9 @@ export interface ElicitSchema {
  *
  * NOTE: `server.server` accesses the raw low-level MCP `Server` inside the
  * high-level `McpServer` wrapper, because `elicitInput` is not yet promoted
- * to the `McpServer` public API surface (as of @modelcontextprotocol/sdk 1.x).
+ * to the `McpServer` public API surface (as of @modelcontextprotocol/sdk 1.28.0).
  * If a future SDK version exposes it directly on `McpServer`, update this.
+ * The `typeof lowLevel?.elicitInput !== "function"` guard catches SDK renames at runtime.
  */
 export async function elicitOrFallback(
   server: McpServer,
