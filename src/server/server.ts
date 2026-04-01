@@ -2955,7 +2955,7 @@ function registerToolDocResources(server: McpServer): void {
     server.registerResource(
       'opengrok-tool-docs',
       new ResourceTemplate('opengrok-docs://tools/{name}', { list: undefined }),
-      {},
+      { description: "Per-tool documentation page. URI pattern: opengrok-docs://tools/{name}", mimeType: "text/markdown" },
       (uri, variables) => {
         const name = String(variables['name'] ?? '');
         const doc = TOOL_DOCS[name];
