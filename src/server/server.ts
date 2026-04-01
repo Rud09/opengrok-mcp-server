@@ -236,10 +236,24 @@ Use opengrok_ prefixed tools to search and navigate the codebase. Run opengrok_i
 {{MEMORY_STATUS}}
 Run opengrok_index_health to verify connectivity, then proceed with the user's request.
 
+## RESPONSE FORMAT
+The \`response_format\` parameter controls output. Default is "auto":
+- search results → TSV (compact, tabular)
+- symbol context → YAML (hierarchical)
+- file content → text (raw)
+- other → markdown
+Override per-call or globally with OPENGROK_RESPONSE_FORMAT_OVERRIDE.
+
 ## MEMORY
 Update opengrok_update_memory after completing investigations:
-- active-task.md: current task, last symbol/file, next step
-- investigation-log.md: append ## YYYY-MM-DD HH:MM entries
+- active-task.md: current task, last symbol/file, next step (≤ 4 KB)
+- investigation-log.md: append ## YYYY-MM-DD HH:MM entries (≤ 32 KB, oldest trimmed automatically)
+
+## RATE LIMITS
+Some tools have lower per-minute limits by default:
+- opengrok_batch_search: 5 rpm (expensive — runs multiple queries)
+- opengrok_dependency_map: 10 rpm (BFS traversal = multiple requests)
+If rate-limited, wait before retrying or narrow the query scope.
 
 ## WORKFLOW
 1. Search broadly with opengrok_search_code (symbol/full/path)
@@ -261,12 +275,34 @@ Run opengrok_api to get the full API spec, then use opengrok_execute to run Java
 
 ## MEMORY
 Update memory after investigations:
-- active-task.md: current task and next step
-- investigation-log.md: append ## YYYY-MM-DD HH:MM entries
+- active-task.md: current task and next step (≤ 4 KB)
+- investigation-log.md: append ## YYYY-MM-DD HH:MM entries (≤ 32 KB, oldest trimmed automatically)
 
 ## CODE MODE
 Use opengrok_execute to run JavaScript with env.opengrok.* API methods.
-All methods are synchronous in the sandbox.`.trim();
+All methods are synchronous in the sandbox.
+
+## SANDBOX LIMITS
+- Execution timeout: 9 seconds (hard kill)
+- Memory limit: 128 MB
+- Do NOT use Promise.all() — the Atomics bridge serializes all calls from inside the VM.
+  Use env.opengrok.batchSearch() instead for parallel queries.
+- opengrok_execute is rate-limited to 10 rpm by default.
+
+## OPTIONAL FEATURES
+- env.opengrok.elicit() requires OPENGROK_ENABLE_ELICITATION=true and a supporting client.
+  Returns { action: 'cancel' } on unsupported clients — always check action before proceeding.
+- env.opengrok.sample() returns null on unsupported clients — always null-guard.
+
+## KEY PATTERNS
+File disambiguation (multiple path matches → ask user before fetching):
+  Use env.opengrok.elicit() with an enum of top paths (≤ 10).
+  If action !== 'accept', return a cancellation message — never guess.
+
+Zero-result handling:
+  Check result._suggestions first for reformulation candidates.
+  Call env.opengrok.sample() only if _suggestions is absent or unhelpful.
+  Always null-guard: const s = env.opengrok.sample(...); if (s) { ... }`.trim();
 
 // Alias for test-export backward compatibility
 const SERVER_INSTRUCTIONS = SERVER_INSTRUCTIONS_TEMPLATE;
@@ -313,7 +349,7 @@ Read active-task.md or investigation-log.md.
 - \`filename\` — "active-task.md" or "investigation-log.md"`,
 
   opengrok_update_memory: `## opengrok_update_memory
-Write or append to active-task.md or investigation-log.md.
+Write or append to active-task.md or investigation-log.md. Rate-limited to 20 rpm.
 
 **Parameters:**
 - \`filename\` — file to update
@@ -324,7 +360,7 @@ Write or append to active-task.md or investigation-log.md.
 Show current memory bank file sizes and modification times. No parameters required.`,
 
   opengrok_batch_search: `## opengrok_batch_search
-Run 2-5 searches in parallel in a single call.
+Run 2-5 searches in parallel in a single call. Rate-limited to 5 rpm (expensive operation).
 
 **Parameters:**
 - \`queries\` — array of search query objects (required)`,
@@ -396,7 +432,7 @@ Get blame information for a file with commit metadata.
 - \`project\` — project name (required)`,
 
   opengrok_dependency_map: `## opengrok_dependency_map
-Build a dependency map showing what a file uses and what uses it.
+Build a dependency map showing what a file uses and what uses it. Rate-limited to 10 rpm (BFS traversal = multiple requests).
 
 **Parameters:**
 - \`path\` — file path (required)
@@ -435,7 +471,7 @@ Get compiler flags and include paths for a C/C++ file from compile_commands.json
 [Code Mode] Return the full Code Mode API specification. Call once per session.`,
 
   opengrok_execute: `## opengrok_execute
-[Code Mode] Execute JavaScript in the QuickJS sandbox with OpenGrok API access.
+[Code Mode] Execute JavaScript in the QuickJS sandbox with OpenGrok API access. Rate-limited to 10 rpm.
 
 **Parameters:**
 - \`code\` — JS function body using env.opengrok.* for API calls (required)`,
