@@ -32,7 +32,10 @@ function buildEnv(config: McpConfig): Record<string, string> {
   if (config.codeMode === false)                           env['OPENGROK_CODE_MODE'] = 'false';
   if (config.defaultProject)                               env['OPENGROK_DEFAULT_PROJECT'] = config.defaultProject;
   if (config.enableElicitation)                            env['OPENGROK_ENABLE_ELICITATION'] = 'true';
-  if (config.proxy)                                        env['OPENGROK_PROXY'] = config.proxy;
+  if (config.proxy) {
+    env['HTTP_PROXY'] = config.proxy;
+    env['HTTPS_PROXY'] = config.proxy;
+  }
   if (config.apiVersion && config.apiVersion !== 'v1')    env['OPENGROK_API_VERSION'] = config.apiVersion;
   if (config.responseFormatOverride)                       env['OPENGROK_RESPONSE_FORMAT_OVERRIDE'] = config.responseFormatOverride;
   if (config.memoryBankDir)                                env['OPENGROK_MEMORY_BANK_DIR'] = config.memoryBankDir;
@@ -56,6 +59,8 @@ export function configureClaudeCode(config: McpConfig): void {
 
 export function configureVSCode(config: McpConfig): void {
   const env = buildEnv(config);
+
+  // Try `code --add-mcp` first (VS Code 1.100+)
   const mcpDef = JSON.stringify({
     name: 'opengrok-mcp',
     command: 'npx',
@@ -67,9 +72,35 @@ export function configureVSCode(config: McpConfig): void {
     encoding: 'utf8',
     shell: false,
   });
-  if (result.status !== 0) {
-    throw new Error(`code --add-mcp failed: ${String(result.stderr ?? '')}`);
+
+  if (result.status === 0) return;
+
+  // Fallback: write .vscode/mcp.json in the current working directory
+  const vscodeDir = join(process.cwd(), '.vscode');
+  const mcpJsonPath = join(vscodeDir, 'mcp.json');
+
+  let existing: { servers?: Record<string, unknown> } = {};
+  if (existsSync(mcpJsonPath)) {
+    try {
+      existing = JSON.parse(readFileSync(mcpJsonPath, 'utf8')) as { servers?: Record<string, unknown> };
+    } catch { /* treat as empty */ }
   }
+
+  if (!existsSync(vscodeDir)) {
+    mkdirSync(vscodeDir, { recursive: true });
+  }
+
+  const servers = { ...(existing.servers ?? {}) };
+  // Idempotent: replace existing opengrok-mcp entry
+  delete servers['opengrok-mcp'];
+  servers['opengrok-mcp'] = {
+    type: 'stdio',
+    command: 'npx',
+    args: ['-y', 'opengrok-mcp-server'],
+    env,
+  };
+
+  writeFileSync(mcpJsonPath, JSON.stringify({ ...existing, servers }, null, 2), 'utf8');
 }
 
 export function configureCodex(config: McpConfig): void {

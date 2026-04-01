@@ -763,8 +763,9 @@ function applyDefaultProject(
   projects: string[] | undefined,
   config: Config
 ): string[] | undefined {
-  // If caller explicitly provided projects (even an empty array), respect that choice
-  if (Array.isArray(projects)) return projects.length > 0 ? projects : undefined;
+  // Only apply the default when projects was not provided at all.
+  // An explicit empty array means "search all projects" and must not be overridden.
+  if (projects !== undefined && projects !== null) return projects;
   const defaultProject = config.OPENGROK_DEFAULT_PROJECT?.trim();
   return defaultProject ? [defaultProject] : undefined;
 }
@@ -1637,7 +1638,6 @@ export function createServer(
     // ~130 token cost vs ~1,900 with all legacy tools — 93% savings per turn.
     // LLM cannot see or call legacy tools in this mode; all queries go through the sandbox.
     registerCodeModeTools(server, client, config, memoryBank, local, toolRateLimiter);
-    registerMemoryTools(server, memoryBank, config, toolRateLimiter);
   } else {
     // Standard mode: 23 legacy tools only. Memory tools are Code Mode only.
     // Compact descriptions when budget=minimal to save ~1,400 tokens.
@@ -1991,6 +1991,9 @@ function registerCodeModeTools(
       }
     }
   );
+
+  // Memory tools are part of the Code Mode 5-tool set
+  registerMemoryTools(server, memoryBank, config, toolRateLimiter);
 }
 
 // ---------------------------------------------------------------------------

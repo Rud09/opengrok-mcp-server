@@ -65,7 +65,7 @@ export async function runSetup(): Promise<void> {
   if (p.isCancel(defaultProject)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   const enableElicitation = await p.confirm({
-    message: 'Enable project picker prompt? (requires Claude Code v2.1.76+ or VS Code Copilot)',
+    message: 'Enable AI project picker? When no default project is set, the AI will ask you which project to search (requires Claude Code v2.1.76+ or VS Code Copilot)',
     initialValue: false,
   });
   if (p.isCancel(enableElicitation)) { p.cancel('Setup cancelled'); process.exit(0); }
@@ -110,6 +110,9 @@ export async function runSetup(): Promise<void> {
         { value: 'markdown', label: 'Force Markdown' },
         { value: 'json', label: 'Force JSON' },
         { value: 'tsv', label: 'Force TSV (compact table)' },
+        { value: 'toon', label: 'Force TOON (token-optimized notation)' },
+        { value: 'yaml', label: 'Force YAML (hierarchical data)' },
+        { value: 'text', label: 'Force Text (raw code, no framing)' },
       ],
       initialValue: '',
     });
