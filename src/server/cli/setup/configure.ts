@@ -20,10 +20,15 @@ export interface McpConfig {
   responseFormatOverride?: string;
   memoryBankDir?: string;
   compileDbPaths?: string;
+  enableFilesApi?: boolean;
+  samplingModel?: string;
+  samplingMaxTokens?: string;
+  auditLogFile?: string;
+  rateLimitRpm?: string;
 }
 
 /** Build the env var object for a given config — only non-default values are written. */
-function buildEnv(config: McpConfig): Record<string, string> {
+export function buildEnv(config: McpConfig): Record<string, string> {
   const env: Record<string, string> = { OPENGROK_BASE_URL: config.url };
   if (config.username)                                     env['OPENGROK_USERNAME'] = config.username;
   if (config.verifySsl === false)                          env['OPENGROK_VERIFY_SSL'] = 'false';
@@ -40,6 +45,13 @@ function buildEnv(config: McpConfig): Record<string, string> {
   if (config.responseFormatOverride)                       env['OPENGROK_RESPONSE_FORMAT_OVERRIDE'] = config.responseFormatOverride;
   if (config.memoryBankDir)                                env['OPENGROK_MEMORY_BANK_DIR'] = config.memoryBankDir;
   if (config.compileDbPaths)                               env['OPENGROK_LOCAL_COMPILE_DB_PATHS'] = config.compileDbPaths;
+  if (config.enableFilesApi)                               env['OPENGROK_ENABLE_FILES_API'] = 'true';
+  if (config.samplingModel)                                env['OPENGROK_SAMPLING_MODEL'] = config.samplingModel;
+  if (config.samplingMaxTokens && config.samplingMaxTokens !== '256')
+                                                           env['OPENGROK_SAMPLING_MAX_TOKENS'] = config.samplingMaxTokens;
+  if (config.auditLogFile)                                 env['OPENGROK_AUDIT_LOG_FILE'] = config.auditLogFile;
+  if (config.rateLimitRpm && config.rateLimitRpm !== '60')
+                                                           env['OPENGROK_RATELIMIT_RPM'] = config.rateLimitRpm;
   return env;
 }
 

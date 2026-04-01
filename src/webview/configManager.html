@@ -269,7 +269,7 @@
             <input type="checkbox" id="verifySsl">
             <div class="checkbox-content">
                 <label for="verifySsl">Verify SSL/TLS Certificates</label>
-                <div class="checkbox-subtext">Turn off only for self-signed or internal CA certificates</div>
+                <div class="checkbox-subtext">Disable only for self-signed or internal CA certificates</div>
             </div>
         </div>
     </div>
@@ -281,7 +281,7 @@
             <input type="checkbox" id="codeMode" checked>
             <div class="checkbox-content">
                 <label for="codeMode">Code Mode <span class="tag">Recommended</span></label>
-                <div class="checkbox-subtext">Intelligent multi-step code investigation via a sandboxed JavaScript runtime. Dramatically reduces AI token usage.</div>
+                <div class="checkbox-subtext">Uses a sandboxed JavaScript runtime for multi-step code investigations. Reduces AI token usage by ~90%.</div>
             </div>
         </div>
         <div class="field">
@@ -290,18 +290,18 @@
             <div class="hint">Scope all searches to this project unless overridden. Leave blank to search all.</div>
         </div>
         <div class="field">
-            <label for="contextBudget">Response Detail Level</label>
+            <label for="contextBudget">Response Detail</label>
             <select id="contextBudget">
-                <option value="minimal">Compact (4 KB) &mdash; faster, fewer AI credits</option>
-                <option value="standard">Balanced (8 KB) &mdash; recommended for most users</option>
-                <option value="generous">Detailed (16 KB) &mdash; more context, more AI credits</option>
+                <option value="minimal">Compact (4 KB) &mdash; fewer tokens, lower detail</option>
+                <option value="standard">Standard (8 KB) &mdash; balanced, recommended</option>
+                <option value="generous">Detailed (16 KB) &mdash; more context, more tokens</option>
             </select>
         </div>
         <div class="checkbox-field">
             <input type="checkbox" id="enableElicitation">
             <div class="checkbox-content">
                 <label for="enableElicitation">Interactive AI Prompts</label>
-                <div class="checkbox-subtext">Allows the AI to ask clarifying questions during investigations — for example, choosing between multiple matching files or selecting a project. Requires Claude Code v2.1.76+ or VS Code Copilot.</div>
+                <div class="checkbox-subtext">The AI can pause to ask you questions during investigations — e.g., choosing a project, disambiguating files. Requires Claude Code v2.1.76+ or VS Code Copilot.</div>
             </div>
         </div>
     </div>
@@ -348,6 +348,33 @@
                     <label for="compileDbPaths">C/C++ Compile Commands Paths</label>
                     <input type="text" id="compileDbPaths" placeholder="Comma-separated paths to compile_commands.json">
                     <div class="hint">Paths for C/C++ compiler flag extraction. Leave blank for automatic workspace discovery.</div>
+                </div>
+                <div class="checkbox-field">
+                    <input type="checkbox" id="enableFilesApi">
+                    <div class="checkbox-content">
+                        <label for="enableFilesApi">Files API Cache</label>
+                        <div class="checkbox-subtext">Avoids re-uploading unchanged investigation notes to the AI. Requires Files API support in your MCP client.</div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="samplingModel">AI Sampling Model</label>
+                    <input type="text" id="samplingModel" placeholder="Leave blank for client default">
+                    <div class="hint">Preferred model for AI sampling (error explanations, query reformulation).</div>
+                </div>
+                <div class="field">
+                    <label for="samplingMaxTokens">AI Sampling Token Budget</label>
+                    <input type="number" id="samplingMaxTokens" placeholder="256" min="64" max="4096">
+                    <div class="hint">Maximum tokens for AI sampling responses. Range: 64–4096.</div>
+                </div>
+                <div class="field">
+                    <label for="auditLogFile">Audit Log File</label>
+                    <input type="text" id="auditLogFile" placeholder="Leave blank to disable">
+                    <div class="hint">Write structured audit events (tool calls, prompts, errors) to a file. CSV/JSON format.</div>
+                </div>
+                <div class="field">
+                    <label for="rateLimitRpm">Request Rate Limit (RPM)</label>
+                    <input type="number" id="rateLimitRpm" placeholder="60" min="1">
+                    <div class="hint">Maximum requests per minute sent to the OpenGrok server.</div>
                 </div>
             </div>
         </div>
@@ -475,6 +502,11 @@
             var memoryBankDir = document.getElementById('memoryBankDir').value.trim();
             var compileDbPaths = document.getElementById('compileDbPaths').value.trim();
             var enableElicitation = document.getElementById('enableElicitation').checked;
+            var enableFilesApi = document.getElementById('enableFilesApi').checked;
+            var samplingModel = document.getElementById('samplingModel').value.trim();
+            var samplingMaxTokens = parseInt(document.getElementById('samplingMaxTokens').value, 10) || 256;
+            var auditLogFile = document.getElementById('auditLogFile').value.trim();
+            var rateLimitRpm = parseInt(document.getElementById('rateLimitRpm').value, 10) || 60;
 
             if (!baseUrl || !username) { showToast('error', 'URL and Username are required'); return; }
             if (!password && !currentConfig.hasPassword) { showToast('error', 'Password required for new connection'); return; }
@@ -490,7 +522,7 @@
             clearStatusBar();
             vscode.postMessage({
                 type: 'saveConfiguration',
-                data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, defaultProject: defaultProject, contextBudget: contextBudget, responseFormatOverride: responseFormatOverride, apiVersion: apiVersion, codeMode: codeMode, memoryBankDir: memoryBankDir, compileDbPaths: compileDbPaths, codeModeChanged: codeModeChanged, enableElicitation: enableElicitation }
+                data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, defaultProject: defaultProject, contextBudget: contextBudget, responseFormatOverride: responseFormatOverride, apiVersion: apiVersion, codeMode: codeMode, memoryBankDir: memoryBankDir, compileDbPaths: compileDbPaths, codeModeChanged: codeModeChanged, enableElicitation: enableElicitation, enableFilesApi: enableFilesApi, samplingModel: samplingModel, samplingMaxTokens: samplingMaxTokens, auditLogFile: auditLogFile, rateLimitRpm: rateLimitRpm }
             });
         }
 
@@ -515,6 +547,17 @@
                     if (currentConfig.enableElicitation !== undefined) {
                         document.getElementById('enableElicitation').checked = currentConfig.enableElicitation;
                     }
+                    if (currentConfig.enableFilesApi !== undefined) {
+                        document.getElementById('enableFilesApi').checked = currentConfig.enableFilesApi;
+                    }
+                    document.getElementById('samplingModel').value = currentConfig.samplingModel || '';
+                    if (currentConfig.samplingMaxTokens !== undefined) {
+                        document.getElementById('samplingMaxTokens').value = currentConfig.samplingMaxTokens || 256;
+                    }
+                    document.getElementById('auditLogFile').value = currentConfig.auditLogFile || '';
+                    if (currentConfig.rateLimitRpm !== undefined) {
+                        document.getElementById('rateLimitRpm').value = currentConfig.rateLimitRpm || 60;
+                    }
 
                     var pInput = document.getElementById('password');
                     var pHint = document.getElementById('passwordHint');
@@ -528,7 +571,11 @@
 
                     var hasAdvanced = (currentConfig.proxy || currentConfig.responseFormatOverride ||
                         (currentConfig.apiVersion && currentConfig.apiVersion !== 'v1') ||
-                        currentConfig.memoryBankDir || currentConfig.compileDbPaths);
+                        currentConfig.memoryBankDir || currentConfig.compileDbPaths ||
+                        currentConfig.enableFilesApi || currentConfig.samplingModel ||
+                        (currentConfig.samplingMaxTokens && currentConfig.samplingMaxTokens !== 256) ||
+                        currentConfig.auditLogFile ||
+                        (currentConfig.rateLimitRpm && currentConfig.rateLimitRpm !== 60));
                     if (hasAdvanced) {
                         document.getElementById('advancedSection').open = true;
                     }

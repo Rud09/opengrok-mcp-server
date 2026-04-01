@@ -91,7 +91,7 @@ Manages credentials (VS Code SecretStorage + encrypted temp files), registers th
 | `OPENGROK_USERNAME` / `OPENGROK_PASSWORD` | Auth credentials |
 | `OPENGROK_VERIFY_SSL` | `true` (default) / `false` — disable for self-signed certs |
 | `OPENGROK_PROXY` | HTTP proxy URL |
-| `OPENGROK_CONTEXT_BUDGET` | `minimal` (4 KB) / `standard` (8 KB) / `generous` (16 KB) |
+| `OPENGROK_CONTEXT_BUDGET` | `minimal` (4 KB) / `standard` (8 KB, default) / `generous` (16 KB) |
 | `OPENGROK_CODE_MODE` | Enable Code Mode (5 tools: opengrok_api, opengrok_execute + 3 memory tools) |
 | `OPENGROK_MEMORY_BANK_DIR` | Override memory-bank directory |
 | `OPENGROK_DEFAULT_PROJECT` | Default project to scope searches to |
@@ -110,7 +110,7 @@ Manages credentials (VS Code SecretStorage + encrypted temp files), registers th
 | `OPENGROK_ALLOWED_ORIGINS` | Comma-separated CORS allowlist (replaces wildcard CORS) |
 | `OPENGROK_RBAC_TOKENS` | `token:role` pairs for RBAC (admin/developer/readonly) |
 | `OPENGROK_SAMPLING_MODEL` / `OPENGROK_SAMPLING_MAX_TOKENS` | MCP Sampling model preference and budget |
-| `OPENGROK_ENABLE_ELICITATION` | `true`/`false` — enable MCP Elicitation project picker |
+| `OPENGROK_ENABLE_ELICITATION` | `true`/`false` — enable Interactive AI Prompts (project selection, file disambiguation, sandbox `elicit()`) |
 | `OPENGROK_ENABLE_FILES_API` | `true`/`false` — enable FileReferenceCache for memory bank |
 | `OPENGROK_AUDIT_LOG_FILE` | File path for structured audit log (CSV/JSON) |
 | `OPENGROK_RATELIMIT_RPM` / `OPENGROK_PER_TOOL_RATELIMIT` | Global and per-tool rate limits |

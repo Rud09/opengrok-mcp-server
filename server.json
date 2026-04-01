@@ -8,12 +8,12 @@
     "url": "https://github.com/IcyHot09/opengrok-mcp-server",
     "source": "github"
   },
-  "version": "9.0.2",
+  "version": "9.1.8",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "opengrok-mcp-server",
-      "version": "9.0.2",
+      "version": "9.1.8",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -70,7 +70,7 @@
           "format": "string",
           "isRequired": false,
           "isSecret": false,
-          "default": "minimal",
+          "default": "standard",
           "choices": [
             "minimal",
             "standard",
@@ -79,7 +79,7 @@
         },
         {
           "name": "OPENGROK_ENABLE_ELICITATION",
-          "description": "Enable interactive project picker at session start and env.opengrok.elicit() in Code Mode sandbox. Requires a supporting MCP client.",
+          "description": "Interactive AI Prompts \u2014 the AI pauses to ask questions during investigations (project selection, file disambiguation). Requires Claude Code v2.1.76+ or VS Code Copilot.",
           "format": "boolean",
           "isRequired": false,
           "isSecret": false,
@@ -91,6 +91,37 @@
           "format": "string",
           "isRequired": false,
           "isSecret": false
+        },
+        {
+          "name": "OPENGROK_ENABLE_FILES_API",
+          "description": "Files API Cache \u2014 avoids re-uploading unchanged investigation notes. Requires Files API support in the MCP client.",
+          "format": "boolean",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "false"
+        },
+        {
+          "name": "OPENGROK_SAMPLING_MAX_TOKENS",
+          "description": "Maximum tokens for AI sampling responses (error explanation, query reformulation). Range: 64\u20134096.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "256"
+        },
+        {
+          "name": "OPENGROK_AUDIT_LOG_FILE",
+          "description": "Path to write structured audit events (CSV/JSON). Appends tool invocations, elicitation events, and errors. Leave unset to disable.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "OPENGROK_RATELIMIT_RPM",
+          "description": "Maximum requests per minute to the OpenGrok server. Default: 60.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "60"
         }
       ]
     }

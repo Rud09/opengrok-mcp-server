@@ -34,25 +34,25 @@ export async function runSetup(): Promise<void> {
   }
 
   const verifySsl = await p.confirm({
-    message: 'Verify SSL certificate? (disable only for self-signed or internal CA servers)',
+    message: 'Verify SSL/TLS certificates? (disable only for self-signed or internal CA certificates)',
     initialValue: true,
   });
   if (p.isCancel(verifySsl)) { p.cancel('Setup cancelled.'); process.exit(0); }
 
   // --- PREFERENCES ---
   const budget = await p.select({
-    message: 'Context budget',
+    message: 'Response detail level',
     options: [
-      { value: 'minimal', label: 'minimal (4 KB) — lowest token usage, compact tool descriptions' },
-      { value: 'standard', label: 'standard (8 KB) — balanced' },
-      { value: 'generous', label: 'generous (16 KB) — more context' },
+      { value: 'minimal',  label: 'Compact (4 KB) — fewer tokens, lower detail' },
+      { value: 'standard', label: 'Standard (8 KB) — balanced, recommended' },
+      { value: 'generous', label: 'Detailed (16 KB) — more context, more tokens' },
     ],
     initialValue: 'standard',
   });
   if (p.isCancel(budget)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   const codeMode = await p.confirm({
-    message: 'Enable Code Mode? (2-tool API: 98% fewer tokens — recommended for large codebases)',
+    message: 'Enable Code Mode? (sandboxed JS runtime — ~90% fewer tokens, recommended for large codebases)',
     initialValue: true,
   });
   if (p.isCancel(codeMode)) { p.cancel('Setup cancelled'); process.exit(0); }
@@ -65,14 +65,14 @@ export async function runSetup(): Promise<void> {
   if (p.isCancel(defaultProject)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   const enableElicitation = await p.confirm({
-    message: 'Enable interactive AI prompts? Allows the AI to ask clarifying questions during investigations (requires Claude Code v2.1.76+ or VS Code Copilot)',
+    message: 'Enable Interactive AI Prompts? The AI can pause to ask questions during investigations (e.g., project selection, file disambiguation). Requires Claude Code v2.1.76+ or VS Code Copilot',
     initialValue: false,
   });
   if (p.isCancel(enableElicitation)) { p.cancel('Setup cancelled'); process.exit(0); }
 
-  // --- ADVANCED (optional, shown only if user wants) ---
+  // --- ADVANCED (optional) ---
   const wantsAdvanced = await p.confirm({
-    message: 'Configure advanced settings? (proxy, API version, response format, memory bank)',
+    message: 'Configure advanced settings? (proxy, API version, response format, memory bank, audit log, rate limit)',
     initialValue: false,
   });
   if (p.isCancel(wantsAdvanced)) { p.cancel('Setup cancelled'); process.exit(0); }
@@ -82,6 +82,11 @@ export async function runSetup(): Promise<void> {
   let responseFormatOverride = '';
   let memoryBankDir = '';
   let compileDbPaths = '';
+  let enableFilesApi = false;
+  let samplingModel = '';
+  let samplingMaxTokens = '256';
+  let auditLogFile = '';
+  let rateLimitRpm = '60';
 
   if (wantsAdvanced) {
     const proxyVal = await p.text({
@@ -93,10 +98,10 @@ export async function runSetup(): Promise<void> {
     proxy = String(proxyVal);
 
     const apiVersionVal = await p.select({
-      message: 'OpenGrok REST API version',
+      message: 'OpenGrok API version',
       options: [
-        { value: 'v1', label: 'v1 — Default (OpenGrok 1.x)' },
-        { value: 'v2', label: 'v2 — OpenGrok 2.x servers (explicit opt-in only)' },
+        { value: 'v1', label: 'v1 — Compatible with all OpenGrok versions (default)' },
+        { value: 'v2', label: 'v2 — Required for call graph features (OpenGrok 1.12+)' },
       ],
       initialValue: 'v1',
     });
@@ -104,15 +109,15 @@ export async function runSetup(): Promise<void> {
     apiVersion = String(apiVersionVal);
 
     const responseFormat = await p.select({
-      message: 'Response format override',
+      message: 'AI response format override',
       options: [
-        { value: '', label: 'Auto (recommended — each tool picks the best format)' },
-        { value: 'markdown', label: 'Force Markdown' },
-        { value: 'json', label: 'Force JSON' },
-        { value: 'tsv', label: 'Force TSV (compact table)' },
-        { value: 'toon', label: 'Force TOON (token-optimized notation)' },
-        { value: 'yaml', label: 'Force YAML (hierarchical data)' },
-        { value: 'text', label: 'Force Text (raw code, no framing)' },
+        { value: '',         label: 'Auto — each tool picks the best format (recommended)' },
+        { value: 'markdown', label: 'Markdown — verbose but readable' },
+        { value: 'json',     label: 'JSON — programmatic use' },
+        { value: 'tsv',      label: 'TSV — compact tabular' },
+        { value: 'toon',     label: 'TOON — token-optimized notation' },
+        { value: 'yaml',     label: 'YAML — hierarchical data' },
+        { value: 'text',     label: 'Text — raw code, no framing' },
       ],
       initialValue: '',
     });
@@ -120,18 +125,61 @@ export async function runSetup(): Promise<void> {
     responseFormatOverride = String(responseFormat);
 
     const memoryBankVal = await p.text({
-      message: 'Memory bank directory (leave blank for default ~/.config/opengrok-mcp/memory-bank/)',
+      message: 'Investigation notes directory (leave blank for default: ~/.config/opengrok-mcp/memory-bank/)',
       defaultValue: '',
     });
     if (p.isCancel(memoryBankVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     memoryBankDir = String(memoryBankVal);
 
     const compileDbVal = await p.text({
-      message: 'Compile commands paths (comma-separated paths to compile_commands.json, blank = auto)',
+      message: 'C/C++ compile commands paths (comma-separated paths to compile_commands.json, blank = auto)',
       defaultValue: '',
     });
     if (p.isCancel(compileDbVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     compileDbPaths = String(compileDbVal);
+
+    const enableFilesApiVal = await p.confirm({
+      message: 'Enable Files API cache? (avoids re-uploading unchanged investigation notes to the AI)',
+      initialValue: false,
+    });
+    if (p.isCancel(enableFilesApiVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    enableFilesApi = Boolean(enableFilesApiVal);
+
+    const samplingModelVal = await p.text({
+      message: 'AI sampling model (leave blank for client default)',
+      defaultValue: '',
+    });
+    if (p.isCancel(samplingModelVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    samplingModel = String(samplingModelVal);
+
+    const samplingMaxTokensVal = await p.text({
+      message: 'AI sampling token budget (default: 256, range: 64–4096)',
+      defaultValue: '256',
+      validate: (v) => {
+        const n = parseInt(v ?? '', 10);
+        if (isNaN(n) || n < 64 || n > 4096) return 'Enter a number between 64 and 4096';
+      },
+    });
+    if (p.isCancel(samplingMaxTokensVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    samplingMaxTokens = String(samplingMaxTokensVal);
+
+    const auditLogFileVal = await p.text({
+      message: 'Audit log file path (leave blank to disable)',
+      defaultValue: '',
+    });
+    if (p.isCancel(auditLogFileVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    auditLogFile = String(auditLogFileVal);
+
+    const rateLimitRpmVal = await p.text({
+      message: 'Request rate limit in RPM (default: 60)',
+      defaultValue: '60',
+      validate: (v) => {
+        const n = parseInt(v ?? '', 10);
+        if (isNaN(n) || n < 1) return 'Enter a positive integer';
+      },
+    });
+    if (p.isCancel(rateLimitRpmVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    rateLimitRpm = String(rateLimitRpmVal);
   }
 
   // --- STORE CREDENTIALS ---
@@ -155,6 +203,11 @@ export async function runSetup(): Promise<void> {
     responseFormatOverride,
     memoryBankDir,
     compileDbPaths,
+    enableFilesApi,
+    samplingModel,
+    samplingMaxTokens,
+    auditLogFile,
+    rateLimitRpm,
   };
 
   const spin = p.spinner();

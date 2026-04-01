@@ -228,7 +228,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await checkVersionUpdate(context);
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('opengrok-mcp.configure', configureCredentials),
         vscode.commands.registerCommand('opengrok-mcp.configureUI', () => {
             openConfigurationPanel(context);
         }),
@@ -316,7 +315,6 @@ async function showStatusMenu(): Promise<void> {
     const action = await vscode.window.showQuickPick([
         { label: '$(zap) Test Connection', detail: 'Verify connection to the OpenGrok server', command: 'opengrok-mcp.test' },
         { label: '$(settings-gear) Configuration Manager', detail: 'Open visual configuration panel', command: 'opengrok-mcp.configureUI' },
-        { label: '$(gear) Quick Configure', detail: 'Update credentials via input prompts', command: 'opengrok-mcp.configure' },
         { label: '$(output) Show Server Logs', detail: 'View diagnostic logs for learning and debugging', command: 'opengrok-mcp.showLogs' },
         { label: '$(cloud-download) Check for Updates', detail: 'Check for new extension versions on GitHub', command: 'opengrok-mcp.checkUpdate' }
     ], {
@@ -326,72 +324,6 @@ async function showStatusMenu(): Promise<void> {
     if (action) {
         vscode.commands.executeCommand(action.command);
     }
-}
-
-async function configureCredentials(): Promise<void> {
-    const config = vscode.workspace.getConfiguration('opengrok-mcp');
-
-    const baseUrl = await vscode.window.showInputBox({
-        prompt: 'Enter OpenGrok server URL',
-        value: config.get<string>('baseUrl') || '',
-        placeHolder: 'https://opengrok.company.com/source/',
-        ignoreFocusOut: true,
-        validateInput: (value) => {
-            try {
-                const parsed = new URL(value);
-                if (parsed.protocol === 'http:') {
-                    return 'Warning: HTTP detected — credentials will be sent unencrypted. Use HTTPS for production.';
-                }
-                return null;
-            } catch {
-                return 'Please enter a valid URL (e.g. https://opengrok.company.com/source/)';
-            }
-        }
-    });
-    if (!baseUrl) return;
-
-    const username = await vscode.window.showInputBox({
-        prompt: 'Enter OpenGrok username',
-        value: config.get<string>('username') || '',
-        ignoreFocusOut: true,
-    });
-    if (!username) return;
-
-    const password = await vscode.window.showInputBox({
-        prompt: 'Enter OpenGrok password',
-        password: true,
-        ignoreFocusOut: true,
-    });
-    if (!password) return;
-
-    // Delegate to shared handler — same path as WebView save
-    await handleSaveConfiguration(
-        (msg) => {
-            if (msg['type'] === 'error') {
-                void vscode.window.showErrorMessage(String(msg['message']));
-            }
-        },
-        {
-            baseUrl,
-            username,
-            password,
-            verifySsl: config.get<boolean>('verifySsl') ?? true,
-            proxy: config.get<string>('proxy'),
-            defaultProject: config.get<string>('defaultProject'),
-            contextBudget: config.get<string>('contextBudget'),
-            responseFormatOverride: config.get<string>('responseFormatOverride'),
-            codeMode: config.get<boolean>('codeMode') ?? true,
-            memoryBankDir: config.get<string>('memoryBankDir'),
-            compileDbPaths: config.get<string>('compileDbPaths'),
-            apiVersion: config.get<string>('apiVersion') || 'v1',
-            enableElicitation: config.get<boolean>('enableElicitation') ?? false,
-        }
-    );
-
-    void vscode.window.showInformationMessage(
-        'OpenGrok credentials saved! Copilot Chat can now search your codebase.',
-        'Test Connection'
-    ).then(action => { if (action === 'Test Connection') void testConnection(); });
 }
 
 /**
@@ -643,7 +575,7 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         };
 
         const codeMode = config.get<boolean>('codeMode') ?? true;
-        const contextBudget = config.get<string>('contextBudget') ?? 'minimal';
+        const contextBudget = config.get<string>('contextBudget') ?? 'standard';
         const memoryBankDir = config.get<string>('memoryBankDir') ?? '';
 
         env.OPENGROK_CODE_MODE = codeMode ? 'true' : 'false';
@@ -659,8 +591,18 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         const defaultProject = config.get<string>('defaultProject') ?? '';
         const responseFormatOverride = config.get<string>('responseFormatOverride') ?? '';
         const compileDbPaths = (config.get<string>('compileDbPaths') ?? '').trim();
+        const enableFilesApi = config.get<boolean>('enableFilesApi') ?? false;
+        const samplingModel = config.get<string>('samplingModel') ?? '';
+        const samplingMaxTokens = config.get<number>('samplingMaxTokens') ?? 256;
+        const auditLogFile = config.get<string>('auditLogFile') ?? '';
+        const rateLimitRpm = config.get<number>('rateLimitRpm') ?? 60;
         if (defaultProject) env.OPENGROK_DEFAULT_PROJECT = defaultProject;
         if (responseFormatOverride) env.OPENGROK_RESPONSE_FORMAT_OVERRIDE = responseFormatOverride;
+        if (enableFilesApi) env.OPENGROK_ENABLE_FILES_API = 'true';
+        if (samplingModel) env.OPENGROK_SAMPLING_MODEL = samplingModel;
+        if (samplingMaxTokens !== 256) env.OPENGROK_SAMPLING_MAX_TOKENS = String(samplingMaxTokens);
+        if (auditLogFile) env.OPENGROK_AUDIT_LOG_FILE = auditLogFile;
+        if (rateLimitRpm !== 60) env.OPENGROK_RATELIMIT_RPM = String(rateLimitRpm);
 
         if (!_credentialsSynced && password) {
             try {
@@ -783,7 +725,7 @@ function openConfigurationPanel(context: vscode.ExtensionContext): void {
                         await testConnection(true);
                         break;
                     case 'saveConfiguration':
-                        await _handleSaveConfiguration(configPanel.webview, message.data as { baseUrl: string; username: string; password?: string; proxy?: string; verifySsl: boolean; defaultProject?: string; contextBudget?: string; responseFormatOverride?: string; codeMode?: boolean; memoryBankDir?: string; compileDbPaths?: string; codeModeChanged?: boolean; apiVersion?: string; enableElicitation?: boolean });
+                        await _handleSaveConfiguration(configPanel.webview, message.data as { baseUrl: string; username: string; password?: string; proxy?: string; verifySsl: boolean; defaultProject?: string; contextBudget?: string; responseFormatOverride?: string; codeMode?: boolean; memoryBankDir?: string; compileDbPaths?: string; codeModeChanged?: boolean; apiVersion?: string; enableElicitation?: boolean; enableFilesApi?: boolean; samplingModel?: string; samplingMaxTokens?: number; auditLogFile?: string; rateLimitRpm?: number });
                         break;
                 }
             } catch (error: unknown) {
@@ -812,13 +754,18 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
     const verifySsl = config.get<boolean>('verifySsl') ?? true;
     const proxy = config.get<string>('proxy') || '';
     const defaultProject = config.get<string>('defaultProject') || '';
-    const contextBudget = config.get<string>('contextBudget') || 'minimal';
+    const contextBudget = config.get<string>('contextBudget') || 'standard';
     const responseFormatOverride = config.get<string>('responseFormatOverride') || '';
     const codeMode = config.get<boolean>('codeMode') ?? true;
     const memoryBankDir = config.get<string>('memoryBankDir') || '';
     const compileDbPaths = config.get<string>('compileDbPaths') || '';
     const apiVersion = config.get<string>('apiVersion') || 'v1';
     const enableElicitation = config.get<boolean>('enableElicitation') ?? false;
+    const enableFilesApi = config.get<boolean>('enableFilesApi') ?? false;
+    const samplingModel = config.get<string>('samplingModel') ?? '';
+    const samplingMaxTokens = config.get<number>('samplingMaxTokens') ?? 256;
+    const auditLogFile = config.get<string>('auditLogFile') ?? '';
+    const rateLimitRpm = config.get<number>('rateLimitRpm') ?? 60;
 
     let hasPassword = false;
     if (username) {
@@ -828,7 +775,7 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
 
     webview.postMessage({
         type: 'loadConfig',
-        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, apiVersion, enableElicitation }
+        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, apiVersion, enableElicitation, enableFilesApi, samplingModel, samplingMaxTokens, auditLogFile, rateLimitRpm }
     });
 }
 
@@ -869,6 +816,11 @@ async function _handleSaveConfiguration(webview: vscode.Webview, data: {
     codeModeChanged?: boolean;
     apiVersion?: string;
     enableElicitation?: boolean;
+    enableFilesApi?: boolean;
+    samplingModel?: string;
+    samplingMaxTokens?: number;
+    auditLogFile?: string;
+    rateLimitRpm?: number;
 }): Promise<void> {
     await handleSaveConfiguration(
         (msg: Record<string, unknown>) => { void webview.postMessage(msg); },
@@ -1017,9 +969,15 @@ async function handleSaveConfiguration(
         codeModeChanged?: boolean;
         apiVersion?: string;
         enableElicitation?: boolean;
+        enableFilesApi?: boolean;
+        samplingModel?: string;
+        samplingMaxTokens?: number;
+        auditLogFile?: string;
+        rateLimitRpm?: number;
     }
 ): Promise<void> {
-    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged, apiVersion, enableElicitation } = data;
+    const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged, apiVersion, enableElicitation,
+            enableFilesApi, samplingModel, samplingMaxTokens, auditLogFile, rateLimitRpm } = data;
 
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const oldUsername = config.get<string>('username');
@@ -1063,6 +1021,11 @@ async function handleSaveConfiguration(
     if (compileDbPaths !== undefined) await config.update('compileDbPaths', compileDbPaths || undefined, vscode.ConfigurationTarget.Global);
     if (apiVersion !== undefined) await config.update('apiVersion', apiVersion || 'v1', vscode.ConfigurationTarget.Global);
     if (enableElicitation !== undefined) await config.update('enableElicitation', enableElicitation, vscode.ConfigurationTarget.Global);
+    if (enableFilesApi !== undefined) await config.update('enableFilesApi', enableFilesApi, vscode.ConfigurationTarget.Global);
+    if (samplingModel !== undefined) await config.update('samplingModel', samplingModel || undefined, vscode.ConfigurationTarget.Global);
+    if (samplingMaxTokens !== undefined) await config.update('samplingMaxTokens', samplingMaxTokens, vscode.ConfigurationTarget.Global);
+    if (auditLogFile !== undefined) await config.update('auditLogFile', auditLogFile || undefined, vscode.ConfigurationTarget.Global);
+    if (rateLimitRpm !== undefined) await config.update('rateLimitRpm', rateLimitRpm, vscode.ConfigurationTarget.Global);
 
     log(`Configuration saved for user: ${username}`);
     updateStatusBar('ready');

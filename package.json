@@ -2,7 +2,7 @@
   "name": "opengrok-mcp-server",
   "displayName": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases",
-  "version": "9.0.2",
+  "version": "9.1.8",
   "mcpName": "io.github.IcyHot09/opengrok-mcp-server",
   "license": "PolyForm-Noncommercial-1.0.0",
   "publisher": "IcyHot09",
@@ -39,7 +39,6 @@
   "pricing": "Free",
   "activationEvents": [
     "onExtension:github.copilot-chat",
-    "onCommand:opengrok-mcp.configure",
     "onCommand:opengrok-mcp.configureUI",
     "onCommand:opengrok-mcp.test",
     "onCommand:opengrok-mcp.statusMenu",
@@ -67,10 +66,6 @@
   ],
   "contributes": {
     "commands": [
-      {
-        "command": "opengrok-mcp.configure",
-        "title": "OpenGrok: Configure Credentials"
-      },
       {
         "command": "opengrok-mcp.configureUI",
         "title": "OpenGrok: Open Configuration"
@@ -116,13 +111,13 @@
         "opengrok-mcp.verifySsl": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Validates server SSL/TLS certificates. Disable only for self-signed or internal CA certificates.",
+          "markdownDescription": "Validates server SSL/TLS certificates. Disable only for self-signed or internal CA certificates. Maps to `OPENGROK_VERIFY_SSL`.",
           "order": 3
         },
         "opengrok-mcp.codeMode": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "**Enables Code Mode (Recommended)** — Uses an intelligent JavaScript sandbox for multi-step code investigations. Reduces AI token usage by ~90%. Maps to `OPENGROK_CODE_MODE` env var.",
+          "markdownDescription": "**Code Mode (Recommended)** \u2014 Uses a sandboxed JavaScript runtime for multi-step code investigations. Reduces AI token usage by ~90%. Maps to `OPENGROK_CODE_MODE` env var.",
           "order": 4
         },
         "opengrok-mcp.defaultProject": {
@@ -139,24 +134,24 @@
             "generous"
           ],
           "enumDescriptions": [
-            "Compact (4 KB) — faster, fewer AI credits",
-            "Balanced (8 KB) — recommended for most users",
-            "Detailed (16 KB) — more context, more AI credits"
+            "Compact (4 KB) \u2014 fewer tokens, lower detail",
+            "Standard (8 KB) \u2014 balanced, recommended",
+            "Detailed (16 KB) \u2014 more context, more tokens"
           ],
           "default": "standard",
-          "markdownDescription": "Controls how much code context the AI receives per response. Compact uses fewer AI credits; Detailed provides more context. Maps to `OPENGROK_CONTEXT_BUDGET` env var.",
+          "markdownDescription": "Controls how much context the AI receives per response. Compact uses fewer tokens; Detailed provides more context. Maps to `OPENGROK_CONTEXT_BUDGET` env var.",
           "order": 6
         },
         "opengrok-mcp.enableElicitation": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Allows the AI to pause and ask you clarifying questions during investigations — for example, choosing between multiple matching files or selecting a project. Requires Claude Code v2.1.76+ or VS Code Copilot. Maps to `OPENGROK_ENABLE_ELICITATION` env var.",
+          "markdownDescription": "**Interactive AI Prompts** \u2014 The AI pauses to ask you questions during investigations (e.g., choosing a project, disambiguating files). Requires Claude Code v2.1.76+ or VS Code Copilot. Maps to `OPENGROK_ENABLE_ELICITATION` env var.",
           "order": 7
         },
         "opengrok-mcp.proxy": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Route requests through an HTTP proxy (e.g. `http://proxy.company.com:8080`). Credentials are forwarded — use only with trusted proxies. Leave blank for direct connection.",
+          "markdownDescription": "Route requests through an HTTP proxy (e.g. `http://proxy.company.com:8080`). Credentials are forwarded \u2014 use only with trusted proxies. Leave blank for direct connection.",
           "order": 8
         },
         "opengrok-mcp.apiVersion": {
@@ -166,8 +161,8 @@
             "v2"
           ],
           "enumDescriptions": [
-            "v1 — Compatible with all OpenGrok versions (default)",
-            "v2 — Required for call graph features (OpenGrok 1.12+)"
+            "v1 \u2014 Compatible with all OpenGrok versions (default)",
+            "v2 \u2014 Required for call graph features (OpenGrok 1.12+)"
           ],
           "default": "v1",
           "markdownDescription": "OpenGrok REST API version. v1 works with all versions. Select v2 only for call graph features (requires OpenGrok 1.12+).",
@@ -185,13 +180,13 @@
             "text"
           ],
           "enumDescriptions": [
-            "Auto — let each tool choose the best format",
-            "TSV — compact tabular format",
-            "TOON — token-optimized notation",
-            "Markdown — verbose but readable",
-            "JSON — programmatic use",
-            "YAML — hierarchical data",
-            "Text — raw code, no framing"
+            "Auto \u2014 let each tool choose the best format",
+            "TSV \u2014 compact tabular format",
+            "TOON \u2014 token-optimized notation",
+            "Markdown \u2014 verbose but readable",
+            "JSON \u2014 programmatic use",
+            "YAML \u2014 hierarchical data",
+            "Text \u2014 raw code, no framing"
           ],
           "default": "",
           "markdownDescription": "Override how search results and code are formatted for the AI. Auto is best for most users. Maps to `OPENGROK_RESPONSE_FORMAT_OVERRIDE` env var.",
@@ -210,6 +205,46 @@
           "markdownDescription": "Paths to `compile_commands.json` for C/C++ compiler flag extraction. Leave blank for automatic workspace discovery. Maps to `OPENGROK_LOCAL_COMPILE_DB_PATHS` env var.",
           "order": 12,
           "scope": "window"
+        },
+        "opengrok-mcp.enableFilesApi": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Files API Cache** \u2014 Avoids re-uploading unchanged investigation notes to the AI. Requires Files API support in your MCP client. Maps to `OPENGROK_ENABLE_FILES_API` env var.",
+          "order": 13
+        },
+        "opengrok-mcp.samplingModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Preferred model for AI sampling (error explanations, query reformulation). Leave blank for the client default. Maps to `OPENGROK_SAMPLING_MODEL` env var.",
+          "order": 14
+        },
+        "opengrok-mcp.samplingMaxTokens": {
+          "type": "integer",
+          "default": 256,
+          "minimum": 64,
+          "maximum": 4096,
+          "markdownDescription": "Maximum tokens for AI sampling responses. Range: 64\u20134096. Maps to `OPENGROK_SAMPLING_MAX_TOKENS` env var.",
+          "order": 15
+        },
+        "opengrok-mcp.auditLogFile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to write structured audit events (tool invocations, elicitation, errors). Appends CSV/JSON. Leave blank to disable. Maps to `OPENGROK_AUDIT_LOG_FILE` env var.",
+          "order": 16
+        },
+        "opengrok-mcp.rateLimitRpm": {
+          "type": "integer",
+          "default": 60,
+          "minimum": 1,
+          "markdownDescription": "Maximum requests per minute sent to the OpenGrok server. Default: 60. Maps to `OPENGROK_RATELIMIT_RPM` env var.",
+          "order": 17
+        },
+        "opengrok-mcp.enableCacheHints": {
+          "type": "boolean",
+          "default": false,
+          "markdownDeprecationMessage": "This setting is a no-op. The MCP SDK does not yet expose cache_control breakpoints. It will be removed in a future release.",
+          "markdownDescription": "**Deprecated \u2014 no-op.** The SDK does not yet support explicit cache_control headers. This setting has no effect.",
+          "order": 18
         }
       }
     }

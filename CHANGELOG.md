@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Highlights
 
+### 🎨 v9.1 — UI Consistency & Feature Completeness
+
+Five previously env-only settings surfaced across all UI surfaces (WebView, CLI wizard, VS Code Settings): Files API Cache, AI Sampling Model, AI Sampling Token Budget, Audit Log File, and Request Rate Limit. Labels and descriptions made canonical across all surfaces. Context budget default bug fixed (`minimal`→`standard`). Quick Configure command removed. **1,078 tests.**
+
 ### 💬 v9.0 — Code Mode Interactive Prompts & LLM Sampling
 
 `env.opengrok.elicit()` and `env.opengrok.sample()` bring interactive user prompts and AI-powered query reformulation directly into the Code Mode sandbox. Zero-result searches auto-inject `_suggestions` when sampling is available. `opengrok_api` gains a session-start project picker. `elicitOrFallback` migrated from deprecated `Server` to `McpServer`. **1,115 tests, ≥89% coverage.**
@@ -54,6 +58,40 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [9.1.8] - 2026-04-01
+
+### ✨ UI Consistency & Feature Completeness
+
+**New settings surfaced in all UI surfaces (WebView, CLI wizard, VS Code Settings):**
+- **Files API Cache** (`OPENGROK_ENABLE_FILES_API`) — avoids re-uploading unchanged investigation notes; requires Files API support in the MCP client
+- **AI Sampling Model** (`OPENGROK_SAMPLING_MODEL`) — preferred model for error explanations and query reformulation
+- **AI Sampling Token Budget** (`OPENGROK_SAMPLING_MAX_TOKENS`) — max tokens for sampling responses (64–4096, default 256)
+- **Audit Log File** (`OPENGROK_AUDIT_LOG_FILE`) — structured CSV/JSON audit log for tool invocations and errors
+- **Request Rate Limit** (`OPENGROK_RATELIMIT_RPM`) — max requests per minute to the OpenGrok server (default 60)
+
+**Label & description consistency across all surfaces:**
+- Response Detail options renamed to Compact / Standard / Detailed (was Compact / Balanced / Detailed)
+- Code Mode description updated: "~90% fewer tokens" (was "98% fewer tokens")  
+- Interactive AI Prompts (Elicitation) description updated to clarify the AI can pause mid-investigation for disambiguation, not just at session start
+- SSL label: "Verify SSL/TLS certificates" with "Disable only for…" (was "Turn off only for…")
+- Advanced settings gate mentions audit log and rate limit
+
+**Bug fixes:**
+- `extension.ts` context budget fallback corrected from `'minimal'` to `'standard'` (was inconsistent with `package.json` default and CLI wizard)
+
+**Removed:**
+- `opengrok-mcp.configure` ("Quick Configure") command removed — redundant with the Configuration Manager WebView panel; `activationEvents` entry also removed
+
+**Deprecation:**
+- `opengrok-mcp.enableCacheHints` marked deprecated in VS Code Settings with `markdownDeprecationMessage` — it is a no-op (MCP SDK does not yet expose cache_control breakpoints)
+
+**Tests:**
+- New `src/tests/configure.test.ts` with 11 unit tests covering `buildEnv()` for all 5 new fields
+- `buildEnv()` exported from `configure.ts` for testability
+- **1,078 tests total** — all passing
 
 ---
 
