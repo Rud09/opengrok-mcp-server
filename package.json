@@ -104,7 +104,7 @@
         "opengrok-mcp.baseUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "OpenGrok server URL including trailing slash (e.g. `https://opengrok.company.com/source/`). After configuring, use **OpenGrok: Test Connection** to verify.",
+          "markdownDescription": "OpenGrok server URL including trailing slash (e.g. `https://opengrok.company.com/source/`). After configuring, use **[OpenGrok: Test Connection](command:opengrok-mcp.test)** to verify.",
           "order": 1
         },
         "opengrok-mcp.username": {

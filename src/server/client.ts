@@ -172,7 +172,8 @@ class TTLCache<K, V> {
   private evictExpired(): void {
     const now = Date.now();
     for (const [k, entry] of this.map) {
-      /* v8 ignore start */
+      /* v8 ignore start -- time-based branch; entries expire only when real time passes,
+         not exercised in unit tests where Date.now() is effectively frozen */
       if (now > entry.expiresAt) {
         this.totalBytes -= entry.sizeBytes;
         this.map.delete(k);
