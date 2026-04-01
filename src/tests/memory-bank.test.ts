@@ -296,21 +296,24 @@ describe('MemoryBank readCompressed', () => {
 });
 
 // ---------------------------------------------------------------------------
-// write — pre-reject throw when combined content far exceeds limit (line 168)
+// write — graceful trim when combined content exceeds limit
 // ---------------------------------------------------------------------------
 
-describe('MemoryBank.write — pre-reject when content far exceeds limit', () => {
-  it('throws when append content would cause combined size to far exceed limit', async () => {
-    // Write a large existing log (~30KB) then try to append another ~30KB
-    // Combined ~60KB > 32768 * 1.5 = 49152 → pre-reject threshold
+describe('MemoryBank.write — graceful trim when combined content exceeds limit', () => {
+  it('trims existing log to make room and writes without throwing', async () => {
+    // Write a large existing log (~30KB) then append another ~30KB
+    // Combined ~60KB > 32768 → should trim existing to fit new content
     const existing = '## Entry 1\n' + 'x'.repeat(30000);
     await bank.write('investigation-log.md', existing);
 
     const hugeAppend = '## Entry 2\n' + 'y'.repeat(30000);
-    // Should throw because existingBytes + newBytes > maxBytes * 1.5
-    await expect(bank.write('investigation-log.md', hugeAppend, 'append')).rejects.toThrow(
-      'content would exceed max size'
-    );
+    // Should succeed: existing is trimmed to make room for the new entry
+    await expect(bank.write('investigation-log.md', hugeAppend, 'append')).resolves.toBeUndefined();
+
+    const result = await bank.read('investigation-log.md') ?? '';
+    expect(Buffer.byteLength(result, 'utf8')).toBeLessThanOrEqual(32768);
+    // New entry must be present
+    expect(result).toContain('## Entry 2');
   });
 });
 

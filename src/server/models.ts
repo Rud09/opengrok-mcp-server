@@ -45,7 +45,7 @@ export const SearchCodeArgs = z.object({
 });
 
 export const SearchPatternArgs = z.object({
-  pattern: z.string().min(1).describe("Regular expression pattern to search for"),
+  pattern: z.string().min(1).refine((p) => { try { new RegExp(p); return true; } catch { return false; } }, { message: "pattern must be a valid regular expression" }).describe("Regular expression pattern to search for"),
   projects: z.array(z.string()).optional().describe("Limit to specific projects"),
   file_type: z.string().optional().describe(FILE_TYPE_DESC),
   max_results: z.number().int().min(1).max(100).default(20).describe("Maximum results to return"),
@@ -183,7 +183,10 @@ export const IndexHealthArgs = z.object({
 });
 
 export const GetCompileInfoArgs = z.object({
-  path: z.string().min(1, "path must not be empty").describe("Absolute or project-relative path (e.g., GridNode/EventLoop.cpp)."),
+  path: z.string().min(1, "path must not be empty").refine(
+    (p) => !/[\0\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]/.test(p) && !/(^|[/\\])\.\.([/\\]|$)/.test(p) && !/%2e%2e/i.test(p),
+    { message: "path contains unsafe traversal sequences" }
+  ).describe("Absolute or project-relative path (e.g., GridNode/EventLoop.cpp)."),
   response_format: RESPONSE_FORMAT,
 });
 

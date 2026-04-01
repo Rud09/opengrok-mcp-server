@@ -210,12 +210,17 @@ export class MemoryBank {
         existing = "";
       }
 
-      // Pre-reject: if the combined size far exceeds the limit, trimming cannot help.
-      // Use 1.1x instead of 1.5x: trimLogFromTop only rescues limited overage via scoring.
+      // If combined size exceeds the limit, trim existing content first to make room.
+      // For investigation-log: use richness-scored trimFromTop. For others: truncate existing.
       const existingBytes = Buffer.byteLength(existing, "utf8");
       const newBytes = Buffer.byteLength(content, "utf8");
-      if (existingBytes + newBytes > maxBytes * 1.1) {
-        throw new Error(`MemoryBank: write rejected — content would exceed max size for "${filename}"`);
+      if (existingBytes + newBytes > maxBytes) {
+        const headroom = Math.max(0, maxBytes - newBytes);
+        if (filename === "investigation-log.md") {
+          existing = this.trimLogFromTop(existing, headroom);
+        } else {
+          existing = Buffer.from(existing, "utf8").subarray(0, headroom).toString("utf8");
+        }
       }
 
       if (mode === "append" && filename === "investigation-log.md") {
@@ -310,9 +315,11 @@ export class MemoryBank {
     const sections = content.split(/(?=^## )/m).filter(Boolean);
 
     if (sections.length <= 1) {
+      const suffix = "\n<!-- Older entries trimmed -->";
+      const suffixBytes = Buffer.byteLength(suffix, "utf8");
       return (
-        Buffer.from(content, "utf8").subarray(0, maxBytes).toString("utf8") +
-        "\n<!-- Older entries trimmed -->"
+        Buffer.from(content, "utf8").subarray(0, Math.max(0, maxBytes - suffixBytes)).toString("utf8") +
+        suffix
       );
     }
 
@@ -325,8 +332,9 @@ export class MemoryBank {
     if (older.length === 0) {
       const candidate = trimNote + sections.join("");
       if (Buffer.byteLength(candidate, "utf8") <= maxBytes) return candidate;
-      // Last resort: byte truncate
-      return trimNote + Buffer.from(recent.join(""), "utf8").subarray(0, maxBytes).toString("utf8");
+      // Last resort: byte truncate — subtract noteBytes so total ≤ maxBytes
+      const noteBytes = Buffer.byteLength(trimNote, "utf8");
+      return trimNote + Buffer.from(recent.join(""), "utf8").subarray(0, Math.max(0, maxBytes - noteBytes)).toString("utf8");
     }
 
     // Score all older sections once — O(n)

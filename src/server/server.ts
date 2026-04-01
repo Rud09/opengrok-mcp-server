@@ -126,11 +126,11 @@ const SEARCH_AND_READ_CAP_OVERRIDE = process.env.OPENGROK_SEARCH_AND_READ_CAP
   ? parseInt(process.env.OPENGROK_SEARCH_AND_READ_CAP, 10)
   : undefined;
 
-/** Get the active context budget from env, defaulting to 'minimal'. */
+/** Get the active context budget from env, defaulting to 'standard'. */
 function getActiveBudget(): ContextBudget {
   const v = process.env.OPENGROK_CONTEXT_BUDGET?.toLowerCase();
   if (v === "standard" || v === "generous" || v === "minimal") return v;
-  return "minimal";
+  return "standard";
 }
 
 /**
@@ -1533,6 +1533,14 @@ async function dispatchTool(
         stalenessScore = "possibly_stale";
       }
       
+      if (ok) {
+        client.warmCache();
+      }
+
+      const message = ok
+        ? `OpenGrok: connected (${latencyMs}ms, ${indexedProjects} projects, staleness: ${stalenessScore})`
+        : "OpenGrok: connection failed";
+
       // Construct the result object
       const health = {
         connected: ok,
@@ -1541,11 +1549,8 @@ async function dispatchTool(
         latencyTrend,
         stalenessScore,
         warnings,
+        message,
       };
-      
-      if (ok) {
-        client.warmCache();
-      }
       
       // Format the response
       if (format === "json") {
@@ -2570,7 +2575,6 @@ function registerLegacyTools(
 
         return {
           content: [{ type: "text", text: lines }],
-          structuredContent: health,
         };
       } catch (err) {
         return makeToolError("opengrok_index_health", err);
@@ -2667,7 +2671,6 @@ function registerLegacyTools(
         "(fallback) callers and callees of a symbol"
       ),
       inputSchema: CallGraphArgs.shape,
-      outputSchema: SearchResultsOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2897,6 +2900,21 @@ function registerLegacyTools(
 // ---------------------------------------------------------------------------
 
 function registerToolDocResources(server: McpServer): void {
+  // Static resource: full Code Mode API spec — clients can pre-fetch to avoid calling opengrok_api
+  try {
+    server.registerResource(
+      "opengrok-api-spec",
+      "opengrok-docs://api",
+      { description: "Full Code Mode API specification (YAML). Pre-fetch to avoid calling opengrok_api.", mimeType: "text/yaml" },
+      () => {
+        if (!_apiSpecYaml) _apiSpecYaml = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
+        return { contents: [{ uri: "opengrok-docs://api", mimeType: "text/yaml", text: _apiSpecYaml }] };
+      }
+    );
+  } catch {
+    // skip gracefully if SDK version doesn't support it
+  }
+
   try {
     server.resource(
       'opengrok-tool-docs',
@@ -2953,8 +2971,8 @@ function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): voi
  */
 function sanitizePromptArg(value: string): string {
   return value
-    .replace(/`[^`]*`/g, (m) => m.replace(/[<>]/g, ""))  // strip angle brackets inside backticks
-    .replace(/[\r\n]+/g, " ")                              // collapse newlines → space
+    .replace(/`([^`]*)`/g, (_, inner) => inner.replace(/[<>]/g, ""))  // strip backtick delimiters and angle brackets inside
+    .replace(/[\r\n]+/g, " ")                                          // collapse newlines → space
     .trim()
     .slice(0, 256);                                        // hard cap to prevent oversized inputs
 }
@@ -3077,6 +3095,49 @@ function registerInvestigationPrompts(server: McpServer): void {
                 "- **Potential issues**: bugs, edge cases, error handling",
                 "- **Test coverage signals**: anything that looks under-tested",
                 "- **Recommendations**: concrete, prioritised action items",
+              ].join("\n"),
+            },
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerPrompt(
+    "debug-issue",
+    {
+      description:
+        "Trace an error message or exception back to its origin, understand recent changes that may have caused it, and suggest a fix.",
+      argsSchema: {
+        error: z.string().describe("Error message, exception text, or symptom to investigate"),
+        project: z.string().optional().describe("OpenGrok project to scope the search to"),
+      },
+    },
+    ({ error, project }) => {
+      const err = sanitizePromptArg(error);
+      const proj = project ? sanitizePromptArg(project) : undefined;
+      const scope = proj ? ` in project \`${proj}\`` : "";
+      return {
+        description: `Debug: ${err.slice(0, 60)}${err.length > 60 ? "…" : ""}`,
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: [
+                `Investigate the following error${scope}:`,
+                `\`\`\``,
+                err,
+                `\`\`\``,
+                "",
+                "Steps:",
+                `1. **Locate the error** — use \`opengrok_search_code\` with type \`full\` for the exact error string or a distinctive fragment.`,
+                `2. **Find the throw/log site** — use \`opengrok_get_file_content\` to read the file and understand the surrounding logic.`,
+                `3. **Trace callers** — use \`opengrok_search_code\` with type \`refs\` on the function or method that emits the error to find call sites.`,
+                `4. **Check recent changes** — use \`opengrok_get_file_history\` on affected files; diff the last few revisions with \`opengrok_get_file_diff\` to identify what changed.`,
+                `5. **Blame the line** — use \`opengrok_get_file_annotate\` to confirm which commit introduced the problematic line.`,
+                "",
+                "Summarise: root cause, which commit introduced it, affected call paths, and a concrete fix recommendation.",
               ].join("\n"),
             },
           },
