@@ -355,12 +355,15 @@ export interface SandboxOpts {
   elicitEnabled?: boolean;
 }
 
+const MAX_SANDBOX_WRITES_PER_EXECUTION = 5;
+
 export function createSandboxAPI(
   client: OpenGrokClient,
   memoryBank: MemoryBank,
   sandboxOpts: SandboxOpts = {}
 ): SandboxAPI {
   const { getCompileInfoFn, mcpServer, elicitEnabled } = sandboxOpts;
+  let writeCallCount = 0;
   return {
     async search(query, opts = {}) {
       const { searchType = "full", projects, maxResults = 5, startIndex = 0, fileType } = opts;
@@ -529,6 +532,9 @@ export function createSandboxAPI(
     },
 
     async writeMemory(filename, content, mode = "overwrite") {
+      if (++writeCallCount > MAX_SANDBOX_WRITES_PER_EXECUTION) {
+        throw new Error(`writeMemory rate limit: max ${MAX_SANDBOX_WRITES_PER_EXECUTION} writes per execution`);
+      }
       await memoryBank.write(filename, content, mode);
       return `Written: ${filename}`;
     },

@@ -116,15 +116,17 @@ let _apiSpecYaml: string | undefined;
 
 // Hard cap on response payload (in bytes). Falls back to budget-based limit.
 // Override with OPENGROK_MAX_RESPONSE_BYTES env var.
-const MAX_RESPONSE_BYTES_OVERRIDE = process.env.OPENGROK_MAX_RESPONSE_BYTES
-  ? parseInt(process.env.OPENGROK_MAX_RESPONSE_BYTES, 10)
-  : undefined;
+const MAX_RESPONSE_BYTES_OVERRIDE = (() => {
+  const v = parseInt(process.env.OPENGROK_MAX_RESPONSE_BYTES ?? "", 10);
+  return Number.isNaN(v) ? undefined : v;
+})();
 
 // Cap for the search_and_read compound tool (in bytes).
 // Override with OPENGROK_SEARCH_AND_READ_CAP env var.
-const SEARCH_AND_READ_CAP_OVERRIDE = process.env.OPENGROK_SEARCH_AND_READ_CAP
-  ? parseInt(process.env.OPENGROK_SEARCH_AND_READ_CAP, 10)
-  : undefined;
+const SEARCH_AND_READ_CAP_OVERRIDE = (() => {
+  const v = parseInt(process.env.OPENGROK_SEARCH_AND_READ_CAP ?? "", 10);
+  return Number.isNaN(v) ? undefined : v;
+})();
 
 /** Get the active context budget from env, defaulting to 'standard'. */
 function getActiveBudget(): ContextBudget {
@@ -459,7 +461,7 @@ Get a diff for a file between two revisions.
 - \`path\` — file path (required)
 - \`project\` — project name (required)
 - \`rev1\` — first revision (required)
-- \`rev2\` — second revision (optional)`,
+- \`rev2\` — second revision (required)`,
 
   opengrok_get_compile_info: `## opengrok_get_compile_info
 Get compiler flags and include paths for a C/C++ file from compile_commands.json.
@@ -1967,7 +1969,7 @@ function registerCodeModeTools(
                 required: ["project"],
               }
             );
-            if (result.action === "accept" && result.content?.project) {
+            if (result.action === "accept" && typeof result.content?.project === "string" && result.content.project) {
               projectHint =
                 `\n\n**Working project: ${result.content.project}**` +
                 ` — use this project in all env.opengrok calls unless the user specifies otherwise.`;
@@ -2124,8 +2126,8 @@ function registerLegacyTools(
                 required: ["project"],
               }
             );
-            if (result.action === "accept" && result.content?.project) {
-              effectiveArgs = { ...args, projects: [String(result.content.project)] };
+            if (result.action === "accept" && typeof result.content?.project === "string" && result.content.project) {
+              effectiveArgs = { ...args, projects: [result.content.project] };
             }
           }
         }
@@ -2917,7 +2919,7 @@ function registerLegacyTools(
         }
 
         return {
-          content: [{ type: "text" as const, text: capResponse(text) + summarySection }],
+          content: [{ type: "text" as const, text: capResponse(text + summarySection) }],
           structuredContent: structured as unknown as Record<string, unknown>,
         };
       } catch (err) {
@@ -3236,16 +3238,18 @@ class ToolRateLimiter {
           bucket.tokens -= 1;
           resolve();
         } else {
+          // Reject immediately if the deadline has already passed.
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) {
+            reject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
+            return;
+          }
           // Wait for next token to be available, then try again
           const waitMs = Math.min(
             Math.max(10, (1 - bucket.tokens) * interval),
-            deadline - Date.now()
+            remaining
           );
-          if (waitMs <= 0) {
-            reject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
-          } else {
-            setTimeout(checkToken, waitMs);
-          }
+          setTimeout(checkToken, waitMs);
         }
       };
 
@@ -3254,12 +3258,17 @@ class ToolRateLimiter {
   }
 }
 
+let _sighupRegistered = false;
+
 /**
  * Task 4.9: Setup handlers for notifications/tools/list_changed.
  * Monitors for config changes (SIGHUP) and connectivity status changes.
  */
-function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, config: Config): void {
-  // On SIGHUP, reload config and notify if code mode changed
+function setupNotificationHandlers(_server: McpServer, _client: OpenGrokClient, config: Config): void {
+  // On SIGHUP, reload config and notify if code mode changed.
+  // Guard against duplicate registrations (e.g. if called more than once per process).
+  if (_sighupRegistered) return;
+  _sighupRegistered = true;
   process.on("SIGHUP", () => {
     try {
       auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
@@ -3268,21 +3277,21 @@ function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, co
       // Clear the singleton so loadConfig() re-reads from process.env
       resetConfig();
       const newConfig = loadConfig();
-        
-        // Check if code mode changed
-        if (newConfig.OPENGROK_CODE_MODE !== config.OPENGROK_CODE_MODE) {
-          // Tool registrations are fixed at startup — sending toolListChanged would be
-          // misleading since clients would re-query and receive the original list.
-          // Code Mode changes require a server restart to take effect.
-          logger.warn(
-            `Code Mode changed: ${config.OPENGROK_CODE_MODE} → ${newConfig.OPENGROK_CODE_MODE}. ` +
-            `Restart the server for the new tool set to take effect.`
-          );
-          auditLog({
-            type: "config_load",
-            detail: `SIGHUP: Code Mode toggled to ${newConfig.OPENGROK_CODE_MODE} (restart required)`
-          });
-        }
+
+      // Check if code mode changed
+      if (newConfig.OPENGROK_CODE_MODE !== config.OPENGROK_CODE_MODE) {
+        // Tool registrations are fixed at startup — sending toolListChanged would be
+        // misleading since clients would re-query and receive the original list.
+        // Code Mode changes require a server restart to take effect.
+        logger.warn(
+          `Code Mode changed: ${config.OPENGROK_CODE_MODE} → ${newConfig.OPENGROK_CODE_MODE}. ` +
+          `Restart the server for the new tool set to take effect.`
+        );
+        auditLog({
+          type: "config_load",
+          detail: `SIGHUP: Code Mode toggled to ${newConfig.OPENGROK_CODE_MODE} (restart required)`
+        });
+      }
     } catch (err) {
       logger.error("SIGHUP reload failed", { error: String(err) });
     }
@@ -3397,7 +3406,7 @@ function sanitizeErrorMessage(message: string): string {
   sanitized = sanitized.replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [REDACTED]");
   sanitized = sanitized.replace(/:[^:@\s]+@/g, ":***@");
   sanitized = sanitized.replace(
-    /\/(?:home|Users|tmp|var|usr|build|opt|mnt|srv)(?:\/\S+)/g,
+    /\/(?:home|Users|tmp|var|usr|build|opt|mnt|srv|root|etc|proc|run)(?:\/\S+)/g,
     "[path]"
   );
   sanitized = sanitized.replace(
@@ -3472,7 +3481,7 @@ async function buildDependencyGraph(
             seenUsesPaths.add(r.path);
             nodes.push({ path: r.path, level, direction: "uses" });
           }
-          if (level < depth) frontier.push(r.path);
+          if (level < depth && !expandedUses.has(r.path)) frontier.push(r.path);
         }
       }
     }
@@ -3507,7 +3516,7 @@ async function buildDependencyGraph(
             seenUsedByPaths.add(r.path);
             nodes.push({ path: r.path, level, direction: "used_by" });
           }
-          if (level < depth) frontier.push(rName);
+          if (level < depth && !expandedUsedBy.has(rName)) frontier.push(rName);
         }
       }
     }
