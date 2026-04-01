@@ -144,7 +144,7 @@ function capResponse(text: string, maxBytes?: number): string {
   // Walk back from the byte limit to a valid UTF-8 character boundary.
   // Continuation bytes are 0x80–0xBF; a lead byte is 0x00–0x7F or 0xC0–0xFF.
   let pos = limit;
-  while (pos > 0 && (full[pos]! & 0xC0) === 0x80) pos--;
+  while (pos > 0 && ((full[pos] ?? 0) & 0xC0) === 0x80) pos--;
   const truncated = full.subarray(0, pos).toString("utf8");
 
   const lastNl = truncated.lastIndexOf("\n");
@@ -1023,9 +1023,10 @@ function deduplicateAcrossQueries(
       .map((hit) => {
         let pathSeen = seen.get(hit.path);
         if (!pathSeen) { pathSeen = new Set(); seen.set(hit.path, pathSeen); }
+        const seenLines = pathSeen;
         const filteredMatches = hit.matches.filter((match) => {
-          if (pathSeen!.has(match.lineNumber)) return false;
-          pathSeen!.add(match.lineNumber);
+          if (seenLines.has(match.lineNumber)) return false;
+          seenLines.add(match.lineNumber);
           return true;
         });
         return { ...hit, matches: filteredMatches };
@@ -1813,7 +1814,6 @@ function registerCodeModeTools(
   // Per-session pool and health-check state — scoped here so each McpServer
   // instance (stdio or HTTP session) gets its own pool and no bleed occurs.
   const workerPool = new SandboxWorkerPool();
-  let lastHealthCheckLatencyMs: number | null = null;
 
   // Per-session counters — scoped to this server instance to prevent HTTP session bleed.
   let executeCallCount = 0;

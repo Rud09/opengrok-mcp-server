@@ -1084,7 +1084,7 @@ function getConfigManagerHtml(context: vscode.ExtensionContext): string {
             // Generate a cryptographically random nonce per webview load.
             // The nonce replaces 'unsafe-inline' in CSP and is injected into
             // every <script> and <style> tag via the NONCE placeholder.
-            const nonce = require('crypto').randomBytes(16).toString('base64');
+            const nonce = crypto.randomBytes(16).toString('base64');
             return html
                 .replace(/WEBVIEW_NONCE/g, nonce)
                 .replace(
