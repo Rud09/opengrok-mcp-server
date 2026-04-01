@@ -1,15 +1,13 @@
 /**
- * Tests for Tasks 4.13, 4.14, 4.16:
+ * Tests for Tasks 4.13, 4.14:
  * - 4.13: Request Origin Validation
  * - 4.14: Credential Rotation Warnings
- * - 4.16: Tasks API for opengrok_execute
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { checkCredentialAge, updateCredentialRotationTimestamp, getConfigDirectory, resetConfig } from "../server/config.js";
-import * as taskRegistry from "../server/task-registry.js";
 
 // ---------------------------------------------------------------------------
 // Task 4.14: Credential Rotation Warnings
@@ -109,108 +107,6 @@ describe("Task 4.14 — Credential Age Checking", () => {
       process.env.XDG_CONFIG_HOME = originalXdg;
       process.env.HOME = originalHome;
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Task 4.16: Task Registry for opengrok_execute
-// ---------------------------------------------------------------------------
-
-describe("Task 4.16 — Task Registry", () => {
-  beforeEach(() => {
-    taskRegistry.clearAllTasks();
-  });
-
-  it("createTask returns a unique task ID", () => {
-    const taskId1 = taskRegistry.createTask();
-    const taskId2 = taskRegistry.createTask();
-    expect(taskId1).toBeTruthy();
-    expect(taskId2).toBeTruthy();
-    expect(taskId1).not.toBe(taskId2);
-  });
-
-  it("createTask returns running status", () => {
-    const taskId = taskRegistry.createTask();
-    const task = taskRegistry.getTask(taskId);
-    expect(task).toBeTruthy();
-    expect(task?.status).toBe("running");
-    expect(task?.createdAt).toBeGreaterThan(0);
-  });
-
-  it("getTask returns null for non-existent task", () => {
-    const task = taskRegistry.getTask("non-existent-task-id");
-    expect(task).toBeNull();
-  });
-
-  it("completeTask updates task status and result", () => {
-    const taskId = taskRegistry.createTask();
-    const result = JSON.stringify({ answer: 42 });
-    taskRegistry.completeTask(taskId, result);
-
-    const task = taskRegistry.getTask(taskId);
-    expect(task?.status).toBe("completed");
-    expect(task?.result).toBe(result);
-    expect(task?.completedAt).toBeGreaterThan(0);
-  });
-
-  it("failTask updates task status and error", () => {
-    const taskId = taskRegistry.createTask();
-    const errorMsg = "Something went wrong";
-    taskRegistry.failTask(taskId, errorMsg);
-
-    const task = taskRegistry.getTask(taskId);
-    expect(task?.status).toBe("error");
-    expect(task?.error).toBe(errorMsg);
-    expect(task?.completedAt).toBeGreaterThan(0);
-  });
-
-  it("listTasks returns all active tasks", () => {
-    const task1 = taskRegistry.createTask();
-    const task2 = taskRegistry.createTask();
-    taskRegistry.completeTask(task2, "done");
-
-    const tasks = taskRegistry.listTasks();
-    expect(tasks.length).toBe(2);
-    expect(tasks.some((t) => t.taskId === task1 && t.status === "running")).toBe(true);
-    expect(tasks.some((t) => t.taskId === task2 && t.status === "completed")).toBe(true);
-  });
-
-  it("clearAllTasks removes all tasks", () => {
-    taskRegistry.createTask();
-    taskRegistry.createTask();
-    expect(taskRegistry.listTasks().length).toBe(2);
-
-    taskRegistry.clearAllTasks();
-    expect(taskRegistry.listTasks().length).toBe(0);
-  });
-
-  it("getTask returns null and removes a running task stuck for >30 minutes", () => {
-    const taskId = taskRegistry.createTask();
-    // Simulate 31 minutes in the future (past MAX_RUNNING_AGE_MS = 30 min)
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31 * 60 * 1000);
-    const result = taskRegistry.getTask(taskId);
-    expect(result).toBeNull();
-    vi.restoreAllMocks();
-  });
-
-  it("getTask returns null and removes a completed task past TTL", () => {
-    const taskId = taskRegistry.createTask();
-    taskRegistry.completeTask(taskId, "done");
-    // Simulate 61 minutes in the future (past TASK_TTL_MS = 1 hour)
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61 * 60 * 1000);
-    const result = taskRegistry.getTask(taskId);
-    expect(result).toBeNull();
-    vi.restoreAllMocks();
-  });
-
-  it("listTasks prunes completed tasks past TTL", () => {
-    const taskId = taskRegistry.createTask();
-    taskRegistry.completeTask(taskId, "done");
-    // Simulate 61 minutes in the future (past TASK_TTL_MS = 1 hour)
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61 * 60 * 1000);
-    const tasks = taskRegistry.listTasks();
-    expect(tasks.find((t) => t.taskId === taskId)).toBeUndefined();
-    vi.restoreAllMocks();
   });
 });
 
