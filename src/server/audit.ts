@@ -108,7 +108,12 @@ export function exportAuditLogAsCSV(filePath: string): string {
           entry.project ?? "",
           entry.detail ?? "",
         ]
-          .map((field) => `"${String(field).replace(/"/g, '""')}"`)
+          .map((field) => {
+            let s = String(field).replace(/"/g, '""');
+            // Prevent CSV formula injection in spreadsheet applications
+            if (s.length > 0 && "=+-@\t\r".includes(s[0])) s = "'" + s;
+            return `"${s}"`;
+          })
           .join(",")
       );
     } catch {

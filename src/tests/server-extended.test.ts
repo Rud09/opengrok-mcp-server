@@ -172,8 +172,8 @@ describe('applyDefaultProject', () => {
     expect(applyDefaultProject(undefined, config)).toEqual(['release-2.x']);
   });
 
-  it('returns default project when empty array', () => {
-    expect(applyDefaultProject([], config)).toEqual(['release-2.x']);
+  it('returns undefined when explicit empty array (search all)', () => {
+    expect(applyDefaultProject([], config)).toBeUndefined();
   });
 
   it('returns undefined when no default project configured', () => {

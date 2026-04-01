@@ -103,6 +103,7 @@ describe('resolveConfig', () => {
   });
 
   it('uses keychain password when OPENGROK_PASSWORD is empty and keychain has a password', async () => {
+    process.env['OPENGROK_BASE_URL'] = 'https://test.example.com/source/';
     process.env['OPENGROK_USERNAME'] = 'testuser';
     process.env['OPENGROK_PASSWORD'] = '';
     keychainMocks.retrievePasswordResult = 'keychain-secret';
@@ -115,6 +116,7 @@ describe('resolveConfig', () => {
   });
 
   it('skips keychain when OPENGROK_PASSWORD is already set in env', async () => {
+    process.env['OPENGROK_BASE_URL'] = 'https://test.example.com/source/';
     process.env['OPENGROK_USERNAME'] = 'testuser';
     process.env['OPENGROK_PASSWORD'] = 'env-password';
     keychainMocks.retrievePasswordResult = 'keychain-secret';
@@ -127,6 +129,7 @@ describe('resolveConfig', () => {
   });
 
   it('returns config unchanged when no username is set', async () => {
+    process.env['OPENGROK_BASE_URL'] = 'https://test.example.com/source/';
     process.env['OPENGROK_USERNAME'] = '';
     process.env['OPENGROK_PASSWORD'] = '';
     keychainMocks.retrievePasswordResult = 'keychain-secret';

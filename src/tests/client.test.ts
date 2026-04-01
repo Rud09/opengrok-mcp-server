@@ -32,7 +32,7 @@ describe('loadConfig', () => {
     delete process.env.OPENGROK_PASSWORD;
 
     const config = loadConfig();
-    expect(config.OPENGROK_BASE_URL).toBe('https://opengrok.example.com/source/');
+    expect(config.OPENGROK_BASE_URL).toBe('');
     expect(config.OPENGROK_VERIFY_SSL).toBe(true);
     expect(config.OPENGROK_CACHE_ENABLED).toBe(true);
     expect(config.OPENGROK_RATELIMIT_ENABLED).toBe(true);

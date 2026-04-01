@@ -13,223 +13,216 @@
             font-size: var(--vscode-font-size);
             color: var(--vscode-foreground);
             background: transparent;
-            padding: 0 16px 16px;
+            padding: 0 20px 24px;
             margin: 0;
             overflow-y: auto;
             overflow-x: hidden;
+            line-height: 1.5;
         }
 
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: var(--vscode-input-border, rgba(128,128,128,0.2)); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground); }
 
-        /* Header */
+        /* ── Header ── */
         .header {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 12px 0;
-            border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-shadow));
-            margin-bottom: 4px;
+            gap: 12px;
+            padding: 16px 0;
+            border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.15));
+            margin-bottom: 6px;
         }
         .header-icon {
-            width: 28px;
-            height: 28px;
+            width: 32px; height: 32px;
             border-radius: 8px;
-            background: var(--vscode-button-background);
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            background: linear-gradient(135deg, var(--vscode-button-background), var(--vscode-button-hoverBackground, var(--vscode-button-background)));
+            display: flex; align-items: center; justify-content: center;
             color: var(--vscode-button-foreground);
             flex-shrink: 0;
         }
         .header-text { flex: 1; min-width: 0; }
-        .header-title {
-            font-size: 13px;
-            font-weight: 700;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .header-subtitle {
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 1px;
-        }
+        .header-title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+        .header-subtitle { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 1px; }
 
-        /* Status pill */
+        /* ── Status pill ── */
         .status-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.3px;
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 3px 10px; border-radius: 99px;
+            font-size: 11px; font-weight: 500;
             background: var(--vscode-badge-background);
             color: var(--vscode-badge-foreground);
-            border: 1px solid var(--vscode-input-border, transparent);
-            transition: all 0.3s ease;
+            transition: all 0.25s ease;
             white-space: nowrap;
         }
-        .status-pill.active {
-            background: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border-color: var(--vscode-button-background);
-        }
         .status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: currentColor;
-            opacity: 0.6;
-            flex-shrink: 0;
+            width: 6px; height: 6px; border-radius: 50%;
+            background: currentColor; opacity: 0.5; flex-shrink: 0;
         }
+        .status-pill.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
         .status-pill.active .status-dot { opacity: 1; }
+        .status-pill.connected .status-dot { opacity: 1; animation: pulse 2s ease-in-out infinite; }
+        .status-pill.error { background: var(--vscode-inputValidation-errorBackground, rgba(255,0,0,0.15)); color: var(--vscode-errorForeground); }
+        .status-pill.error .status-dot { opacity: 1; }
 
-        /* Section label */
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* ── Section ── */
         .section-label {
             color: var(--vscode-descriptionForeground);
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin: 20px 0 8px;
-            display: block;
+            font-size: 11px; font-weight: 600;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            margin: 24px 0 10px; display: block;
         }
 
-        /* Form fields */
-        .field { margin-bottom: 12px; }
-        .field label { display: block; margin-bottom: 4px; font-size: 12px; }
+        /* ── Card group ── */
+        .card {
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.12));
+            border-radius: 6px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+        }
+
+        /* ── Form fields ── */
+        .field { margin-bottom: 14px; }
+        .field:last-child { margin-bottom: 0; }
+        .field label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 500; }
 
         input[type="text"], input[type="url"], input[type="password"], select {
             background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
-            border: 1px solid var(--vscode-input-border, transparent);
+            border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.2));
             font-family: var(--vscode-font-family);
             font-size: var(--vscode-font-size);
-            padding: 4px 8px;
+            padding: 6px 10px;
             width: 100%;
-            box-sizing: border-box;
-            border-radius: 2px;
+            border-radius: 4px;
+            transition: border-color 0.15s;
         }
-
         input:focus, select:focus {
-            outline: 1px solid var(--vscode-focusBorder);
+            outline: none;
             border-color: var(--vscode-focusBorder);
+            box-shadow: 0 0 0 1px var(--vscode-focusBorder);
         }
-
         input::placeholder { color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground)); }
-
         select { cursor: pointer; }
 
-        .hint { color: var(--vscode-descriptionForeground); font-size: 11px; margin-top: 3px; }
-        .hint svg { vertical-align: middle; margin-right: 3px; }
+        .hint { color: var(--vscode-descriptionForeground); font-size: 11px; margin-top: 4px; display: flex; align-items: center; gap: 4px; }
 
-        /* Checkbox fields */
-        .checkbox-field { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
-        .checkbox-field input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; accent-color: var(--vscode-button-background); }
-        .checkbox-field .checkbox-content { flex: 1; }
-        .checkbox-field label { font-size: 12px; cursor: pointer; display: block; font-weight: 600; }
-        .checkbox-field .checkbox-subtext { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 1px; }
-
-        hr { border: none; border-top: 1px solid var(--vscode-panel-border, var(--vscode-widget-shadow)); margin: 16px 0; }
-
-        /* Buttons */
-        button {
-            border: none;
-            cursor: pointer;
-            padding: 5px 14px;
-            font-family: var(--vscode-font-family);
-            font-size: var(--vscode-font-size);
-            border-radius: 2px;
+        /* ── Checkbox ── */
+        .checkbox-field { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+        .checkbox-field:last-child { margin-bottom: 0; }
+        .checkbox-field input[type="checkbox"] {
+            margin-top: 3px; flex-shrink: 0;
+            accent-color: var(--vscode-button-background);
+            width: 14px; height: 14px;
         }
+        .checkbox-content { flex: 1; }
+        .checkbox-content label { font-size: 12px; cursor: pointer; display: block; font-weight: 500; }
+        .checkbox-subtext { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px; line-height: 1.4; }
+
+        /* ── Tag / badge ── */
+        .tag {
+            display: inline-block;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            font-size: 10px; font-weight: 600;
+            padding: 1px 6px; border-radius: 3px;
+            vertical-align: middle; margin-left: 6px;
+            letter-spacing: 0.02em;
+        }
+
+        /* ── Divider ── */
+        .divider { border: none; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.12)); margin: 20px 0; }
+
+        /* ── Buttons ── */
+        .actions { display: flex; gap: 8px; margin-top: 20px; }
+
+        button {
+            border: none; cursor: pointer;
+            padding: 7px 16px;
+            font-family: var(--vscode-font-family);
+            font-size: 12px; font-weight: 500;
+            border-radius: 4px;
+            display: inline-flex; align-items: center; gap: 6px;
+            transition: opacity 0.15s, background 0.15s;
+        }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+
         .btn-primary {
             background: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
+            flex: 1; justify-content: center;
         }
         .btn-primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
-        .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
         .btn-secondary {
             background: var(--vscode-button-secondaryBackground);
             color: var(--vscode-button-secondaryForeground);
         }
         .btn-secondary:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground)); }
-        .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 
-
-        /* Status bar */
-        #statusBar { font-size: 11px; margin-top: 8px; min-height: 16px; }
+        /* ── Status bar ── */
+        #statusBar { font-size: 11px; margin-top: 10px; min-height: 16px; transition: color 0.2s; }
         #statusBar.success { color: var(--vscode-testing-iconPassed, #4ec9b0); }
         #statusBar.error { color: var(--vscode-errorForeground); }
         #statusBar.info { color: var(--vscode-descriptionForeground); }
 
-        /* Advanced collapsible */
+        /* ── Collapsible ── */
         details > summary {
             cursor: pointer;
             color: var(--vscode-textLink-foreground);
-            font-size: 12px;
+            font-size: 12px; font-weight: 500;
             user-select: none;
-            padding: 4px 0;
-            display: flex;
-            align-items: center;
-            gap: 6px;
+            padding: 6px 0;
+            display: flex; align-items: center; gap: 6px;
             list-style: none;
         }
         details > summary::-webkit-details-marker { display: none; }
         details > summary:hover { text-decoration: underline; }
-        details > summary svg.chevron { transition: transform 0.2s; flex-shrink: 0; }
-        details[open] > summary svg.chevron { transform: rotate(90deg); }
-        details > div { padding-top: 8px; }
+        details > summary .chevron { transition: transform 0.2s ease; flex-shrink: 0; }
+        details[open] > summary .chevron { transform: rotate(90deg); }
+        details > div { padding-top: 12px; }
 
-        /* Badge */
-        .badge {
-            background: var(--vscode-badge-background);
-            color: var(--vscode-badge-foreground);
-            font-size: 10px;
-            padding: 1px 5px;
-            border-radius: 10px;
-            vertical-align: middle;
-            margin-left: 4px;
-        }
-
-        /* Action row */
-        .actions { display: flex; gap: 8px; margin-top: 16px; }
-        .actions .btn-primary { flex: 1; }
-
-        /* Toast */
+        /* ── Toast ── */
         .toast-container {
-            position: fixed;
-            bottom: 12px;
-            left: 8px;
-            right: 8px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            z-index: 100;
-            pointer-events: none;
+            position: fixed; bottom: 16px; left: 12px; right: 12px;
+            display: flex; flex-direction: column; gap: 6px;
+            z-index: 100; pointer-events: none;
         }
         .toast {
             background: var(--vscode-notifications-background, var(--vscode-editor-background));
-            border: 1px solid var(--vscode-input-border, transparent);
-            border-radius: 2px;
-            padding: 8px 12px;
-            font-size: 12px;
-            line-height: 1.4;
+            border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.15));
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 12px; line-height: 1.4;
             color: var(--vscode-foreground);
-            transform: translateY(40px);
-            opacity: 0;
-            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            transform: translateY(20px); opacity: 0;
+            transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            pointer-events: auto;
         }
         .toast.show { transform: translateY(0); opacity: 1; }
         .toast.error { border-left: 3px solid var(--vscode-errorForeground); }
         .toast.success { border-left: 3px solid var(--vscode-testing-iconPassed, #4ec9b0); }
         .toast.info { border-left: 3px solid var(--vscode-button-background); }
 
+        /* ── Loading skeleton ── */
+        .skeleton { opacity: 0; animation: fadeIn 0.3s ease forwards; }
+        .skeleton.loaded { opacity: 1; }
+        @keyframes fadeIn { to { opacity: 1; } }
         @keyframes spin { 100% { transform: rotate(360deg); } }
-        .spin { animation: spin 1s linear infinite; }
+        .spin { animation: spin 0.8s linear infinite; }
+
+        /* ── Note banner ── */
+        .note {
+            font-size: 11px; color: var(--vscode-descriptionForeground);
+            margin-top: 6px; padding: 6px 10px;
+            background: var(--vscode-textBlockQuote-background, rgba(128,128,128,0.06));
+            border-radius: 4px; line-height: 1.5;
+        }
     </style>
 </head>
 <body>
@@ -251,155 +244,153 @@
         </div>
     </div>
 
-    <!-- CONNECTION section -->
+    <div class="skeleton" id="configBody">
+
+    <!-- CONNECTION -->
     <span class="section-label">Connection</span>
-
-    <div class="field">
-        <label for="baseUrl">Server URL</label>
-        <input type="url" id="baseUrl" placeholder="https://opengrok.example.com/source/">
-    </div>
-
-    <div class="field">
-        <label for="username">Username</label>
-        <input type="text" id="username" placeholder="e.g. jdoe" autocomplete="username">
-    </div>
-
-    <div class="field">
-        <label for="password">Password</label>
-        <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password">
-        <div class="hint" id="passwordHint">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-            Stored securely in the OS keychain
+    <div class="card">
+        <div class="field">
+            <label for="baseUrl">Server URL</label>
+            <input type="url" id="baseUrl" placeholder="https://opengrok.example.com/source/">
+        </div>
+        <div class="field">
+            <label for="username">Username</label>
+            <input type="text" id="username" placeholder="e.g. jdoe" autocomplete="username">
+        </div>
+        <div class="field">
+            <label for="password">Password</label>
+            <input type="password" id="password" placeholder="Loading…" autocomplete="current-password">
+            <div class="hint" id="passwordHint">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                Stored securely in the OS keychain
+            </div>
+        </div>
+        <div class="checkbox-field">
+            <input type="checkbox" id="verifySsl">
+            <div class="checkbox-content">
+                <label for="verifySsl">Verify SSL/TLS Certificates</label>
+                <div class="checkbox-subtext">Turn off only for self-signed or internal CA certificates</div>
+            </div>
         </div>
     </div>
 
-    <div class="checkbox-field">
-        <input type="checkbox" id="verifySsl" checked>
-        <div class="checkbox-content">
-            <label for="verifySsl">Verify SSL Certificate</label>
-            <div class="checkbox-subtext">Disable for self-signed / internal CA</div>
+    <!-- BEHAVIOR -->
+    <span class="section-label">Behavior</span>
+    <div class="card">
+        <div class="checkbox-field">
+            <input type="checkbox" id="codeMode" checked>
+            <div class="checkbox-content">
+                <label for="codeMode">Code Mode <span class="tag">Recommended</span></label>
+                <div class="checkbox-subtext">Intelligent multi-step code investigation via a sandboxed JavaScript runtime. Dramatically reduces AI token usage.</div>
+            </div>
+        </div>
+        <div class="field">
+            <label for="defaultProject">Default Project</label>
+            <input type="text" id="defaultProject" placeholder="e.g. myproject">
+            <div class="hint">Scope all searches to this project unless overridden. Leave blank to search all.</div>
+        </div>
+        <div class="field">
+            <label for="contextBudget">Response Detail Level</label>
+            <select id="contextBudget">
+                <option value="minimal">Compact (4 KB) &mdash; faster, fewer AI credits</option>
+                <option value="standard">Balanced (8 KB) &mdash; recommended for most users</option>
+                <option value="generous">Detailed (16 KB) &mdash; more context, more AI credits</option>
+            </select>
+        </div>
+        <div class="checkbox-field">
+            <input type="checkbox" id="enableElicitation">
+            <div class="checkbox-content">
+                <label for="enableElicitation">Interactive AI Prompts</label>
+                <div class="checkbox-subtext">Allows the AI to pause and ask you clarifying questions during investigations. Requires Claude Code v2.1.76+ or VS Code Copilot.</div>
+            </div>
         </div>
     </div>
 
-    <hr>
-
-    <!-- PREFERENCES section -->
-    <span class="section-label">Preferences</span>
-
-    <div class="field">
-        <label for="defaultProject">Default Project</label>
-        <input type="text" id="defaultProject" placeholder="e.g. myproject">
-        <div class="hint">Scopes all searches to this project when none is specified</div>
-    </div>
-
-    <div class="field">
-        <label for="contextBudget">Context Budget</label>
-        <select id="contextBudget">
-            <option value="minimal">Minimal (4 KB) &mdash; lowest token usage</option>
-            <option value="standard">Standard (8 KB) &mdash; balanced</option>
-            <option value="generous">Generous (16 KB) &mdash; more context</option>
-        </select>
-    </div>
-
-    <div class="checkbox-field">
-        <input type="checkbox" id="codeMode" checked>
-        <div class="checkbox-content">
-            <label for="codeMode">Enable Code Mode <span class="badge">98% fewer tokens</span></label>
-            <div class="checkbox-subtext">Use the JavaScript sandbox for multi-step investigations. Huge token savings.</div>
-        </div>
-    </div>
-
-    <div class="checkbox-field">
-        <input type="checkbox" id="enableElicitation">
-        <div class="checkbox-content">
-            <label for="enableElicitation">Project Picker Prompt</label>
-            <div class="checkbox-subtext">Show an interactive project picker when no default project is set</div>
-        </div>
-    </div>
-
-    <hr>
-
-    <!-- Advanced Settings -->
+    <!-- ADVANCED -->
     <details id="advancedSection">
         <summary>
             <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
             Advanced Settings
         </summary>
         <div>
-            <div class="field" style="margin-top: 8px;">
-                <label for="proxy">Proxy URL</label>
-                <input type="text" id="proxy" placeholder="http://proxy.company.com:8080">
-                <div class="hint">Leave blank for direct connection</div>
-            </div>
-
-            <div class="field">
-                <label for="apiVersion">API Version</label>
-                <select id="apiVersion">
-                    <option value="v1">v1 &mdash; Default (OpenGrok 1.x)</option>
-                    <option value="v2">v2 &mdash; OpenGrok 2.x servers</option>
-                </select>
-                <div class="hint">Use v2 only if your OpenGrok server explicitly supports the v2 REST API</div>
-            </div>
-
-            <div class="field">
-                <label for="responseFormatOverride">Response Format</label>
-                <select id="responseFormatOverride">
-                    <option value="">Auto &mdash; let each tool choose</option>
-                    <option value="tsv">TSV &mdash; compact tabular (recommended)</option>
-                    <option value="toon">TOON &mdash; token-optimized JSON</option>
-                    <option value="markdown">Markdown &mdash; verbose but readable</option>
-                    <option value="json">JSON &mdash; programmatic use</option>
-                    <option value="yaml">YAML &mdash; hierarchical data</option>
-                    <option value="text">Text &mdash; raw code, no framing</option>
-                </select>
-            </div>
-
-            <div class="field">
-                <label for="memoryBankDir">Memory Bank Directory</label>
-                <input type="text" id="memoryBankDir" placeholder="&lt;workspace&gt;/.opengrok/memory-bank/">
-                <div class="hint">Absolute path to store Living Document files. Leave blank for default.</div>
-            </div>
-
-            <div class="field">
-                <label for="compileDbPaths">Compile Commands Path(s)</label>
-                <input type="text" id="compileDbPaths" placeholder="Auto-detected from workspace">
-                <div class="hint">Comma-separated paths to compile_commands.json files. Leave blank for workspace auto-discovery (C/C++ only).</div>
+            <div class="card">
+                <div class="field">
+                    <label for="proxy">HTTP Proxy</label>
+                    <input type="text" id="proxy" placeholder="http://proxy.company.com:8080">
+                    <div class="hint">Route requests through a proxy. Credentials are forwarded — use only with trusted proxies.</div>
+                </div>
+                <div class="field">
+                    <label for="apiVersion">OpenGrok REST API Version</label>
+                    <select id="apiVersion">
+                        <option value="v1">v1 &mdash; Compatible with all OpenGrok versions (default)</option>
+                        <option value="v2">v2 &mdash; Required for call graph features (OpenGrok 1.12+)</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="responseFormatOverride">AI Response Format</label>
+                    <select id="responseFormatOverride">
+                        <option value="">Auto &mdash; let each tool choose the best format</option>
+                        <option value="tsv">TSV &mdash; compact tabular</option>
+                        <option value="toon">TOON &mdash; token-optimized notation</option>
+                        <option value="markdown">Markdown &mdash; verbose but readable</option>
+                        <option value="json">JSON &mdash; programmatic use</option>
+                        <option value="yaml">YAML &mdash; hierarchical data</option>
+                        <option value="text">Text &mdash; raw code, no framing</option>
+                    </select>
+                    <div class="hint">Controls how results are formatted before being sent to the AI. Auto is best for most users.</div>
+                </div>
+                <div class="field">
+                    <label for="memoryBankDir">Investigation Notes Location</label>
+                    <input type="text" id="memoryBankDir" placeholder="Default: &lt;workspace&gt;/.opengrok/memory-bank/">
+                    <div class="hint">Where the AI stores investigation notes between sessions. Leave blank for default.</div>
+                </div>
+                <div class="field">
+                    <label for="compileDbPaths">C/C++ Compile Commands Paths</label>
+                    <input type="text" id="compileDbPaths" placeholder="Comma-separated paths to compile_commands.json">
+                    <div class="hint">Paths for C/C++ compiler flag extraction. Leave blank for automatic workspace discovery.</div>
+                </div>
             </div>
         </div>
     </details>
 
-    <hr>
+    <hr class="divider">
 
-    <!-- Action buttons -->
+    <!-- Actions -->
     <div class="actions">
-        <button class="btn-secondary" onclick="testConnection()" id="testBtn">
+        <button class="btn-secondary" onclick="testConnection()" id="testBtn" aria-label="Test Connection">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
             Test Connection
         </button>
-        <button class="btn-primary" onclick="saveConfiguration()" id="saveBtn">
+        <button class="btn-primary" onclick="saveConfiguration()" id="saveBtn" aria-label="Save Configuration">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
             Save
         </button>
     </div>
+    <div class="note">Changes take effect when you click Save.</div>
 
     <div id="statusBar"></div>
+
+    </div><!-- /configBody -->
 
     <div class="toast-container" id="toastContainer"></div>
 
     <script nonce="WEBVIEW_NONCE">
-        const vscode = acquireVsCodeApi();
-        let currentConfig = {};
+        var vscode = acquireVsCodeApi();
+        var currentConfig = {};
+
+        var SAVE_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>';
+        var TEST_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>';
 
         function showToast(type, text) {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
+            var container = document.getElementById('toastContainer');
+            var toast = document.createElement('div');
             toast.className = 'toast ' + type;
             toast.textContent = text;
             container.appendChild(toast);
             requestAnimationFrame(function() { toast.classList.add('show'); });
             setTimeout(function() {
                 toast.classList.remove('show');
-                setTimeout(function() { toast.remove(); }, 350);
+                setTimeout(function() { toast.remove(); }, 300);
             }, 4000);
         }
 
@@ -415,79 +406,91 @@
             bar.textContent = '';
         }
 
-        function updateStatusDisplay(configured) {
-            const pill = document.getElementById('statusPill');
-            const text = document.getElementById('statusText');
-            if (configured) {
+        function updateStatusDisplay(state) {
+            var pill = document.getElementById('statusPill');
+            var text = document.getElementById('statusText');
+            pill.className = 'status-pill';
+            if (state === 'connected') {
+                pill.classList.add('active', 'connected');
+                text.textContent = 'Connected';
+            } else if (state === 'error') {
+                pill.classList.add('error');
+                text.textContent = 'Error';
+            } else if (state === 'active') {
                 pill.classList.add('active');
                 text.textContent = 'Active';
             } else {
-                pill.classList.remove('active');
                 text.textContent = 'Not Configured';
             }
         }
 
-function setLoading(btnId, isLoading, label, iconSvg) {
-            const btn = document.getElementById(btnId);
+        function setLoading(btnId, isLoading, label, svgStr) {
+            var btn = document.getElementById(btnId);
             btn.disabled = isLoading;
+            while (btn.firstChild) btn.removeChild(btn.firstChild);
             if (isLoading) {
-                btn.textContent = label + '...';
+                btn.textContent = label + '…';
             } else {
-                btn.innerHTML = iconSvg + ' ' + label;
+                var tmp = document.createElement('span');
+                tmp.innerHTML = svgStr;
+                var icon = tmp.firstElementChild;
+                if (icon) btn.appendChild(icon);
+                btn.appendChild(document.createTextNode(' ' + label));
             }
         }
 
-        const SAVE_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>';
-        const TEST_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>';
-
         function testConnection() {
-            const baseUrl = document.getElementById('baseUrl').value.trim();
-            const username = document.getElementById('username').value.trim();
-            const password = document.getElementById('password').value;
-            const verifySsl = document.getElementById('verifySsl').checked;
-            const proxy = document.getElementById('proxy').value.trim();
+            var baseUrl = document.getElementById('baseUrl').value.trim();
+            var username = document.getElementById('username').value.trim();
+            var password = document.getElementById('password').value;
+            var verifySsl = document.getElementById('verifySsl').checked;
+            var proxy = document.getElementById('proxy').value.trim();
+            var apiVersion = document.getElementById('apiVersion').value;
 
             if (!baseUrl || !username) { showToast('error', 'URL and Username are required'); return; }
             if (!password && !currentConfig.hasPassword) { showToast('error', 'Password is required'); return; }
 
-            setLoading('testBtn', true, 'Test Connection', TEST_ICON);
-            setStatusBar('info', 'Testing connection...');
-            vscode.postMessage({ type: 'testConnection', data: { baseUrl, username, password, proxy, verifySsl } });
+            setLoading('testBtn', true, 'Testing', TEST_SVG);
+            setStatusBar('info', 'Testing connection…');
+            vscode.postMessage({ type: 'testConnection', data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, apiVersion: apiVersion } });
         }
 
         function saveConfiguration() {
-            const baseUrl = document.getElementById('baseUrl').value.trim();
-            const username = document.getElementById('username').value.trim();
-            const password = document.getElementById('password').value;
-            const proxy = document.getElementById('proxy').value.trim();
-            const verifySsl = document.getElementById('verifySsl').checked;
-            const defaultProject = document.getElementById('defaultProject').value.trim();
-            const contextBudget = document.getElementById('contextBudget').value;
-            const responseFormatOverride = document.getElementById('responseFormatOverride').value;
-            const apiVersion = document.getElementById('apiVersion').value;
-            const codeMode = document.getElementById('codeMode').checked;
-            const memoryBankDir = document.getElementById('memoryBankDir').value.trim();
-            const compileDbPaths = document.getElementById('compileDbPaths').value.trim();
-            const enableElicitation = document.getElementById('enableElicitation').checked;
+            var baseUrl = document.getElementById('baseUrl').value.trim();
+            var username = document.getElementById('username').value.trim();
+            var password = document.getElementById('password').value;
+            var proxy = document.getElementById('proxy').value.trim();
+            var verifySsl = document.getElementById('verifySsl').checked;
+            var defaultProject = document.getElementById('defaultProject').value.trim();
+            var contextBudget = document.getElementById('contextBudget').value;
+            var responseFormatOverride = document.getElementById('responseFormatOverride').value;
+            var apiVersion = document.getElementById('apiVersion').value;
+            var codeMode = document.getElementById('codeMode').checked;
+            var memoryBankDir = document.getElementById('memoryBankDir').value.trim();
+            var compileDbPaths = document.getElementById('compileDbPaths').value.trim();
+            var enableElicitation = document.getElementById('enableElicitation').checked;
 
             if (!baseUrl || !username) { showToast('error', 'URL and Username are required'); return; }
             if (!password && !currentConfig.hasPassword) { showToast('error', 'Password required for new connection'); return; }
-            try { new URL(baseUrl); } catch(e) { showToast('error', 'Please enter a valid URL'); return; }
+            try {
+                var parsed = new URL(baseUrl);
+                if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                    showToast('error', 'URL must use http:// or https://'); return;
+                }
+            } catch(e) { showToast('error', 'Please enter a valid URL'); return; }
 
-            const codeModeChanged = (currentConfig.codeMode !== false) !== codeMode;
-            setLoading('saveBtn', true, 'Save', SAVE_ICON);
+            var codeModeChanged = (currentConfig.codeMode !== false) !== codeMode;
+            setLoading('saveBtn', true, 'Saving', SAVE_SVG);
             clearStatusBar();
             vscode.postMessage({
                 type: 'saveConfiguration',
-                data: { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, apiVersion, codeMode, memoryBankDir, compileDbPaths, codeModeChanged, enableElicitation }
+                data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, defaultProject: defaultProject, contextBudget: contextBudget, responseFormatOverride: responseFormatOverride, apiVersion: apiVersion, codeMode: codeMode, memoryBankDir: memoryBankDir, compileDbPaths: compileDbPaths, codeModeChanged: codeModeChanged, enableElicitation: enableElicitation }
             });
         }
 
         window.addEventListener('message', function(event) {
-            // VS Code webview messages originate from the extension host (same window origin).
-            // Reject messages from any other origin to prevent cross-origin injection.
-            if (event.origin && event.origin !== window.origin) { return; }
-            const message = event.data;
+            if (event.origin && event.origin !== window.origin) return;
+            var message = event.data;
             switch (message.type) {
                 case 'loadConfig': {
                     currentConfig = message.config || {};
@@ -507,47 +510,48 @@ function setLoading(btnId, isLoading, label, iconSvg) {
                         document.getElementById('enableElicitation').checked = currentConfig.enableElicitation;
                     }
 
-                    const pInput = document.getElementById('password');
-                    const pHint = document.getElementById('passwordHint');
+                    var pInput = document.getElementById('password');
+                    var pHint = document.getElementById('passwordHint');
                     if (currentConfig.hasPassword) {
                         pInput.placeholder = 'Leave empty to keep existing password';
-                        pHint.textContent = 'Existing password stored securely';
+                        pHint.textContent = '● Existing password stored securely';
                     } else {
                         pInput.placeholder = 'Enter your password';
                         pHint.textContent = 'Stored securely in OS keychain';
                     }
 
-                    // Auto-open advanced if non-default values present
-                    const hasAdvanced = (currentConfig.proxy || currentConfig.responseFormatOverride ||
+                    var hasAdvanced = (currentConfig.proxy || currentConfig.responseFormatOverride ||
                         (currentConfig.apiVersion && currentConfig.apiVersion !== 'v1') ||
-                        currentConfig.memoryBankDir ||
-                        currentConfig.compileDbPaths);
+                        currentConfig.memoryBankDir || currentConfig.compileDbPaths);
                     if (hasAdvanced) {
                         document.getElementById('advancedSection').open = true;
                     }
 
-                    updateStatusDisplay(!!currentConfig.username);
+                    updateStatusDisplay(currentConfig.username ? 'active' : '');
+                    document.getElementById('configBody').classList.add('loaded');
                     break;
                 }
                 case 'error':
                     showToast('error', message.message);
                     setStatusBar('error', message.message);
-                    setLoading('testBtn', false, 'Test Connection', TEST_ICON);
-                    setLoading('saveBtn', false, 'Save', SAVE_ICON);
+                    setLoading('testBtn', false, 'Test Connection', TEST_SVG);
+                    setLoading('saveBtn', false, 'Save', SAVE_SVG);
+                    updateStatusDisplay('error');
                     break;
                 case 'success':
                     showToast('success', message.message);
                     setStatusBar('success', message.message);
                     currentConfig.hasPassword = true;
                     currentConfig.codeMode = document.getElementById('codeMode').checked;
-                    updateStatusDisplay(true);
-                    setLoading('saveBtn', false, 'Save', SAVE_ICON);
-                    setTimeout(function() { testConnection(); }, 600);
+                    updateStatusDisplay('active');
+                    setLoading('saveBtn', false, 'Save', SAVE_SVG);
+                    setTimeout(function() { vscode.postMessage({ type: 'silentTestConnection' }); }, 600);
                     break;
                 case 'testSuccess':
                     showToast('success', message.message);
                     setStatusBar('success', message.message);
-                    setLoading('testBtn', false, 'Test Connection', TEST_ICON);
+                    setLoading('testBtn', false, 'Test Connection', TEST_SVG);
+                    updateStatusDisplay('connected');
                     break;
                 case 'testing':
                     showToast('info', message.message);

@@ -26,27 +26,6 @@ let mcpProvider: OpenGrokMcpProvider | undefined;
 /**
  * Clean up ALL credential files (used on extension deactivation)
  */
-function cleanupAllCredentialFiles(): void {
-    try {
-        const tempDir = os.tmpdir();
-        const files = fs.readdirSync(tempDir);
-        
-        for (const file of files) {
-            if (file.startsWith('opengrok-cred-') && file.endsWith('.tmp')) {
-                const filepath = path.join(tempDir, file);
-                try {
-                    fs.unlinkSync(filepath);
-                    log(`Credential file cleaned up: ${filepath}`);
-                } catch {
-                    // Ignore errors during cleanup
-                }
-            }
-        }
-    } catch (err) {
-        log(`Warning: Failed to clean up credential files: ${err}`);
-    }
-}
-
 /**
  * Get the current extension version from package.json
  */
@@ -800,7 +779,10 @@ function openConfigurationPanel(context: vscode.ExtensionContext): void {
                         await _sendCurrentConfig(configPanel.webview);
                         break;
                     case 'testConnection':
-                        await _handleTestConnection(configPanel.webview, message.data as { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string });
+                        await _handleTestConnection(configPanel.webview, message.data as { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string; apiVersion?: string });
+                        break;
+                    case 'silentTestConnection':
+                        await testConnection(true);
                         break;
                     case 'saveConfiguration':
                         await _handleSaveConfiguration(configPanel.webview, message.data as { baseUrl: string; username: string; password?: string; proxy?: string; verifySsl: boolean; defaultProject?: string; contextBudget?: string; responseFormatOverride?: string; codeMode?: boolean; memoryBankDir?: string; compileDbPaths?: string; codeModeChanged?: boolean; apiVersion?: string; enableElicitation?: boolean });
@@ -852,12 +834,25 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
     });
 }
 
-async function _handleTestConnection(webview: vscode.Webview, data: { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string }): Promise<void> {
-    // Read apiVersion from VS Code settings to match the actual client configuration
-    const apiVersion = vscode.workspace.getConfiguration('opengrok-mcp').get<string>('apiVersion') || 'v1';
+async function _handleTestConnection(webview: vscode.Webview, data: { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string; apiVersion?: string }): Promise<void> {
+    let passwordToUse = data.password;
+
+    // When the webview password field is empty, retrieve the saved password from secretStorage
+    if (!passwordToUse && data.username) {
+        const saved = await secretStorage.get(`opengrok-password-${data.username}`);
+        if (saved) {
+            passwordToUse = saved;
+        } else {
+            void webview.postMessage({ type: 'error', message: 'No saved password found. Please enter your password.' });
+            return;
+        }
+    }
+
+    // Use apiVersion from webview if provided, otherwise fall back to saved setting
+    const apiVersion = data.apiVersion || vscode.workspace.getConfiguration('opengrok-mcp').get<string>('apiVersion') || 'v1';
     await handleWebviewTestConnection(
         (msg: Record<string, unknown>) => { void webview.postMessage(msg); },
-        { ...data, apiVersion }
+        { ...data, password: passwordToUse, apiVersion }
     );
 }
 
@@ -1108,6 +1103,5 @@ function getConfigManagerHtml(context: vscode.ExtensionContext): string {
 }
 
 export function deactivate(): void {
-    cleanupAllCredentialFiles();
     log('OpenGrok MCP extension deactivated');
 }

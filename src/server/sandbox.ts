@@ -105,7 +105,7 @@ export const API_SPEC = {
     "IMPORTANT: Do NOT write Promise.all(...) in your sandbox JS — the Atomics bridge serializes calls from inside the VM. Use env.opengrok.batchSearch() instead — it runs queries in parallel on the host event loop.",
     "Prefer env.opengrok.getSymbolContext() over separate search+getFileContent.",
     "Prefer env.opengrok.batchSearch() over multiple env.opengrok.search() calls.",
-    "Always pass project as a string, not an array.",
+    "Pass project as a string array: projects: ['myproject'], not a bare string.",
     "env.opengrok.traceCallChain() callees direction returns empty (requires AST, not yet supported).",
     "env.opengrok.readMemory() returns null for uninitialized files — handle gracefully.",
     "When findFile() or search() returns multiple path matches and you cannot determine the correct file, call env.opengrok.elicit() with an enum of the top paths (≤10) before fetching content.",

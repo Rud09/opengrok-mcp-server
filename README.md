@@ -81,7 +81,7 @@ The wizard stores credentials securely in the OS keychain (macOS Keychain, Windo
 
 | Command | Description |
 | :------ | :---------- |
-| `npx opengrok-mcp setup` | Interactive wizard: configures your MCP client and stores credentials securely |
+| `npx opengrok-mcp-server setup` | Interactive wizard: configures your MCP client and stores credentials securely |
 | `opengrok-mcp status` | Health check: validates connectivity and detects installed MCP clients |
 | `opengrok-mcp --version` | Print version and exit |
 
@@ -146,25 +146,24 @@ Look for all places in the code where ThreadPool is instantiated or referenced.
 
 | Tool | Purpose |
 | ---- | ------- |
-| `opengrok_what_changed` | Recent line changes grouped by commit — author, date, SHA, changed lines with context |
+| `opengrok_what_changed` | Recent line changes grouped by commit — author, date, SHA, changed lines with context. Parameters: `project`, `path`, `since_days` |
 | `opengrok_dependency_map` | BFS traversal of `#include`/`import` chains up to configurable depth (1–3); directed graph with `uses`/`used_by` |
 | `opengrok_search_pattern` | Regex code search via `regexp=true`; returns `file:line:content` matches |
-| `opengrok_blame` | Git blame with line range (`start_line`/`end_line`); returns author, date, commit per line |
+| `opengrok_blame` | Git blame with line range (`start_line`/`end_line`); returns author, date, commit per line *(v5.6+)* |
 | `opengrok_call_graph` | Call chain tracing via OpenGrok API v2 `/symbol/{name}/callgraph` (requires `OPENGROK_API_VERSION=v2`) |
 | `opengrok_get_file_diff` | Unified diff between two revisions with full context lines — shows surrounding code so AI understands *why* a change was made; use `opengrok_get_file_history` to discover revision hashes |
 
-### 🧠 Memory & Session Tools (v5.4+)
+### 🧠 Memory Tools (Code Mode only, v5.4+)
 
 | Tool | Purpose |
 | ---- | ------- |
 | `opengrok_memory_status` | Shows both memory files (status, bytes, 3-line preview) — helps LLM decide whether to read |
 | `opengrok_read_memory` | Read `active-task.md` or `investigation-log.md` from the Living Document memory bank |
 | `opengrok_update_memory` | Write or append to memory files; auto-timestamps `investigation-log.md` entries |
-| `opengrok_get_task_result` | Poll async task status by task ID for long-running `opengrok_execute` sandbox jobs |
 
 ### 🧬 Code Mode (v5+) — For Large Multi-Language Codebases
 
-Set `OPENGROK_CODE_MODE=true` to switch to a 2-tool interface optimised for multi-step investigations:
+Set `OPENGROK_CODE_MODE=true` to switch to a 5-tool interface optimised for multi-step investigations:
 
 | Tool | Purpose |
 | ---- | ------- |
@@ -277,18 +276,18 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | Variable | Values | Description |
 | :--- | :--- | :--- |
 | `OPENGROK_BASE_URL` | URL | OpenGrok server base URL (required) |
-| `OPENGROK_USERNAME` | string | Authentication username |
-| `OPENGROK_PASSWORD` | string | Authentication password (or use `OPENGROK_PASSWORD_FILE`) |
-| `OPENGROK_PASSWORD_FILE` | path | Path to AES-256-GCM encrypted credential file (auto-upgrades legacy CBC) — deprecated: server reads from OS keychain via resolveConfig() |
-| `OPENGROK_PASSWORD_KEY` | string | Decryption key for `OPENGROK_PASSWORD_FILE` — deprecated: server reads from OS keychain via resolveConfig() |
+| `OPENGROK_USERNAME` | string | Authentication username (optional — leave unset for anonymous access) |
+| `OPENGROK_PASSWORD` | string | Authentication password (prefer OS keychain via `npx opengrok-mcp-server setup`) |
 | `OPENGROK_VERIFY_SSL` | `true` (default) / `false` | Disable TLS verification for self-signed certs |
 | `OPENGROK_TIMEOUT` | integer (seconds, default: `30`) | HTTP request timeout |
+
+> **Migration note:** `OPENGROK_PASSWORD_FILE` and `OPENGROK_PASSWORD_KEY` are deprecated. The server now reads credentials from the OS keychain via `resolveConfig()`. These env vars still work for backwards compatibility but should be replaced with `npx opengrok-mcp-server setup`.
 
 #### Code Mode & Performance
 
 | Variable | Values | Description |
 | :--- | :--- | :--- |
-| `OPENGROK_CODE_MODE` | `true` / `false` | Switch to 2-tool Code Mode (opengrok_api + opengrok_execute) |
+| `OPENGROK_CODE_MODE` | `true` (default) / `false` | Switch to 5-tool Code Mode (opengrok_api + opengrok_execute + 3 memory tools) |
 | `OPENGROK_CONTEXT_BUDGET` | `minimal` (default) / `standard` / `generous` | Response size tier: 4 KB / 8 KB / 16 KB |
 | `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | `tsv` / `toon` / `yaml` / `text` / `markdown` | Force a response format globally for all tools |
 | `OPENGROK_DEFAULT_PROJECT` | string | Default project name to scope all searches |

@@ -80,6 +80,8 @@ const sharedOptions = {
   platform: /** @type {'node'} */ ('node'),
   logLevel: 'info',
   define: {
+    // JSON.stringify wraps the version in quotes, producing a string literal
+    // that esbuild substitutes at compile time: "9.0.2" → const v = "9.0.2"
     '__VERSION__': JSON.stringify(require('./package.json').version),
   },
 };

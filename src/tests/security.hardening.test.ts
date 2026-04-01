@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { IncomingMessage } from 'node:http';
 import { buildSafeUrl, isPrivateIp, assertSafePath } from '../server/client.js';
 import { parseWebSearchResults, parseDirectoryListing } from '../server/parsers.js';
-import { escapeMarkdownField, fenceCode } from '../server/formatters.js';
+import { escapeMarkdownField } from '../server/formatters.js';
 import { validateBearerToken } from '../server/http-transport.js';
 
 describe('buildSafeUrl SSRF protection', () => {
@@ -191,25 +191,6 @@ describe('formatters prompt injection prevention', () => {
     expect(escapeMarkdownField(long).length).toBe(500);
   });
 
-  it('fenceCode produces valid fenced block', () => {
-    const code = 'console.log("hello")';
-    const fenced = fenceCode(code, 'js');
-    expect(fenced).toMatch(/^```js\n/);
-    expect(fenced).toMatch(/\n```$/);
-  });
-
-  it('fenceCode uses longer fence when content has backticks', () => {
-    const code = '```\ninner fence\n```';
-    const fenced = fenceCode(code);
-    expect(fenced.split('\n')[0].length).toBeGreaterThan(3);
-  });
-
-  it('fenceCode without lang argument produces plain fence', () => {
-    const code = 'plain text';
-    const fenced = fenceCode(code);
-    expect(fenced).toMatch(/^```\n/);
-    expect(fenced).toMatch(/\n```$/);
-  });
 });
 
 // ---------------------------------------------------------------------------

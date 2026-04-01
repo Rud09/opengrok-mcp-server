@@ -50,8 +50,10 @@ const zIntString = (defaultVal: string) =>
 const ConfigSchema = z.object({
   OPENGROK_BASE_URL: z
     .string()
-    .url()
-    .default("https://opengrok.example.com/source/"),
+    .default("")
+    .refine((v) => v === "" || z.string().url().safeParse(v).success, {
+      message: "OPENGROK_BASE_URL must be a valid URL (e.g. https://opengrok.example.com/source/)",
+    }),
   OPENGROK_USERNAME: z.string().default(""),
   OPENGROK_PASSWORD: z.string().default(""),
   OPENGROK_PASSWORD_FILE: z.string().default(""),
@@ -120,9 +122,6 @@ const ConfigSchema = z.object({
   // HTTP transport OAuth 2.1 (Task 5.3)
   // Shared-secret Bearer token for HTTP transport auth (empty = no auth required)
   OPENGROK_HTTP_AUTH_TOKEN: z.string().default(""),
-  // client_credentials OAuth 2.1 client ID and secret (empty = no OAuth token endpoint)
-  OPENGROK_HTTP_CLIENT_ID: z.string().default(""),
-  OPENGROK_HTTP_CLIENT_SECRET: z.string().default(""),
   // HTTP transport — max concurrent sessions (Task 5.2)
   OPENGROK_HTTP_MAX_SESSIONS: zIntString("100"),
   // RBAC for multi-user HTTP deployments (Task 5.10)

@@ -104,26 +104,32 @@
         "opengrok-mcp.baseUrl": {
           "type": "string",
           "default": "",
-          "description": "OpenGrok server base URL",
+          "markdownDescription": "OpenGrok server URL including trailing slash (e.g. `https://opengrok.company.com/source/`). After configuring, use **OpenGrok: Test Connection** to verify.",
           "order": 1
         },
         "opengrok-mcp.username": {
           "type": "string",
           "default": "",
-          "description": "OpenGrok username (password stored securely in system keychain)",
+          "markdownDescription": "Your OpenGrok login username. Password is stored securely in your OS keychain.",
           "order": 2
         },
         "opengrok-mcp.verifySsl": {
           "type": "boolean",
           "default": true,
-          "description": "Verify SSL certificates (disable for self-signed/internal CA certs)",
+          "markdownDescription": "Validates server SSL/TLS certificates. Disable only for self-signed or internal CA certificates.",
           "order": 3
         },
-        "opengrok-mcp.proxy": {
+        "opengrok-mcp.codeMode": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "**Enables Code Mode (Recommended)** — Uses an intelligent JavaScript sandbox for multi-step code investigations. Reduces AI token usage by ~90%. Maps to `OPENGROK_CODE_MODE` env var.",
+          "order": 4
+        },
+        "opengrok-mcp.defaultProject": {
           "type": "string",
           "default": "",
-          "description": "HTTP proxy URL (e.g., http://proxy.company.com:8080)",
-          "order": 4
+          "markdownDescription": "Scope all AI searches to this project by default. Leave blank to search all indexed projects. Maps to `OPENGROK_DEFAULT_PROJECT` env var.",
+          "order": 5
         },
         "opengrok-mcp.contextBudget": {
           "type": "string",
@@ -133,54 +139,25 @@
             "generous"
           ],
           "enumDescriptions": [
-            "minimal (4 KB) — lowest token usage, fastest searches",
-            "standard (8 KB) — balanced for most codebases",
-            "generous (16 KB) — more context, larger token cost"
+            "Compact (4 KB) — faster, fewer AI credits",
+            "Balanced (8 KB) — recommended for most users",
+            "Detailed (16 KB) — more context, more AI credits"
           ],
           "default": "minimal",
-          "description": "Context budget mode — controls response size limits. Maps to OPENGROK_CONTEXT_BUDGET env var.",
+          "markdownDescription": "Controls how much code context the AI receives per response. Compact uses fewer AI credits; Detailed provides more context. Maps to `OPENGROK_CONTEXT_BUDGET` env var.",
           "order": 6
         },
-        "opengrok-mcp.codeMode": {
+        "opengrok-mcp.enableElicitation": {
           "type": "boolean",
-          "default": true,
-          "description": "Enable Code Mode (2-tool API: opengrok_api + opengrok_execute). Significant token savings via JavaScript sandbox execution. Maps to OPENGROK_CODE_MODE env var.",
+          "default": false,
+          "markdownDescription": "Allows the AI to pause and ask you clarifying questions during investigations — for example, choosing between multiple matching files or selecting a project. Requires Claude Code v2.1.76+ or VS Code Copilot. Maps to `OPENGROK_ENABLE_ELICITATION` env var.",
           "order": 7
         },
-        "opengrok-mcp.memoryBankDir": {
+        "opengrok-mcp.proxy": {
           "type": "string",
           "default": "",
-          "description": "Directory for Living Document memory bank files. Defaults to <workspace>/.opengrok/memory-bank/. Maps to OPENGROK_MEMORY_BANK_DIR env var.",
+          "markdownDescription": "Route requests through an HTTP proxy (e.g. `http://proxy.company.com:8080`). Credentials are forwarded — use only with trusted proxies. Leave blank for direct connection.",
           "order": 8
-        },
-        "opengrok-mcp.compileDbPaths": {
-          "type": "string",
-          "default": "",
-          "description": "Comma-separated paths to compile_commands.json files for C/C++ compile flag support. Leave blank for workspace auto-discovery. Maps to OPENGROK_LOCAL_COMPILE_DB_PATHS env var.",
-          "order": 9,
-          "scope": "window"
-        },
-        "opengrok-mcp.defaultProject": {
-          "type": "string",
-          "default": "",
-          "description": "Default OpenGrok project to scope searches to when none is specified. Maps to OPENGROK_DEFAULT_PROJECT env var.",
-          "order": 10
-        },
-        "opengrok-mcp.responseFormatOverride": {
-          "type": "string",
-          "enum": [
-            "",
-            "markdown",
-            "json"
-          ],
-          "enumDescriptions": [
-            "Auto — let each tool choose the best format",
-            "Force markdown for all tool responses",
-            "Force JSON for all tool responses (programmatic use)"
-          ],
-          "default": "",
-          "description": "Force all tool responses to a specific format (empty = auto). Maps to OPENGROK_RESPONSE_FORMAT_OVERRIDE env var.",
-          "order": 11
         },
         "opengrok-mcp.apiVersion": {
           "type": "string",
@@ -189,24 +166,56 @@
             "v2"
           ],
           "enumDescriptions": [
-            "v1 — Default (OpenGrok 1.x)",
-            "v2 — OpenGrok 2.x servers (explicit opt-in only)"
+            "v1 — Compatible with all OpenGrok versions (default)",
+            "v2 — Required for call graph features (OpenGrok 1.12+)"
           ],
           "default": "v1",
-          "description": "OpenGrok REST API version. Use v2 only if your server explicitly supports the v2 REST API.",
-          "order": 12
+          "markdownDescription": "OpenGrok REST API version. v1 works with all versions. Select v2 only for call graph features (requires OpenGrok 1.12+).",
+          "order": 9
         },
-        "opengrok-mcp.enableElicitation": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable project picker at opengrok_api startup and env.opengrok.elicit() in Code Mode sandbox (requires Claude Code v2.1.76+ or VS Code Copilot).",
-          "order": 13
+        "opengrok-mcp.responseFormatOverride": {
+          "type": "string",
+          "enum": [
+            "",
+            "tsv",
+            "toon",
+            "markdown",
+            "json",
+            "yaml",
+            "text"
+          ],
+          "enumDescriptions": [
+            "Auto — let each tool choose the best format",
+            "TSV — compact tabular format",
+            "TOON — token-optimized notation",
+            "Markdown — verbose but readable",
+            "JSON — programmatic use",
+            "YAML — hierarchical data",
+            "Text — raw code, no framing"
+          ],
+          "default": "",
+          "markdownDescription": "Override how search results and code are formatted for the AI. Auto is best for most users. Maps to `OPENGROK_RESPONSE_FORMAT_OVERRIDE` env var.",
+          "order": 10
+        },
+        "opengrok-mcp.memoryBankDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Where the AI stores investigation notes between sessions. Leave blank to use the workspace folder (`.opengrok/memory-bank/`). Maps to `OPENGROK_MEMORY_BANK_DIR` env var.",
+          "order": 11
+        },
+        "opengrok-mcp.compileDbPaths": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Paths to `compile_commands.json` for C/C++ compiler flag extraction. Leave blank for automatic workspace discovery. Maps to `OPENGROK_LOCAL_COMPILE_DB_PATHS` env var.",
+          "order": 12,
+          "scope": "window"
         }
       }
     }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
+    "clean": "rm -rf out/",
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "node esbuild.js --production",

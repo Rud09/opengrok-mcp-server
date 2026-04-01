@@ -446,9 +446,14 @@ export class OpenGrokClient {
   private readonly projectsCache: TTLCache<string, Project[]> | undefined;
 
   constructor(private readonly config: Config) {
+    if (!config.OPENGROK_BASE_URL) {
+      throw new Error(
+        "OPENGROK_BASE_URL is not configured. Run `npx opengrok-mcp-server setup` or set the OPENGROK_BASE_URL environment variable."
+      );
+    }
     const raw = config.OPENGROK_BASE_URL.endsWith("/")
       ? config.OPENGROK_BASE_URL
-      : /* v8 ignore next -- tested in client-extended L294 with no trailing slash */ config.OPENGROK_BASE_URL + "/";
+      : config.OPENGROK_BASE_URL + "/";
     this.baseUrl = new URL(raw);
     this.apiPath = config.OPENGROK_API_VERSION === "v2" ? "api/v2" : "api/v1";
     this.verifySsl = config.OPENGROK_VERIFY_SSL;

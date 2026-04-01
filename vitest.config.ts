@@ -9,9 +9,8 @@ export default defineConfig({
     exclude: ['src/tests/sandbox.test.ts'], // requires compiled build (npm run test:sandbox)
     environment: 'node',
     env: {
-      // Match the original 16 KB capResponse limit that existing server.test.ts expects.
-      // (The previous-session server.ts made capResponse budget-dependent; this pins
-      // the default at generous/16 KB to keep existing tests passing.)
+      // Pin at 16 KB (generous tier) so existing tests pass at the expected
+      // response cap. Production defaults to the "minimal" 4 KB tier.
       OPENGROK_MAX_RESPONSE_BYTES: '16384',
     },
     fileParallelism: false,

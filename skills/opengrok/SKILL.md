@@ -141,7 +141,7 @@ status: investigating | blocked | complete
 
 ## Code Mode
 
-Code Mode reduces tool calls to just 5, saving 75–95% tokens vs standard mode's 23 tools.
+Code Mode reduces tool calls to just 5, saving 75–95% tokens vs standard mode's 20+ tools.
 
 ### Workflow
 
@@ -204,7 +204,7 @@ if (results.totalCount === 0) {
 ```
 
 ### Code Mode Notes
-- `Promise.all` does **not** parallelize inside the sandbox VM — use `env.opengrok.batchSearch()` instead
+- `Promise.all` does **not** parallelize inside the sandbox VM — use `env.opengrok.batchSearch()` for independent parallel searches; sequential calls for dependent operations are fine
 - All `env.opengrok.*` calls are synchronous from your code's perspective
 - `env.opengrok.readMemory(filename)` / `writeMemory(filename, content)` for Living Document access
 - `env.opengrok.elicit(message, schema)` — pause and ask the user to choose from a list (v9.0+, requires `OPENGROK_ENABLE_ELICITATION=true`); returns `{ action, content }` — always handle `action !== "accept"`
@@ -293,7 +293,7 @@ Always pass `start_line` and `end_line` to `opengrok_get_file_content`. Never fe
 
 11. **VS Code memory vs OpenGrok memory.** VS Code Copilot's built-in `/memory` command stores general codebase knowledge (architecture, conventions, key directories) and auto-loads every session — free. The OpenGrok memory bank (`active-task.md`, `investigation-log.md`) is for investigation-specific state that needs to persist across multiple OpenGrok sessions. Use VS Code memory for "what is this codebase", OpenGrok memory for "what am I currently investigating".
 
-12. **23 tools = ~3,200 prompt tokens.** In token-constrained environments, enable Code Mode (5 tools = ~320 tokens) via Extension Settings or `OPENGROK_CODE_MODE=true`. When Code Mode is active, all operations go through the sandbox instead of individual tools.
+12. **Standard mode uses ~20 tools.** In token-constrained environments, enable Code Mode (5 tools) via Extension Settings or `OPENGROK_CODE_MODE=true`. When Code Mode is active, all operations go through the sandbox instead of individual tools.
 
 ## Error Recovery
 

@@ -29,9 +29,9 @@
         },
         {
           "name": "OPENGROK_USERNAME",
-          "description": "OpenGrok authentication username",
+          "description": "OpenGrok authentication username. Leave unset for anonymous access.",
           "format": "string",
-          "isRequired": true,
+          "isRequired": false,
           "isSecret": false
         },
         {
@@ -51,11 +51,11 @@
         },
         {
           "name": "OPENGROK_CODE_MODE",
-          "description": "Enable Code Mode: 5-tool sandbox interface with env.opengrok.* JavaScript API. Saves 80-95% tokens on large codebases.",
+          "description": "Enable Code Mode: 5-tool sandbox interface with env.opengrok.* JavaScript API. Reduces AI token usage by ~90%.",
           "format": "boolean",
           "isRequired": false,
           "isSecret": false,
-          "default": "false"
+          "default": "true"
         },
         {
           "name": "OPENGROK_DEFAULT_PROJECT",

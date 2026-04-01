@@ -36,13 +36,6 @@ export function escapeMarkdownField(value: string): string {
     .slice(0, 500);                  // cap length
 }
 
-/** Wrap code in a fenced block using a fence that can't be broken by the content. */
-export function fenceCode(code: string, lang = ''): string {
-  const maxRun = Math.max(3, ...[...code.matchAll(/`+/g)].map((m) => m[0].length + 1));
-  const fence = '`'.repeat(maxRun);
-  return `${fence}${lang}\n${code}\n${fence}`;
-}
-
 // ---------------------------------------------------------------------------
 // Response format type + global format selector
 // ---------------------------------------------------------------------------

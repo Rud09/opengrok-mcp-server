@@ -14,7 +14,6 @@ declare module "node-html-parser" {
     setAttribute(name: string, value: string): void;
     querySelector(selector: string): HTMLElement | null;
     querySelectorAll(selector: string): HTMLElement[];
-    find(predicate: (node: HTMLElement) => boolean): HTMLElement | undefined;
     indexOf(item: HTMLElement): number;
   }
 

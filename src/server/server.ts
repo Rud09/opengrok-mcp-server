@@ -100,7 +100,6 @@ import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
 import { ObservationMasker } from "./observation-masker.js";
 import { createSandboxAPI, executeInSandbox, API_SPEC } from "./sandbox.js";
 import { SandboxWorkerPool } from "./worker-pool.js";
-import * as taskRegistry from "./task-registry.js";
 import yaml from "js-yaml";
 
 import { logger } from "./logger.js";
@@ -764,9 +763,10 @@ function applyDefaultProject(
   projects: string[] | undefined,
   config: Config
 ): string[] | undefined {
-  if (projects && projects.length > 0) return projects;
+  // If caller explicitly provided projects (even an empty array), respect that choice
+  if (Array.isArray(projects)) return projects.length > 0 ? projects : undefined;
   const defaultProject = config.OPENGROK_DEFAULT_PROJECT?.trim();
-  return defaultProject ? [defaultProject] : projects;
+  return defaultProject ? [defaultProject] : undefined;
 }
 
 // ---------------------------------------------------------------------------
