@@ -244,7 +244,9 @@ Override per-call or globally with OPENGROK_RESPONSE_FORMAT_OVERRIDE.
 ## RATE LIMITS
 Some tools have lower per-minute limits by default:
 - opengrok_batch_search: 5 rpm (expensive — runs multiple queries)
+- opengrok_call_graph: 5 rpm (recursive search fan-out)
 - opengrok_dependency_map: 10 rpm (BFS traversal = multiple requests)
+- opengrok_search_and_read: 10 rpm (compound tool — multiple API calls)
 If rate-limited, wait before retrying or narrow the query scope.
 
 ## WORKFLOW
@@ -252,7 +254,7 @@ If rate-limited, wait before retrying or narrow the query scope.
 2. Use opengrok_get_symbol_context for function/class deep-dives
 3. Use opengrok_batch_search for 2-5 parallel queries
 4. Read files via opengrok_get_file_content with line ranges
-5. Record findings in investigation-log.md`.trim();
+5. Use opengrok_blame / opengrok_what_changed to understand change history`.trim();
 
 /**
  * Code Mode uses a shorter instruction set — only 5 tools are exposed so the full
@@ -2104,7 +2106,7 @@ function registerCodeModeTools(
 }
 
 // ---------------------------------------------------------------------------
-// Legacy tools (14 tools, used when Code Mode is disabled)
+// Legacy tools (20 tools, used when Code Mode is disabled)
 // ---------------------------------------------------------------------------
 
 function registerLegacyTools(
