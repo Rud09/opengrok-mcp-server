@@ -266,3 +266,40 @@ describe('extractLineRange', () => {
     expect(result.text).toBe('line1');
   });
 });
+
+// ---------------------------------------------------------------------------
+// TTLCache.evictExpired
+// ---------------------------------------------------------------------------
+import { TTLCache } from '../server/client.js';
+
+describe('TTLCache.evictExpired', () => {
+  it('removes entries older than TTL when eviction is triggered on the 10th write', () => {
+    const mockNow = vi.spyOn(Date, 'now');
+    let time = 1_000_000;
+    mockNow.mockImplementation(() => time);
+
+    try {
+      // TTL of 100 ms
+      const cache = new TTLCache<string, string>(100, 10_000_000, 100);
+
+      // Write an entry that will expire
+      cache.set('stale', 'value', 10);
+
+      // Advance past the TTL
+      time += 200;
+
+      // Write 9 more entries to trigger the eviction on the 10th write (writeCount % 10 === 0)
+      // The first write above was #1, so we need 9 more to hit #10
+      for (let i = 0; i < 9; i++) {
+        cache.set(`fresh-${i}`, `v${i}`, 10);
+      }
+
+      // 'stale' should have been evicted
+      expect(cache.get('stale')).toBeUndefined();
+      // Fresh entries should still be present
+      expect(cache.get('fresh-0')).toBe('v0');
+    } finally {
+      mockNow.mockRestore();
+    }
+  });
+});

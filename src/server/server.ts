@@ -99,6 +99,7 @@ import type { ResponseFormat } from "./formatters.js";
 import { MemoryBank, ALLOWED_FILES } from "./memory-bank.js";
 import { ObservationMasker } from "./observation-masker.js";
 import { createSandboxAPI, executeInSandbox, API_SPEC } from "./sandbox.js";
+import { extractImports, langFromPath } from "./intelligence.js";
 import { SandboxWorkerPool } from "./worker-pool.js";
 import yaml from "js-yaml";
 
@@ -246,11 +247,6 @@ The \`response_format\` parameter controls output. Default is "auto":
 - other → markdown
 - toon → ultra-compact search results (~60% token savings, search tools only)
 Override per-call or globally with OPENGROK_RESPONSE_FORMAT_OVERRIDE.
-
-## MEMORY
-Update opengrok_update_memory after completing investigations:
-- active-task.md: current task, last symbol/file, next step (≤ 4 KB)
-- investigation-log.md: append ## YYYY-MM-DD HH:MM entries (≤ 32 KB, oldest trimmed automatically)
 
 ## RATE LIMITS
 Some tools have lower per-minute limits by default:
@@ -477,7 +473,9 @@ Get compiler flags and include paths for a C/C++ file from compile_commands.json
 [Code Mode] Execute JavaScript in the QuickJS sandbox with OpenGrok API access. Rate-limited to 10 rpm.
 
 **Parameters:**
-- \`code\` — JS function body using env.opengrok.* for API calls (required)`,
+- \`code\` — JS function body using env.opengrok.* for API calls (required)
+
+**Note on large results:** When the return value exceeds the context budget, it is truncated at a JSON array/object boundary. Truncated output ends with \`\\n// [truncated: N more elements]\` or \`\\n// [truncated: N more keys]\` and is intentionally not valid JSON — parse only the portion before the comment if needed.`,
 };
 
 // ---------------------------------------------------------------------------
@@ -1702,6 +1700,10 @@ export function createServer(
 
   // Initialize per-tool rate limiter
   const perToolLimits = parsePerToolLimits(config.OPENGROK_PER_TOOL_RATELIMIT);
+  // The ToolRateLimiter default (60 rpm) matches the global client rate limit.
+  // This is intentional: the per-tool limiter only constrains specific expensive
+  // tools (batch_search: 5rpm, execute: 10rpm, dependency_map: 10rpm). All other
+  // tools fall through to the global OpenGrokClient rate limiter.
   const toolRateLimiter = new ToolRateLimiter(perToolLimits);
 
   if (codeMode && memoryBank) {
@@ -1994,7 +1996,7 @@ function registerCodeModeTools(
     "opengrok_execute",
     {
       title: "Execute OpenGrok Code",
-      description: "Execute JavaScript in the QuickJS sandbox with OpenGrok API access.",
+      description: "Execute JavaScript in the QuickJS sandbox with OpenGrok API access. Large results are truncated with a // comment suffix (not valid JSON); parse before the comment if needed.",
       inputSchema: {
         code: z.string().min(1).max(65536).describe("JS function body; use env.opengrok.* for API calls; return a value."),
       },
@@ -2271,7 +2273,7 @@ function registerLegacyTools(
         return {
           content: [
             { type: "text" as const, text: capResponse(formatFileHistory(history)) },
-            { type: "resource_link" as const, uri: `${config.OPENGROK_BASE_URL}/xref/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
+            { type: "resource_link" as const, uri: buildXrefUri(config.OPENGROK_BASE_URL, args.project, args.path), name: args.path, mimeType: getMimeType(args.path) },
           ],
           structuredContent: structured as unknown as Record<string, unknown>,
         };
@@ -2701,7 +2703,7 @@ function registerLegacyTools(
         return {
           content: [
             { type: "text" as const, text: capResponse(formatFileSymbols(result)) },
-            { type: "resource_link" as const, uri: `${config.OPENGROK_BASE_URL}/xref/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
+            { type: "resource_link" as const, uri: buildXrefUri(config.OPENGROK_BASE_URL, args.project, args.path), name: args.path, mimeType: getMimeType(args.path) },
           ],
           structuredContent: structured as unknown as Record<string, unknown>,
         };
@@ -3222,9 +3224,13 @@ class ToolRateLimiter {
     const deadline = Date.now() + maxWaitMs;
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const safeResolve = (): void => { if (!settled) { settled = true; resolve(); } };
+      const safeReject = (err: Error): void => { if (!settled) { settled = true; reject(err); } };
+
       const checkToken = (): void => {
         if (Date.now() > deadline) {
-          reject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
+          safeReject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
           return;
         }
 
@@ -3246,12 +3252,12 @@ class ToolRateLimiter {
 
         if (bucket.tokens >= 1) {
           bucket.tokens -= 1;
-          resolve();
+          safeResolve();
         } else {
           // Reject immediately if the deadline has already passed.
           const remaining = deadline - Date.now();
           if (remaining <= 0) {
-            reject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
+            safeReject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
             return;
           }
           // Wait for next token to be available, then try again
@@ -3422,7 +3428,7 @@ function sanitizeErrorMessage(message: string): string {
     /[A-Z]:\\(?:Users|Windows|Program Files|build)(?:\\\S+)/gi,
     "[path]"
   );
-  return sanitized;
+  return sanitized.slice(0, 2048);
 }
 
 /**
@@ -3440,15 +3446,24 @@ function getCredentialAgeWarning(): string | null {
 }
 
 /**
- * Build a dependency graph for a file by searching up to `depth` levels.
- * "uses"    — finds files that this file's basename appears in via full-text search.
- *             NOTE: this is a keyword search for the filename string, not structural import
- *             analysis. Results may include files that merely mention the name (e.g.,
- *             documentation or test fixtures) in addition to files that actually import it.
- * "used_by" — finds files that reference/call symbols from this file (refs search by filename).
+ * Build a safe xref URI for resource_link content items.
+ * Each path segment is percent-encoded to handle spaces and special chars.
  */
+function buildXrefUri(baseUrl: string, project: string, filePath: string): string {
+  const encodedProject = encodeURIComponent(project);
+  const encodedPath = filePath.split("/").map((seg) => encodeURIComponent(seg)).join("/");
+  return `${baseUrl}/xref/${encodedProject}${encodedPath}`;
+}
+
 const DEPENDENCY_GRAPH_MAX_NODES = 50;
 
+/**
+ * Build a dependency graph for a file by searching up to `depth` levels.
+ * "uses"    — finds files that this file imports/includes: reads the target file's
+ *             content, extracts import/include/require directives, then searches by
+ *             path for each imported module name to find indexed files.
+ * "used_by" — finds files that reference/call symbols from this file (refs search by filename).
+ */
 async function buildDependencyGraph(
   client: OpenGrokClient,
   project: string,
@@ -3462,7 +3477,9 @@ async function buildDependencyGraph(
 
   const rootName = filePath.split("/").pop() ?? "";
 
-  // "uses" direction: level-parallel BFS — all nodes at the same depth are searched concurrently.
+  // "uses" direction: find files this file imports/includes via BFS.
+  // For each frontier file: fetch its content, extract import/include statements,
+  // then search by path for each imported name to find the actual indexed files.
   if (direction === "uses" || direction === "both") {
     let frontier: string[] = [filePath];
     const expandedUses = new Set<string>();
@@ -3475,25 +3492,48 @@ async function buildDependencyGraph(
 
       if (toExpand.length === 0) break;
 
-      // Issue all searches at this BFS level in parallel
-      const levelResults = await Promise.all(
-        toExpand.map((currentPath) => {
-          const currentName = currentPath.split("/").pop() ?? "";
-          return client.search(currentName, "full", [project], 20);
-        })
+      // Fetch the first 50 lines of each frontier file to extract imports
+      const contentResults = await Promise.all(
+        toExpand.map((currentPath) =>
+          client.getFileContent(project, currentPath, 1, 50).catch(() => null)
+        )
       );
 
-      for (const results of levelResults) {
-        for (const r of results.results) {
-          if (r.path === filePath) continue;
-          if (!seenUsesPaths.has(r.path)) {
-            if (seenUsesPaths.size >= DEPENDENCY_GRAPH_MAX_NODES) break;
-            seenUsesPaths.add(r.path);
-            nodes.push({ path: r.path, level, direction: "uses" });
-          }
-          if (level < depth && !expandedUses.has(r.path)) frontier.push(r.path);
+      // For each file, extract its imports and search for them by path
+      const searchPromises: Promise<void>[] = [];
+      for (let i = 0; i < toExpand.length; i++) {
+        const contentResult = contentResults[i];
+        if (!contentResult) continue;
+
+        const lang = langFromPath(toExpand[i]);
+        const imports = extractImports(contentResult.content, lang);
+        if (imports.length === 0) continue;
+
+        for (const imp of imports) {
+          // Use the leaf filename stem (no extension) as the path search term
+          const leaf = imp.split("/").pop() ?? imp;
+          const stem = leaf.includes(".") ? leaf.slice(0, leaf.lastIndexOf(".")) : leaf;
+          if (!stem) continue;
+
+          searchPromises.push(
+            client.search(stem, "path", [project], 10)
+              .then((results) => {
+                for (const r of results.results) {
+                  if (r.path === filePath) continue;
+                  if (!seenUsesPaths.has(r.path)) {
+                    if (seenUsesPaths.size >= DEPENDENCY_GRAPH_MAX_NODES) return;
+                    seenUsesPaths.add(r.path);
+                    nodes.push({ path: r.path, level, direction: "uses" });
+                  }
+                  if (level < depth && !expandedUses.has(r.path)) frontier.push(r.path);
+                }
+              })
+              .catch(() => { /* ignore individual search errors */ })
+          );
         }
       }
+
+      await Promise.all(searchPromises);
     }
   }
 

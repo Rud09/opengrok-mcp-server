@@ -4,6 +4,7 @@ import {
   _sanitizeErrorMessage as sanitizeErrorMessage,
   _resolveFileFromIndex as resolveFileFromIndex,
   _SERVER_INSTRUCTIONS,
+  SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE,
   createServer,
 } from '../server/server.js';
 import type { CompileInfo } from '../server/local/compile-info.js';
@@ -184,9 +185,16 @@ describe('SERVER_INSTRUCTIONS', () => {
     expect(_SERVER_INSTRUCTIONS).not.toContain('opengrok_list_memory_files');
   });
 
-  it('references opengrok_update_memory for session memory guidance', () => {
-    // Template now uses opengrok_update_memory in the MEMORY section (reduced token budget)
-    expect(_SERVER_INSTRUCTIONS).toContain('opengrok_update_memory');
+  it('does not reference memory tools (they are Code Mode only)', () => {
+    // Memory tools (opengrok_update_memory etc.) are only registered in Code Mode,
+    // so the standard-mode template must not mention them to avoid LLM confusion.
+    expect(_SERVER_INSTRUCTIONS).not.toContain('opengrok_update_memory');
+  });
+
+  it('Code Mode template references memory files', () => {
+    // Code Mode template should guide LLMs on using the memory bank
+    expect(SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE).toContain('active-task.md');
+    expect(SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE).toContain('investigation-log.md');
   });
 });
 

@@ -98,7 +98,7 @@ export async function buildCallChain(
   const callers: CallNode[] =
     direction === "callees"
       ? []
-      : await traceCallers(client, symbol, cappedDepth, project, new Set());
+      : await traceCallers(client, symbol, cappedDepth, cappedDepth, project, new Set());
 
   // Callees require AST analysis not available via OpenGrok search API
   const callees: CallNode[] = [];
@@ -125,6 +125,7 @@ async function traceCallers(
   client: OpenGrokClient,
   symbol: string,
   depth: number,
+  maxDepth: number,
   project: string | undefined,
   visited: Set<string>
 ): Promise<CallNode[]> {
@@ -155,7 +156,7 @@ async function traceCallers(
         path: result.path,
         project: result.project,
         line: match.lineNumber,
-        depth: MAX_CALL_CHAIN_DEPTH - depth + 1,
+        depth: maxDepth - depth + 1,
       };
       nodes.push(node);
 
@@ -164,6 +165,7 @@ async function traceCallers(
           client,
           callerSym,
           depth - 1,
+          maxDepth,
           project,
           visited
         );
@@ -269,7 +271,7 @@ function buildSymbolTree(
 /**
  * Extract import/include statements from file header text.
  */
-function extractImports(text: string, lang: string): string[] {
+export function extractImports(text: string, lang: string): string[] {
   const imports: string[] = [];
 
   if (lang === "cpp" || lang === "c") {
@@ -289,7 +291,7 @@ function extractImports(text: string, lang: string): string[] {
   return [...new Set(imports)].slice(0, 20);
 }
 
-function langFromPath(filePath: string): string {
+export function langFromPath(filePath: string): string {
   const ext = (filePath.split(".").pop() ?? "").toLowerCase();
   const map: Record<string, string> = {
     cpp: "cpp", cxx: "cpp", cc: "cpp", c: "c",

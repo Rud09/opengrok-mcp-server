@@ -104,7 +104,7 @@ export const SearchSuggestArgs = z.object({
 
 export const WhatChangedArgs = z.object({
   project: z.string().min(1).describe("Project name"),
-  path: z.string().min(1).describe("File path relative to project root"),
+  path: z.string().min(1).describe("Path to a specific file (not a directory) relative to project root"),
   since_days: z.number().int().min(1).max(90).default(7).describe("How many days of history to include (1–90, default 7)"),
   response_format: RESPONSE_FORMAT,
 });

@@ -708,17 +708,23 @@ describe('readFileAtAbsPath', () => {
 describe('dispatchTool — opengrok_dependency_map', () => {
   it('returns dependency map for direction=both', async () => {
     const client = makeMockClient();
-    // First call: refs search for "uses" (both directions use refs)
+    // "uses": getFileContent returns a C++ file that includes Timer.h
+    client.getFileContent.mockResolvedValue({
+      project: 'proj', path: 'src/EventLoop.cpp',
+      content: '#include "Timer.h"\nvoid run() {}',
+      lineCount: 2, sizeBytes: 33, startLine: 1,
+    });
+    // "uses": path search for stem "Timer" returns Timer.cpp
     client.search.mockResolvedValueOnce({
-      query: 'EventLoop.cpp',
-      searchType: 'refs',
+      query: 'Timer',
+      searchType: 'path',
       totalCount: 1,
       timeMs: 5,
       results: [{ project: 'proj', path: 'src/Timer.cpp', matches: [] }],
       startIndex: 0,
       endIndex: 1,
     });
-    // Second call: refs search for "used_by"
+    // "used_by": refs search returns main.cpp
     client.search.mockResolvedValueOnce({
       query: 'EventLoop.cpp',
       searchType: 'refs',
@@ -739,25 +745,21 @@ describe('dispatchTool — opengrok_dependency_map', () => {
     expect(result).toContain('main.cpp');
   });
 
-  it('only runs refs search for direction=uses', async () => {
+  it('makes no search calls when file has no imports (direction=uses)', async () => {
     const client = makeMockClient();
-    client.search.mockResolvedValue({
-      query: 'foo.h',
-      searchType: 'refs',
-      totalCount: 0,
-      timeMs: 5,
-      results: [],
-      startIndex: 0,
-      endIndex: 0,
+    // File with no import statements → extractImports returns [] → no searches
+    client.getFileContent.mockResolvedValue({
+      project: 'proj', path: 'src/foo.h',
+      content: 'struct Foo { int x; };',
+      lineCount: 1, sizeBytes: 22, startLine: 1,
     });
-    await dispatchTool(
+    const result = await dispatchTool(
       'opengrok_dependency_map',
       { project: 'proj', path: 'src/foo.h', depth: 1, direction: 'uses' },
       client as any, config, emptyLocal()
     );
-    // Should only call search once (full-text search to find files that import/include this, no additional searches)
-    expect(client.search).toHaveBeenCalledTimes(1);
-    expect(client.search).toHaveBeenCalledWith('foo.h', 'full', ['proj'], 20);
+    expect(client.search).not.toHaveBeenCalled();
+    expect(result).toContain('No dependency');
   });
 
   it('only runs refs search for direction=used_by', async () => {
@@ -782,9 +784,21 @@ describe('dispatchTool — opengrok_dependency_map', () => {
 
   it('recurses to depth=2 for uses', async () => {
     const client = makeMockClient();
-    // Level 1: foo.h -> bar.h
+    // Level 1: foo.h includes bar.h
+    client.getFileContent.mockResolvedValueOnce({
+      project: 'proj', path: 'src/foo.h',
+      content: '#include "bar.h"\n',
+      lineCount: 1, sizeBytes: 17, startLine: 1,
+    });
+    // Level 2: bar.h includes baz.h
+    client.getFileContent.mockResolvedValueOnce({
+      project: 'proj', path: 'src/bar.h',
+      content: '#include "baz.h"\n',
+      lineCount: 1, sizeBytes: 17, startLine: 1,
+    });
+    // Level 1: path search for "bar" → bar.h
     client.search.mockResolvedValueOnce({
-      query: 'foo.h',
+      query: 'bar',
       searchType: 'path',
       totalCount: 1,
       timeMs: 5,
@@ -792,9 +806,9 @@ describe('dispatchTool — opengrok_dependency_map', () => {
       startIndex: 0,
       endIndex: 1,
     });
-    // Level 2: bar.h -> baz.h
+    // Level 2: path search for "baz" → baz.h
     client.search.mockResolvedValueOnce({
-      query: 'bar.h',
+      query: 'baz',
       searchType: 'path',
       totalCount: 1,
       timeMs: 5,
@@ -816,9 +830,16 @@ describe('dispatchTool — opengrok_dependency_map', () => {
 
   it('returns no-dep message when results are empty', async () => {
     const client = makeMockClient();
+    // No imports in file → uses direction finds nothing
+    client.getFileContent.mockResolvedValue({
+      project: 'proj', path: 'src/lone.cpp',
+      content: 'int main() { return 0; }',
+      lineCount: 1, sizeBytes: 24, startLine: 1,
+    });
+    // used_by: refs search returns empty
     client.search.mockResolvedValue({
       query: 'lone.cpp',
-      searchType: 'path',
+      searchType: 'refs',
       totalCount: 0,
       timeMs: 5,
       results: [],
