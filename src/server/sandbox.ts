@@ -645,6 +645,15 @@ export async function executeInSandbox(
       // Signal: result_ready — wake up the blocked worker thread
       Atomics.store(statusArray, 0, 2);
       Atomics.notify(statusArray, 0);
+      // Reset to idle after the worker reads the result so the poll loop
+      // doesn't keep finding status=2 on every setImmediate tick.
+      // The worker reads data synchronously after Atomics.wait returns,
+      // so by the next setImmediate the result has already been consumed.
+      setImmediate(() => {
+        if (Atomics.load(statusArray, 0) === 2) {
+          Atomics.store(statusArray, 0, 0);
+        }
+      });
     }
 
     if (!stopped) {

@@ -230,7 +230,7 @@ export class MemoryBank {
         }
       }
 
-      newContent = existing + "\n" + content;
+      newContent = existing.trimEnd() + "\n" + content;
     } else {
       newContent = content;
     }

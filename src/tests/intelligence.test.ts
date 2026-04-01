@@ -266,3 +266,41 @@ describe('buildCallChain', () => {
     expect(result.callers[0].symbol).toContain('src/caller.ts');
   });
 });
+
+// ---------------------------------------------------------------------------
+// extractImports + langFromPath (helpers powering buildDependencyGraph "uses")
+// ---------------------------------------------------------------------------
+import { extractImports, langFromPath } from '../server/intelligence.js';
+
+describe('extractImports', () => {
+  it('extracts C++ #include directives', () => {
+    const text = '#include "EventLoop.h"\n#include <vector>\nvoid foo() {}';
+    expect(extractImports(text, 'cpp')).toEqual(['EventLoop.h', 'vector']);
+  });
+
+  it('extracts TypeScript import paths', () => {
+    const text = "import { foo } from './utils/helper';\nimport type Bar from 'bar';";
+    const imports = extractImports(text, 'typescript');
+    expect(imports).toContain('./utils/helper');
+    expect(imports).toContain('bar');
+  });
+
+  it('deduplicates imports', () => {
+    const text = "import 'react';\nimport React from 'react';";
+    const imports = extractImports(text, 'typescript');
+    expect(imports.filter((i) => i === 'react')).toHaveLength(1);
+  });
+
+  it('returns empty array for file with no imports', () => {
+    const text = 'const x = 1;\n';
+    expect(extractImports(text, 'typescript')).toEqual([]);
+  });
+});
+
+describe('langFromPath', () => {
+  it('maps .cpp to cpp', () => expect(langFromPath('foo/bar.cpp')).toBe('cpp'));
+  it('maps .ts to typescript', () => expect(langFromPath('src/index.ts')).toBe('typescript'));
+  it('maps .py to python', () => expect(langFromPath('main.py')).toBe('python'));
+  it('maps .go to go', () => expect(langFromPath('cmd/main.go')).toBe('go'));
+  it('falls back to extension for unknown types', () => expect(langFromPath('foo.xyz')).toBe('xyz'));
+});

@@ -87,7 +87,7 @@ export class ObservationMasker {
    */
   private extractSummary(tool: string, result: string): string {
     // Extract file paths (project/path.cpp patterns)
-    const pathMatches = [...result.matchAll(/\b[\w.-]+\/[\w./:-]+\.\w+/g)].slice(0, 5);
+    const pathMatches = [...result.matchAll(/\b[a-zA-Z_][\w.-]*(?:\/[a-zA-Z_][\w.-]*)+\.[a-zA-Z0-9]+\b/g)].slice(0, 5);
     const paths = [...new Set(pathMatches.map((m) => m[0]))];
 
     // Extract line number references (L123 or :123)

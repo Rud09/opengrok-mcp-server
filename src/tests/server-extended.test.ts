@@ -513,8 +513,16 @@ describe('opengrok_dependency_map — tool registration and call', () => {
     const { mcpClient, ogClient } = await createStandardClient();
     // Reset mocks from symbol context setup and configure for dependency map
     ogClient.search.mockReset();
+    ogClient.getFileContent.mockReset();
+    // EventLoop.cpp includes Timer.h → extractImports finds "Timer.h"
+    ogClient.getFileContent.mockResolvedValue({
+      project: 'proj', path: 'src/EventLoop.cpp',
+      content: '#include "Timer.h"\nvoid run() {}',
+      lineCount: 2, sizeBytes: 33, startLine: 1,
+    });
+    // path search for stem "Timer" returns src/Timer.cpp
     ogClient.search.mockResolvedValue({
-      query: 'EventLoop.cpp',
+      query: 'Timer',
       searchType: 'path',
       totalCount: 1,
       timeMs: 5,

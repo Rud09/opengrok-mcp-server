@@ -100,7 +100,7 @@ interface CacheEntry<V> {
   sizeBytes: number;
 }
 
-class TTLCache<K, V> {
+export class TTLCache<K, V> {
   private map = new Map<K, CacheEntry<V>>();
   private totalBytes = 0;
 
