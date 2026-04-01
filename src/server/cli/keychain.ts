@@ -1,4 +1,5 @@
 import * as crypto from 'crypto';
+import * as os from 'os';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { getConfigDirectory } from '../config.js';
@@ -48,32 +49,34 @@ export function deleteCredentials(username: string): void {
   // Also clear encrypted files
   const dir = getConfigDirectory();
   const encPath = join(dir, `cred-${username}.enc`);
-  const keyPath = join(dir, `cred-${username}.key`);
   if (existsSync(encPath)) {
     try { unlinkSync(encPath); } catch { /* ignore */ }
   }
-  if (existsSync(keyPath)) {
-    try { unlinkSync(keyPath); } catch { /* ignore */ }
-  }
+}
+
+function deriveFileKey(username: string): string {
+  // Derive a deterministic key from machine identity so no key file is needed.
+  // The key is specific to this machine and username — not exportable to other machines.
+  return crypto.createHash('sha256')
+    .update(`opengrok-mcp:${username}:${os.hostname()}:${os.platform()}`)
+    .digest('hex');
 }
 
 function storeInEncryptedFile(username: string, password: string): void {
   const dir = getConfigDirectory();
   mkdirSync(dir, { recursive: true });
-  const key = crypto.randomBytes(32).toString('hex');
+  const key = deriveFileKey(username);
   const encrypted = encryptWithGcm(password, key);
   writeFileSync(join(dir, `cred-${username}.enc`), encrypted, { encoding: 'utf8', mode: 0o600 });
-  writeFileSync(join(dir, `cred-${username}.key`), key, { encoding: 'utf8', mode: 0o600 });
 }
 
 function retrieveFromEncryptedFile(username: string): string | null {
   const dir = getConfigDirectory();
   const encPath = join(dir, `cred-${username}.enc`);
-  const keyPath = join(dir, `cred-${username}.key`);
-  if (!existsSync(encPath) || !existsSync(keyPath)) return null;
+  if (!existsSync(encPath)) return null;
   try {
     const encrypted = readFileSync(encPath, 'utf8').trim();
-    const key = readFileSync(keyPath, 'utf8').trim();
+    const key = deriveFileKey(username);
     return decryptWithGcm(encrypted, key);
   } catch {
     return null;

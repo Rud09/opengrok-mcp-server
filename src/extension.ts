@@ -20,12 +20,8 @@ let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 let secretStorage: vscode.SecretStorage;
 let mcpProvider: OpenGrokMcpProvider | undefined;
+let _credentialsSynced = false;
 
-// Tracks if the extension was activated without credentials, requiring a window reload to populate tools
-
-/**
- * Clean up ALL credential files (used on extension deactivation)
- */
 /**
  * Get the current extension version from package.json
  */
@@ -90,8 +86,6 @@ async function checkForRemoteUpdate(
     options?: { manual?: boolean }
 ): Promise<void> {
     const manual = options?.manual ?? false;
-    const config = vscode.workspace.getConfiguration('opengrok-mcp');
-    const verifySsl = config.get<boolean>('verifySsl') ?? true;
 
     // Throttle automatic checks to once per UPDATE_CHECK_INTERVAL_MS
     if (!manual) {
@@ -119,7 +113,7 @@ async function checkForRemoteUpdate(
             tag_name?: string;
             assets?: Array<{ name?: string; browser_download_url?: string }>;
         }
-        const releases = await httpGetJson(releasesUrl, headers, verifySsl) as GitHubRelease[];
+        const releases = await httpGetJson(releasesUrl, headers, true) as GitHubRelease[];
         await context.globalState.update('lastUpdateCheck', Date.now());
 
         // Find the latest stable release (skip beta/alpha/rc/prerelease)
@@ -185,7 +179,7 @@ async function checkForRemoteUpdate(
             await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: `Downloading OpenGrok MCP v${latestVersion}...`, cancellable: false },
                 async () => {
-                    await downloadToFile(new URL(vsixUrl), tmpPath, verifySsl);
+                    await downloadToFile(new URL(vsixUrl), tmpPath, true);
                 }
             );
 
@@ -667,7 +661,7 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         if (defaultProject) env.OPENGROK_DEFAULT_PROJECT = defaultProject;
         if (responseFormatOverride) env.OPENGROK_RESPONSE_FORMAT_OVERRIDE = responseFormatOverride;
 
-        if (password) {
+        if (!_credentialsSynced && password) {
             try {
                 // Write to OS keychain so server can read it via resolveConfig() on startup.
                 // Uses @napi-rs/keyring (native addon, already a dependency).
@@ -683,20 +677,23 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
                     const xdgConfig = process.env['XDG_CONFIG_HOME'] || path.join(os.homedir(), '.config');
                     const credDir = path.join(xdgConfig, 'opengrok-mcp');
                     fs.mkdirSync(credDir, { recursive: true });
-                    const key = crypto.randomBytes(32).toString('hex');
+                    // Key derived from machine identity — no key file needed
+                    const key = crypto.createHash('sha256')
+                        .update(`opengrok-mcp:${username}:${os.hostname()}:${os.platform()}`)
+                        .digest('hex');
                     const iv = crypto.randomBytes(12);
                     const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(key, 'hex'), iv);
                     const encrypted = Buffer.concat([cipher.update(password, 'utf8'), cipher.final()]);
                     const tag = (cipher as crypto.CipherGCM).getAuthTag();
                     const encoded = 'gcm:' + Buffer.concat([iv, tag, encrypted]).toString('base64');
                     fs.writeFileSync(path.join(credDir, `cred-${username}.enc`), encoded, { encoding: 'utf8', mode: 0o600 });
-                    fs.writeFileSync(path.join(credDir, `cred-${username}.key`), key, { encoding: 'utf8', mode: 0o600 });
                     log('Credentials stored in encrypted file (headless fallback).');
                 } catch (fileErr) {
                     log(`Warning: Failed to store credentials: ${fileErr}. Server may fail to start.`);
                 }
             }
             // Server reads from keychain via resolveConfig() in main.ts — no env vars needed.
+            _credentialsSynced = true;
         }
 
         if (proxy) {
@@ -1043,6 +1040,7 @@ async function handleSaveConfiguration(
     } catch (keychainErr) {
         log(`Warning: OS keychain unavailable (${keychainErr}). Server will rely on env OPENGROK_PASSWORD or encrypted file fallback.`);
     }
+    _credentialsSynced = true;
 
     // Store password BEFORE config updates so credentials are never lost if a
     // config.update() call throws (e.g. unregistered key).
@@ -1073,7 +1071,6 @@ async function handleSaveConfiguration(
         ? 'Configuration saved! Code Mode is toggling — tools will refresh in 5–10 sec.'
         : 'Configuration saved! Tools are refreshing.';
     postMessage({ type: 'success', message: saveMsg });
-    setTimeout(() => { void testConnection(true); }, 1000);
 }
 
 function getConfigManagerHtml(context: vscode.ExtensionContext): string {
