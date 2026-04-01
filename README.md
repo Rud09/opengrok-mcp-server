@@ -142,7 +142,7 @@ Look for all places in the code where ThreadPool is instantiated or referenced.
 
 *(Note: The search functions support language filtering. Pass `file_type` as `java`, `cxx`, `python`, `golang`, etc.)*
 
-### 🔍 Investigation & Analysis Tools (v5.5+)
+### 🔍 Investigation & Analysis Tools (v5.6+)
 
 | Tool | Purpose |
 | ---- | ------- |
@@ -281,8 +281,6 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | `OPENGROK_VERIFY_SSL` | `true` (default) / `false` | Disable TLS verification for self-signed certs |
 | `OPENGROK_TIMEOUT` | integer (seconds, default: `30`) | HTTP request timeout |
 
-> **Migration note:** `OPENGROK_PASSWORD_FILE` and `OPENGROK_PASSWORD_KEY` are deprecated. The server now reads credentials from the OS keychain via `resolveConfig()`. These env vars still work for backwards compatibility but should be replaced with `npx opengrok-mcp-server setup`.
-
 #### Code Mode & Performance
 
 | Variable | Values | Description |
@@ -419,7 +417,7 @@ v7.0 includes a comprehensive security audit with the following hardening:
 | **SSRF** | DNS rebinding detection + IPv6-mapped address blocking in `buildSafeUrl` |
 | **Path traversal** | NFC normalization + bidirectional Unicode character blocking |
 | **HTML injection** | `he.decode` on all parser text nodes before display |
-| **Prompt injection** | `escapeMarkdownField` + `fenceCode` in all formatters |
+| **Prompt injection** | `escapeMarkdownField` in all formatters |
 | **Token comparison** | `crypto.timingSafeEqual` for all Bearer token comparisons |
 | **CORS** | Allowlist via `OPENGROK_ALLOWED_ORIGINS` (no wildcard in production) |
 | **Security headers** | `X-Content-Type-Options`, `X-Frame-Options`, CSP on HTTP responses |
