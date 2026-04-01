@@ -2982,6 +2982,8 @@ function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): voi
     const filePath = path.join(memoryBank.bankDir, filename);
     let size: number | undefined;
     try {
+      // Snapshot size at registration time; advisory only — memory bank writes
+      // update the file on disk but do not re-register the resource.
       size = fs.statSync(filePath).size;
     } catch {
       // file doesn't exist yet — omit size
