@@ -65,7 +65,7 @@ export async function runSetup(): Promise<void> {
   if (p.isCancel(defaultProject)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   const enableElicitation = await p.confirm({
-    message: 'Enable AI project picker? When no default project is set, the AI will ask you which project to search (requires Claude Code v2.1.76+ or VS Code Copilot)',
+    message: 'Enable interactive AI prompts? Allows the AI to ask clarifying questions during investigations (requires Claude Code v2.1.76+ or VS Code Copilot)',
     initialValue: false,
   });
   if (p.isCancel(enableElicitation)) { p.cancel('Setup cancelled'); process.exit(0); }

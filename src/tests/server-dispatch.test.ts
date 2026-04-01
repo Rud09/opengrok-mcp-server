@@ -755,9 +755,9 @@ describe('dispatchTool — opengrok_dependency_map', () => {
       { project: 'proj', path: 'src/foo.h', depth: 1, direction: 'uses' },
       client as any, config, emptyLocal()
     );
-    // Should only call search once (path search to find includers, no additional searches)
+    // Should only call search once (full-text search to find files that import/include this, no additional searches)
     expect(client.search).toHaveBeenCalledTimes(1);
-    expect(client.search).toHaveBeenCalledWith('foo.h', 'path', ['proj'], 20);
+    expect(client.search).toHaveBeenCalledWith('foo.h', 'full', ['proj'], 20);
   });
 
   it('only runs refs search for direction=used_by', async () => {

@@ -204,6 +204,7 @@
           "order": 11
         },
         "opengrok-mcp.compileDbPaths": {
+          "title": "C/C++ Compile DB Paths",
           "type": "string",
           "default": "",
           "markdownDescription": "Paths to `compile_commands.json` for C/C++ compiler flag extraction. Leave blank for automatic workspace discovery. Maps to `OPENGROK_LOCAL_COMPILE_DB_PATHS` env var.",

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Evaluation file for the OpenGrok MCP Server v9.0.
-  20 questions covering standard mode (23 tools) and Code Mode (5 tools + sandbox API).
+  20 questions covering standard mode (20 tools) and Code Mode (5 tools + sandbox API).
   Use with MCP Inspector or an automated evaluation harness.
 
   Tool inventory:
-    Standard mode (23 tools):
+    Standard mode (20 tools):
       opengrok_search_code, opengrok_find_file, opengrok_search_pattern,
       opengrok_get_file_content, opengrok_get_file_history, opengrok_get_file_diff,
       opengrok_browse_directory, opengrok_list_projects, opengrok_get_file_annotate,
@@ -23,7 +23,7 @@
     <name>OpenGrok MCP Server v9.0 Evaluation</name>
     <version>9.0.0</version>
     <description>
-      20 questions covering standard mode (23 tools), Code Mode (5 tools + sandbox API),
+      20 questions covering standard mode (20 tools), Code Mode (5 tools + sandbox API),
       multi-tool compositions, structured output, response_format, error handling,
       and v9.0 sandbox features: env.opengrok.elicit(), env.opengrok.sample(),
       and _suggestions zero-result auto-injection.

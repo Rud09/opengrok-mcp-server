@@ -107,6 +107,9 @@ import { auditLog } from "./audit.js";
 import { elicitOrFallback } from "./elicitation.js";
 import { sampleOrNull } from "./sampling.js";
 
+// Memoized YAML dump of API_SPEC (computed once on first use)
+let _apiSpecYaml: string | undefined;
+
 // ---------------------------------------------------------------------------
 // Response size caps
 // ---------------------------------------------------------------------------
@@ -180,6 +183,27 @@ function capCodeModeResult(result: string, maxBytes: number): string {
       }
     } catch {
       // Not valid JSON array, fall through to byte truncation
+    }
+  }
+
+  // Try to truncate at a JSON object key boundary
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      const keys = Object.keys(parsed);
+      let lo = 0, hi = keys.length;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        const partial = Object.fromEntries(keys.slice(0, mid).map((k) => [k, parsed[k]]));
+        if (Buffer.byteLength(JSON.stringify(partial), "utf8") <= maxBytes) lo = mid;
+        else hi = mid - 1;
+      }
+      if (lo > 0) {
+        const partial = Object.fromEntries(keys.slice(0, lo).map((k) => [k, parsed[k]]));
+        return JSON.stringify(partial) + `\n// [truncated: ${keys.length - lo} more keys]`;
+      }
+    } catch {
+      // Not valid JSON object, fall through
     }
   }
 
@@ -1906,7 +1930,8 @@ function registerCodeModeTools(
             }
           }
         }
-        const specText = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
+        if (!_apiSpecYaml) _apiSpecYaml = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
+        const specText = _apiSpecYaml;
         const fullText = projectHint ? `${projectHint}\n\n${specText}` : specText;
         return { content: [{ type: "text", text: capResponse(fullText) }] };
       } catch (err) {
@@ -3332,7 +3357,7 @@ async function buildDependencyGraph(
       const levelResults = await Promise.all(
         toExpand.map((currentPath) => {
           const currentName = currentPath.split("/").pop() ?? "";
-          return client.search(currentName, "path", [project], 20);
+          return client.search(currentName, "full", [project], 20);
         })
       );
 
