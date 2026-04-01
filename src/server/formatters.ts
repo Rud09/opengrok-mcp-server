@@ -58,11 +58,10 @@ export function selectFormat(
   responseType: "search" | "symbol" | "code" | "generic",
   perCallFormat?: ResponseFormat | null
 ): ResponseFormat {
-  // Global override (for rollback / experimentation)
-  const globalOverride = process.env.OPENGROK_RESPONSE_FORMAT_OVERRIDE?.trim().toLowerCase();
   const validFormats: ResponseFormat[] = ["markdown", "json", "tsv", "yaml", "text", "toon", "auto"];
-  const override = validFormats.includes(globalOverride as ResponseFormat)
-    ? (globalOverride as ResponseFormat)
+  const rawOverride = process.env.OPENGROK_RESPONSE_FORMAT_OVERRIDE?.trim().toLowerCase();
+  const override = validFormats.includes(rawOverride as ResponseFormat)
+    ? (rawOverride as ResponseFormat)
     : undefined;
 
   const effective = override ?? perCallFormat ?? "auto";
@@ -179,7 +178,7 @@ export function formatSearchResults(
 ): string {
   const lines: string[] = [];
   lines.push(
-    `Search: "${results.query}" -- ${results.totalCount.toLocaleString()} matches (${results.timeMs}ms)`
+    `Search: "${escapeMarkdownField(results.query)}" -- ${results.totalCount.toLocaleString()} matches (${results.timeMs}ms)`
   );
 
   if (!results.results.length) {
@@ -450,6 +449,11 @@ export function formatBlame(
     displayLines = annotate.lines.filter(
       (l) => l.lineNumber >= s && l.lineNumber <= e
     );
+  } else {
+    // Default cap: 200 lines to prevent unbounded output on large files.
+    // Without a range, blame on a 50k-line file would produce 50k table rows
+    // that capResponse then truncates mid-row, producing malformed markdown.
+    displayLines = annotate.lines.slice(0, 200);
   }
 
   if (!displayLines.length) {
@@ -484,8 +488,8 @@ export function formatWhatChanged(
   annotation: AnnotatedFile,
   sinceDays: number
 ): string {
-  const filename = /* v8 ignore next */ annotation.path.split("/").pop() ?? annotation.path;
   const lines: string[] = [];
+  // Use the full path in the header for traceability
   lines.push(`# Recent changes: ${annotation.path} (last ${sinceDays} days)`);
 
   if (!annotation.lines.length) {
@@ -534,7 +538,6 @@ export function formatWhatChanged(
     lines.push(`Lines: ${compactLineRanges(lineNumbers)}`);
   }
 
-  void filename; // path shown in header
   return lines.join("\n");
 }
 
@@ -899,7 +902,7 @@ export function formatFileSymbols(result: FileSymbols): string {
 export function formatSearchResultsTSV(results: SearchResults): string {
   const rows: string[] = [];
   rows.push(
-    `# Search: "${results.query}" -- ${results.totalCount.toLocaleString()} matches (${results.timeMs}ms)`
+    `# Search: "${escapeMarkdownField(results.query)}" -- ${results.totalCount.toLocaleString()} matches (${results.timeMs}ms)`
   );
   rows.push("path\tproject\tline\tcontent");
 
@@ -996,7 +999,7 @@ export function formatSearchResultsTOON(results: SearchResults): string {
       });
     }
   }
-  const header = `# Search: "${results.query}" -- ${results.totalCount.toLocaleString()} matches (${results.timeMs}ms)\n`;
+  const header = `# Search: "${escapeMarkdownField(results.query)}" -- ${results.totalCount.toLocaleString()} matches (${results.timeMs}ms)\n`;
   if (matches.length === 0) return `${header}No results found.`;
   return header + toonEncode({ matches });
 }

@@ -68,9 +68,9 @@ export function sanitizeSandboxError(err: unknown): string {
   message = message.split("\n").filter((line) => !/^\s+at\s/.test(line)).join("\n").trim();
   // Strip Node.js internal module paths
   message = message.replace(/\bnode:internal\/\S+/g, "<node-internal>");
-  // Strip absolute filesystem paths (Unix and Windows)
-  // Strip Unix absolute paths (any /dir/file pattern)
-  message = message.replace(/\/[\w.-]+(\/[\w.:\-]+)+/g, "<path>");
+  // Strip absolute filesystem paths (must start with a directory separator after the drive, not URL paths)
+  // Matches Unix absolute paths like /home/user/file or /tmp/something but NOT /api/v1/projects
+  message = message.replace(/(?<![a-zA-Z0-9_-])\/(?:home|tmp|var|usr|etc|proc|opt|root|mnt|srv|run)\/[\w.:/\-]+/g, "<path>");
   // Strip Windows absolute paths
   message = message.replace(/[A-Za-z]:\\[\S]+/g, "<path>");
   message = message.replace(/\\\\[\S]+/g, "<path>");
@@ -107,7 +107,7 @@ export const API_SPEC = {
     "Prefer env.opengrok.batchSearch() over multiple env.opengrok.search() calls.",
     "Always pass project as a string, not an array.",
     "env.opengrok.traceCallChain() callees direction returns empty (requires AST, not yet supported).",
-    "env.opengrok.readMemory() returns undefined for uninitialized files — handle gracefully.",
+    "env.opengrok.readMemory() returns null for uninitialized files — handle gracefully.",
     "When findFile() or search() returns multiple path matches and you cannot determine the correct file, call env.opengrok.elicit() with an enum of the top paths (≤10) before fetching content.",
     "When search() returns 0 results, check result._suggestions first — reformulation candidates may already be present. Call env.opengrok.sample() only if _suggestions is absent or unhelpful.",
     "When elicit() returns action !== 'accept', return a clear cancellation message — do not proceed with a default or guessed value.",
@@ -208,7 +208,7 @@ export const API_SPEC = {
     readMemory: {
       signature: "env.opengrok.readMemory(filename)",
       allowed: "'active-task.md' | 'investigation-log.md'",
-      returns: "string | undefined — undefined means file is uninitialized stub",
+      returns: "string | null — null means file is uninitialized stub",
     },
     writeMemory: {
       signature: "env.opengrok.writeMemory(filename, content, mode?)",

@@ -1085,7 +1085,21 @@ function getConfigManagerHtml(context: vscode.ExtensionContext): string {
     try {
         const htmlPath = path.join(context.extensionPath, 'out', 'webview', 'configManager.html');
         if (fs.existsSync(htmlPath)) {
-            return fs.readFileSync(htmlPath, 'utf8');
+            const html = fs.readFileSync(htmlPath, 'utf8');
+            // Generate a cryptographically random nonce per webview load.
+            // The nonce replaces 'unsafe-inline' in CSP and is injected into
+            // every <script> and <style> tag via the NONCE placeholder.
+            const nonce = require('crypto').randomBytes(16).toString('base64');
+            return html
+                .replace(/WEBVIEW_NONCE/g, nonce)
+                .replace(
+                    /script-src 'unsafe-inline'/g,
+                    `script-src 'nonce-${nonce}'`
+                )
+                .replace(
+                    /style-src 'unsafe-inline'/g,
+                    `style-src 'unsafe-inline' 'nonce-${nonce}'`
+                );
         }
     } catch (err) {
         log(`Warning: Could not load external HTML: ${err}`);

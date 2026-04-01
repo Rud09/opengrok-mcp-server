@@ -125,23 +125,34 @@ class TTLCache<K, V> {
     // Evict expired entries periodically (every 10 writes) instead of every set()
     if (++this.writeCount % 10 === 0) this.evictExpired();
 
-    // Subtract existing entry's size before eviction loop (B5: prevent double-counting on key update)
+    // Remove existing entry AFTER the eviction loop so the loop sees the current map size.
+    // (B5 fix previously deleted before the loop, causing the size check to under-count by one
+    // and potentially leaving one stale entry more than maxEntries when updating an existing key.)
     const existing = this.map.get(key);
     if (existing) {
       this.totalBytes -= existing.sizeBytes;
-      this.map.delete(key);
     }
 
-    // Evict LRU-style if over limits
+    // Evict LRU-style if over limits. Re-evaluate map.size on each iteration so
+    // successive evictions correctly reduce the apparent size.
     while (
-      this.map.size >= this.maxEntries ||
+      this.map.size - (existing ? 1 : 0) >= this.maxEntries ||
       this.totalBytes + sizeBytes > this.maxBytes
     ) {
-      const firstKey = this.map.keys().next().value;
-      if (firstKey === undefined) break;
-      const entry = this.map.get(firstKey);
-      if (entry) this.totalBytes -= entry.sizeBytes;
-      this.map.delete(firstKey);
+      // Find and remove the oldest (first) non-target entry
+      let evicted = false;
+      for (const [k, entry] of this.map) {
+        if (k === key) continue; // don't evict the key we're inserting
+        this.totalBytes -= entry.sizeBytes;
+        this.map.delete(k);
+        evicted = true;
+        break;
+      }
+      if (!evicted) break;
+    }
+
+    if (existing) {
+      this.map.delete(key);
     }
 
     this.map.set(key, {
@@ -219,42 +230,73 @@ function estimateBytes(value: unknown): number {
 /**
  * Extract a line range from content using indexOf instead of split/slice/join.
  * Avoids allocating an intermediate array for the entire file.
+ *
+ * Single-pass: always scans the full content so `totalLines` is accurate even
+ * when we find the end of the requested range before reaching EOF.
  */
 export function extractLineRange(
   content: string,
   startLine?: number,
   endLine?: number
 ): { text: string; totalLines: number } {
-  // Count total lines
-  let totalLines = 1;
-  for (let i = 0; i < content.length; i++) {
-    if (content.charCodeAt(i) === 10) totalLines++;
-  }
-
   if (startLine === undefined && endLine === undefined) {
+    // Fast path: count newlines with a single regex, return full content.
+    const totalLines = content.length === 0
+      ? 1
+      : (content.match(/\n/g)?.length ?? 0) + 1;
     return { text: content, totalLines };
   }
 
-  const s = Math.max(0, (startLine ?? 1) - 1);
-  const e = Math.min(totalLines, endLine ?? totalLines);
+  const s = Math.max(0, (startLine ?? 1) - 1); // 0-based inclusive start index
+  const e = endLine;                             // 1-based inclusive end (may be undefined)
 
-  // Find start offset
-  let startOffset = 0;
-  for (let line = 0; line < s && startOffset < content.length; line++) {
-    const nl = content.indexOf("\n", startOffset);
-    if (nl === -1) { startOffset = content.length; break; }
-    startOffset = nl + 1;
+  let totalLines = 0;
+  let startOffset = s === 0 ? 0 : -1; // -1 means "not yet found"
+  let endOffset = content.length;
+  let endSet = false;
+
+  let lineIdx = 0; // 0-based index of the line being visited
+  let pos = 0;
+
+  while (true) {
+    const nl = content.indexOf("\n", pos);
+
+    // Capture start offset when we reach the requested start line
+    if (startOffset === -1 && lineIdx === s) {
+      startOffset = pos;
+    }
+
+    if (nl === -1) {
+      // Final line — no trailing newline
+      totalLines = lineIdx + 1;
+      if (!endSet && e !== undefined && lineIdx < e) {
+        endOffset = content.length;
+      }
+      break;
+    }
+
+    totalLines = lineIdx + 2; // current line + at least one more exists
+
+    // After processing the \n of line `lineIdx` (1-based: lineIdx+1), check if we've
+    // reached the requested end line. endOffset points past the \n of that line.
+    if (!endSet && e !== undefined && lineIdx + 1 >= e) {
+      endOffset = nl + 1;
+      endSet = true;
+    }
+
+    lineIdx++;
+    pos = nl + 1;
   }
 
-  // Find end offset
-  let endOffset = startOffset;
-  for (let line = s; line < e && endOffset <= content.length; line++) {
-    const nl = content.indexOf("\n", endOffset);
-    if (nl === -1) { endOffset = content.length; break; }
-    endOffset = nl + 1; // always advance past the newline (B6: off-by-one fix)
+  // startLine is beyond the end of the file
+  if (startOffset === -1) {
+    return { text: "", totalLines };
   }
 
-  // Trim trailing newline from extracted range for consistency with split/slice/join
+  if (e === undefined) {
+    endOffset = content.length;
+  }
+
   let text = content.substring(startOffset, endOffset);
   if (text.endsWith("\n")) text = text.slice(0, -1);
 

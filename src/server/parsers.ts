@@ -34,10 +34,13 @@ export function parseProjectsPage(html: string): Project[] {
     root.querySelector("select[name=project]");
 
   if (!select) {
-    // Fallback: scrape links to /xref/
+    // Fallback: scrape links to /xref/. Filter out fragment-only hrefs (e.g. /xref/project#anchor)
+    // and ensure the path ends cleanly at the project component.
     const seen = new Set<string>();
     for (const a of root.querySelectorAll("a[href]")) {
       const href = /* v8 ignore next */ a.getAttribute("href") ?? "";
+      // Exclude hrefs with query strings or fragments that may not be project roots
+      if (href.includes("?") || href.includes("#")) continue;
       const m = /\/xref\/([^/]+)\/?$/.exec(href);
       if (m && !seen.has(m[1])) {
         seen.add(m[1]);
@@ -644,8 +647,9 @@ export function parseFileDiff(
     const prevNew = prev.newLineNumber ?? prev.oldLineNumber ?? 0;
     const currNew = curr.newLineNumber ?? curr.oldLineNumber ?? 0;
 
-    // Gap > 1 in line numbering signals a new hunk (collapsed context between)
-    if (currNew - prevNew > 1 && curr.type === 'context' && (prev.type === 'context' || prev.type === 'added')) {
+    // A gap > 1 in effective line numbering signals collapsed context between hunks.
+    // This applies regardless of what type the previous line was (context, added, OR removed).
+    if (currNew - prevNew > 1 && curr.type === 'context') {
       hunks.push(buildHunk(currentHunkLines));
       currentHunkLines = [];
     }
@@ -690,8 +694,10 @@ function buildHunk(lines: DiffLine[]): DiffHunk {
   const firstCtx = lines.find(l => l.type === 'context');
   let oldStart: number;
   if (firstDel?.oldLineNumber !== undefined) {
-    // Count context lines before the first delete to find where old file starts
-    const ctxBefore = lines.indexOf(firstDel);
+    // Count only context lines (not added lines) before the first delete to compute
+    // where the old-file hunk starts. Counting added lines would give an off-by-one
+    // for every added line that precedes the first deletion in the hunk.
+    const ctxBefore = lines.slice(0, lines.indexOf(firstDel)).filter(l => l.type === 'context').length;
     oldStart = firstDel.oldLineNumber - ctxBefore;
   } else if (firstCtx?.newLineNumber !== undefined) {
     // Pure add hunk — old line matches context position

@@ -135,6 +135,55 @@ export class MemoryBank {
   }
 
   /**
+   * Efficiently return file stats (size + first non-empty line) without reading
+   * the entire file. Used by opengrok_memory_status to avoid a full read of
+   * investigation-log.md (up to 32 KB) just to display a one-line preview.
+   *
+   * @returns `{ bytes, preview }` or `undefined` if file is missing / stub.
+   */
+  async statFile(filename: string): Promise<{ bytes: number; preview: string } | undefined> {
+    this.assertAllowed(filename);
+    const filePath = path.join(this.dir, filename);
+
+    let bytes: number;
+    try {
+      const stat = await fsp.stat(filePath);
+      bytes = stat.size;
+    } catch {
+      return undefined;
+    }
+
+    // Read only the first 256 bytes for the preview line — avoid loading full file
+    let headBuf: Buffer;
+    let fd: fsp.FileHandle | undefined;
+    try {
+      fd = await fsp.open(filePath, "r");
+      headBuf = Buffer.allocUnsafe(256);
+      const { bytesRead } = await fd.read(headBuf, 0, 256, 0);
+      headBuf = headBuf.subarray(0, bytesRead);
+    } catch {
+      return undefined;
+    } finally {
+      await fd?.close();
+    }
+
+    const head = headBuf.toString("utf8");
+
+    // Stub check — same sentinel as read()
+    if (head.startsWith(STUB_SENTINEL_PREFIX)) {
+      return undefined;
+    }
+
+    const preview = head
+      .split("\n")
+      .find((l) => l.trim().length > 0)
+      ?.trim()
+      .slice(0, 60) ?? "";
+
+    return { bytes, preview };
+  }
+
+  /**
    * Write to a memory bank file.
    * @param mode "overwrite" replaces the file; "append" adds to it (for investigation-log)
    * @throws if filename is not in the allow-list or content exceeds size limit.
@@ -161,10 +210,11 @@ export class MemoryBank {
         existing = "";
       }
 
-      // Pre-reject: if the combined size far exceeds the limit, trimming cannot help
+      // Pre-reject: if the combined size far exceeds the limit, trimming cannot help.
+      // Use 1.1x instead of 1.5x: trimLogFromTop only rescues limited overage via scoring.
       const existingBytes = Buffer.byteLength(existing, "utf8");
       const newBytes = Buffer.byteLength(content, "utf8");
-      if (existingBytes + newBytes > maxBytes * 1.5) {
+      if (existingBytes + newBytes > maxBytes * 1.1) {
         throw new Error(`MemoryBank: write rejected — content would exceed max size for "${filename}"`);
       }
 
@@ -254,6 +304,7 @@ export class MemoryBank {
   /**
    * Trim investigation-log.md from the top, discarding oldest/lowest-value entries.
    * Uses richness scoring to prefer keeping high-signal entries.
+   * O(n log n): scores all sections once, sorts once, then drops in order.
    */
   private trimLogFromTop(content: string, maxBytes: number): string {
     const sections = content.split(/(?=^## )/m).filter(Boolean);
@@ -267,26 +318,38 @@ export class MemoryBank {
 
     const trimNote = "<!-- Older entries trimmed -->\n\n";
 
-    if (sections.length <= 2) {
-      const candidate = trimNote + sections.join("");
-      if (Buffer.byteLength(candidate, "utf8") <= maxBytes) return candidate;
-    }
-
     // Always keep the 2 most recent entries; score older ones
     const recent = sections.slice(-2);
     const older = sections.slice(0, -2);
-    const scored = older.map((s, i) => ({ i, score: this.scoreLogEntry(s) }));
-    // Sort ascending so we drop lowest-score entries first
+
+    if (older.length === 0) {
+      const candidate = trimNote + sections.join("");
+      if (Buffer.byteLength(candidate, "utf8") <= maxBytes) return candidate;
+      // Last resort: byte truncate
+      return trimNote + Buffer.from(recent.join(""), "utf8").subarray(0, maxBytes).toString("utf8");
+    }
+
+    // Score all older sections once — O(n)
+    const scored = older.map((s, i) => ({ i, score: this.scoreLogEntry(s), bytes: Buffer.byteLength(s, "utf8") }));
+    // Sort ascending by score so we drop lowest-value entries first — O(n log n)
     scored.sort((a, b) => a.score - b.score);
 
-    // B2: Use index-based tracking instead of indexOf to handle duplicate sections correctly
+    // Track cumulative bytes of kept older sections (starting with all of them)
+    let olderBytes = scored.reduce((sum, e) => sum + e.bytes, 0);
+    const recentBytes = Buffer.byteLength(recent.join(""), "utf8");
+    const noteBytes = Buffer.byteLength(trimNote, "utf8");
     const dropIndices = new Set<number>();
-    for (const { i } of scored) {
-      const keptSections = older.filter((_, idx) => !dropIndices.has(idx));
-      const candidate = trimNote + keptSections.join("") + recent.join("");
-      if (Buffer.byteLength(candidate, "utf8") <= maxBytes) return candidate;
+
+    // Drop sections one at a time (in score order) until we fit — O(n)
+    for (const { i, bytes } of scored) {
+      if (noteBytes + olderBytes + recentBytes <= maxBytes) break;
       dropIndices.add(i);
+      olderBytes -= bytes;
     }
+
+    const keptOlder = older.filter((_, idx) => !dropIndices.has(idx));
+    const candidate = trimNote + keptOlder.join("") + recent.join("");
+    if (Buffer.byteLength(candidate, "utf8") <= maxBytes) return candidate;
 
     // Only recent entries left
     const final = trimNote + recent.join("");

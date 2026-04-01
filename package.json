@@ -115,7 +115,7 @@
         },
         "opengrok-mcp.verifySsl": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Verify SSL certificates (disable for self-signed/internal CA certs)",
           "order": 3
         },

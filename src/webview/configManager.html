@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' 'nonce-WEBVIEW_NONCE'; script-src 'nonce-WEBVIEW_NONCE'; img-src data:;">
     <title>OpenGrok Configuration</title>
-    <style>
+    <style nonce="WEBVIEW_NONCE">
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
@@ -386,7 +386,7 @@
 
     <div class="toast-container" id="toastContainer"></div>
 
-    <script>
+    <script nonce="WEBVIEW_NONCE">
         const vscode = acquireVsCodeApi();
         let currentConfig = {};
 
@@ -484,6 +484,9 @@ function setLoading(btnId, isLoading, label, iconSvg) {
         }
 
         window.addEventListener('message', function(event) {
+            // VS Code webview messages originate from the extension host (same window origin).
+            // Reject messages from any other origin to prevent cross-origin injection.
+            if (event.origin && event.origin !== window.origin) { return; }
             const message = event.data;
             switch (message.type) {
                 case 'loadConfig': {

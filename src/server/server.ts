@@ -16,7 +16,7 @@ import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
 import { extractLineRange } from "./client.js";
 import type { Config } from "./config.js";
-import { parsePerToolLimits, getConfigDirectory, checkCredentialAge, loadConfig } from "./config.js";
+import { parsePerToolLimits, getConfigDirectory, checkCredentialAge, loadConfig, resetConfig } from "./config.js";
 import {
   capSearchResultsToBytes,
   formatAnnotate,
@@ -140,8 +140,14 @@ function capResponse(text: string, maxBytes?: number): string {
   const limit = maxBytes ?? MAX_RESPONSE_BYTES_OVERRIDE ?? budget.maxResponseBytes;
   const bytes = Buffer.byteLength(text, "utf8");
   if (bytes <= limit) return text;
-  const buf = Buffer.from(text, "utf8").subarray(0, limit);
-  const truncated = buf.toString("utf8");
+
+  const full = Buffer.from(text, "utf8");
+  // Walk back from the byte limit to a valid UTF-8 character boundary.
+  // Continuation bytes are 0x80–0xBF; a lead byte is 0x00–0x7F or 0xC0–0xFF.
+  let pos = limit;
+  while (pos > 0 && (full[pos]! & 0xC0) === 0x80) pos--;
+  const truncated = full.subarray(0, pos).toString("utf8");
+
   const lastNl = truncated.lastIndexOf("\n");
   const safeText = lastNl > 0 ? truncated.slice(0, lastNl) : truncated;
   return (
@@ -239,10 +245,8 @@ Update memory after investigations:
 Use opengrok_execute to run JavaScript with env.opengrok.* API methods.
 All methods are synchronous in the sandbox.`.trim();
 
-// Aliases for backward compatibility in tests and legacy references
-const SERVER_INSTRUCTIONS_STANDARD = SERVER_INSTRUCTIONS_TEMPLATE;
-const SERVER_INSTRUCTIONS_CODE_MODE = SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE;
-const SERVER_INSTRUCTIONS = SERVER_INSTRUCTIONS_STANDARD;
+// Alias for test-export backward compatibility
+const SERVER_INSTRUCTIONS = SERVER_INSTRUCTIONS_TEMPLATE;
 
 // ---------------------------------------------------------------------------
 // Tool documentation — served as MCP Resources at opengrok-docs://tools/{name}
@@ -412,12 +416,6 @@ Get compiler flags and include paths for a C/C++ file from compile_commands.json
 
 **Parameters:**
 - \`code\` — JS function body using env.opengrok.* for API calls (required)`,
-
-  opengrok_get_task_result: `## opengrok_get_task_result
-[Code Mode] Poll for the result of an async opengrok_execute task.
-
-**Parameters:**
-- \`task_id\` — task ID returned by opengrok_execute (required)`,
 };
 
 // ---------------------------------------------------------------------------
@@ -433,14 +431,13 @@ Get compiler flags and include paths for a C/C++ file from compile_commands.json
  * then legacy tools (when Code Mode is disabled).
  */
 export const TOOL_REGISTRATION_ORDER: string[] = [
-  // Memory tools (always registered in both modes)
+  // Memory tools (always registered in Code Mode)
   "opengrok_memory_status",
   "opengrok_read_memory",
   "opengrok_update_memory",
   // Code Mode tools (registered when OPENGROK_CODE_MODE=true)
   "opengrok_api",
   "opengrok_execute",
-  "opengrok_get_task_result",
   // Legacy tools (registered in standard mode)
   "opengrok_search_code",
   "opengrok_find_file",
@@ -918,12 +915,6 @@ export const TOOL_DEFS: Record<string, {
       code: { description: "JS function body; use env.opengrok.* for API calls; return a value." },
     },
   },
-  opengrok_get_task_result: {
-    description: "Deprecated: opengrok_execute now returns synchronously; use that instead.",
-    parameters: {
-      taskId: { description: "Task ID returned by a previous opengrok_execute call" },
-    },
-  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1026,24 +1017,34 @@ function deduplicateAcrossQueries(
   searchType: string;
   results: SearchResults;
 }> {
-  const seen = new Set<string>();
-  return results.map((queryResult) => ({
-    ...queryResult,
-    results: {
-      ...queryResult.results,
-      results: queryResult.results.results
-        .map((hit) => ({
-          ...hit,
-          matches: hit.matches.filter((match) => {
-            const key = `${hit.path}:${match.lineNumber}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          }),
-        }))
-        .filter((hit) => hit.matches.length > 0),
-    },
-  }));
+  const seen = new Map<string, Set<number>>(); // path → set of seen line numbers
+  return results.map((queryResult) => {
+    const dedupedHits = queryResult.results.results
+      .map((hit) => {
+        let pathSeen = seen.get(hit.path);
+        if (!pathSeen) { pathSeen = new Set(); seen.set(hit.path, pathSeen); }
+        const filteredMatches = hit.matches.filter((match) => {
+          if (pathSeen!.has(match.lineNumber)) return false;
+          pathSeen!.add(match.lineNumber);
+          return true;
+        });
+        return { ...hit, matches: filteredMatches };
+      })
+      .filter((hit) => hit.matches.length > 0);
+
+    // Recompute totalCount to reflect the actual number of matches returned,
+    // so clients don't see a count that exceeds the actual results array.
+    const dedupedMatchCount = dedupedHits.reduce((sum, hit) => sum + hit.matches.length, 0);
+
+    return {
+      ...queryResult,
+      results: {
+        ...queryResult.results,
+        results: dedupedHits,
+        totalCount: Math.min(queryResult.results.totalCount, dedupedMatchCount),
+      },
+    };
+  });
 }
 
 async function executeBatchSearch(
@@ -1177,7 +1178,8 @@ async function handleGetSymbolContextStructured(
     args.symbol,
     "defs",
     effectiveProjects,
-    3,
+    // Fetch up to 5 results so we can find a matching .h/.hpp header without a second search
+    args.include_header ? 5 : 3,
     0,
     args.file_type
   );
@@ -1224,15 +1226,9 @@ async function handleGetSymbolContextStructured(
   let header: SymbolContextResult["header"] | undefined;
   if (args.include_header && defResult.path.match(/\.(cpp|cc|cxx)$/i)) {
     try {
-      const headerResults = await client.search(
-        args.symbol,
-        "defs",
-        effectiveProjects,
-        5,
-        0,
-        args.file_type
-      );
-      const headerMatch = headerResults.results.find((r) =>
+      // Reuse the already-fetched defResults (with maxResults=5) to find a header match
+      // instead of issuing a second identical search. Filter for .h/.hpp files.
+      const headerMatch = defResults.results.find((r) =>
         r.path.match(/\.(h|hpp|hxx)$/i)
       );
       if (headerMatch && headerMatch.matches.length) {
@@ -1471,6 +1467,9 @@ async function dispatchTool(
       const args = IndexHealthArgs.parse(rawArgs);
       const format = selectFormat("generic", args.response_format);
       
+      // dispatchTool is a test/legacy path — each call gets its own latency tracker
+      let lastHealthCheckLatencyMs: number | null = null;
+      
       const start = Date.now();
       const ok = await client.testConnection();
       const latencyMs = Date.now() - start;
@@ -1606,7 +1605,7 @@ export function createServer(
 ): McpServer {
   const codeMode = config.OPENGROK_CODE_MODE;
 
-  const baseInstructions = codeMode ? SERVER_INSTRUCTIONS_CODE_MODE : SERVER_INSTRUCTIONS_STANDARD;
+  const baseInstructions = codeMode ? SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE : SERVER_INSTRUCTIONS_TEMPLATE;
   const instructions = instructionsOverride ?? baseInstructions;
 
   const server = new McpServer(
@@ -1637,7 +1636,7 @@ export function createServer(
     // ~130 token cost vs ~1,900 with all legacy tools — 93% savings per turn.
     // LLM cannot see or call legacy tools in this mode; all queries go through the sandbox.
     registerCodeModeTools(server, client, config, memoryBank, local, toolRateLimiter);
-    registerMemoryTools(server, memoryBank, config);
+    registerMemoryTools(server, memoryBank, config, toolRateLimiter);
   } else {
     // Standard mode: 23 legacy tools only. Memory tools are Code Mode only.
     // Compact descriptions when budget=minimal to save ~1,400 tokens.
@@ -1684,43 +1683,56 @@ export function createServer(
 function registerMemoryTools(
   server: McpServer,
   memoryBank: MemoryBank,
-  config: Config
+  config: Config,
+  toolRateLimiter?: ToolRateLimiter
 ): void {
-  TOOL_REGISTRATION_ORDER.push("opengrok_memory_status");
   server.registerTool(
     "opengrok_memory_status",
     {
       title: "Memory Bank Status",
       description: "Show current memory bank file sizes and modification times.",
-      inputSchema: { _: z.string().optional().describe("(no input required)") },
+      inputSchema: {},
+      outputSchema: {
+        files: z.array(z.object({
+          filename: z.string(),
+          bytes: z.number().optional(),
+          preview: z.string().optional(),
+          empty: z.boolean(),
+        })).describe("Status of each memory bank file"),
+      },
       annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
     },
     async () => {
       auditLog({ type: "tool_invoke", tool: "opengrok_memory_status" });
       try {
         const lines: string[] = ["# OpenGrok Memory Status"];
+        const fileStatuses: Array<{ filename: string; bytes?: number; preview?: string; empty: boolean }> = [];
         for (const filename of ALLOWED_FILES) {
-          const content = await memoryBank.read(filename);
-          if (!content) {
+          // Use statFile() — reads only the first 256 bytes for preview instead of
+          // loading the entire file (investigation-log.md can be up to 32 KB).
+          const stat = await memoryBank.statFile(filename);
+          if (!stat) {
             lines.push(`- ${filename}: empty`);
+            fileStatuses.push({ filename, empty: true });
           } else {
-            const bytes = Buffer.byteLength(content, "utf8");
-            const firstLine = content.split("\n").find(l => l.trim().length > 0) ?? "";
-            const preview = firstLine.trim().slice(0, 60);
+            const { bytes, preview } = stat;
             lines.push(`- ${filename}: ${bytes}B — "${preview}"`);
+            fileStatuses.push({ filename, bytes, preview, empty: false });
           }
         }
         lines.push("");
         lines.push("Note: For general codebase context (conventions, architecture), use VS Code's");
         lines.push("built-in memory tool (/memory command) — it auto-loads at every session.");
-        return { content: [{ type: "text", text: lines.join("\n") }] };
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          structuredContent: { files: fileStatuses },
+        };
       } catch (err) {
         return makeToolError("opengrok_memory_status", err);
       }
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_read_memory");
   server.registerTool(
     "opengrok_read_memory",
     {
@@ -1760,7 +1772,6 @@ function registerMemoryTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_update_memory");
   server.registerTool(
     "opengrok_update_memory",
     {
@@ -1776,6 +1787,7 @@ function registerMemoryTools(
     },
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_update_memory" });
+      if (toolRateLimiter) await toolRateLimiter.acquire("opengrok_update_memory");
       try {
         await memoryBank.write(args.filename, args.content, args.mode);
         return { content: [{ type: "text", text: `Written to ${args.filename}` }] };
@@ -1790,13 +1802,6 @@ function registerMemoryTools(
 // Code Mode tools: opengrok_api + opengrok_execute
 // ---------------------------------------------------------------------------
 
-// Health check state for staleness prediction (Task 5.8)
-// Note: only used in dispatchTool (test/sandbox dispatch path); production HTTP
-// sessions each get their own createServer() closure so there is no bleed there.
-let lastHealthCheckLatencyMs: number | null = null;
-
-const workerPool = new SandboxWorkerPool();
-
 function registerCodeModeTools(
   server: McpServer,
   client: OpenGrokClient,
@@ -1805,6 +1810,11 @@ function registerCodeModeTools(
   local: LocalLayer,
   toolRateLimiter: ToolRateLimiter
 ): void {
+  // Per-session pool and health-check state — scoped here so each McpServer
+  // instance (stdio or HTTP session) gets its own pool and no bleed occurs.
+  const workerPool = new SandboxWorkerPool();
+  let lastHealthCheckLatencyMs: number | null = null;
+
   // Per-session counters — scoped to this server instance to prevent HTTP session bleed.
   let executeCallCount = 0;
   // Per-session masker (created once per server, tracks all turns)
@@ -1858,7 +1868,6 @@ function registerCodeModeTools(
     : undefined;
 
   // Tool 1: opengrok_api — return the API spec
-  TOOL_REGISTRATION_ORDER.push("opengrok_api");
   server.registerTool(
     "opengrok_api",
     {
@@ -1907,14 +1916,13 @@ function registerCodeModeTools(
   );
 
   // Tool 2: opengrok_execute — run LLM-written JavaScript in the sandbox
-  TOOL_REGISTRATION_ORDER.push("opengrok_execute");
   server.registerTool(
     "opengrok_execute",
     {
       title: "Execute OpenGrok Code",
       description: "Execute JavaScript in the QuickJS sandbox with OpenGrok API access.",
       inputSchema: {
-        code: z.string().min(1).describe("JS function body; use env.opengrok.* for API calls; return a value."),
+        code: z.string().min(1).max(65536).describe("JS function body; use env.opengrok.* for API calls; return a value."),
       },
       annotations: CODE_MODE_EXECUTE_ANNOTATIONS,
     },
@@ -1983,54 +1991,6 @@ function registerCodeModeTools(
       }
     }
   );
-
-  // Tool 3: opengrok_get_task_result — retained for backward compatibility.
-  // opengrok_execute now returns results synchronously; this tool will always
-  // return "not found" unless an external caller pre-populates the task registry.
-  TOOL_REGISTRATION_ORDER.push("opengrok_get_task_result");
-  server.registerTool(
-    "opengrok_get_task_result",
-    {
-      title: "Get Task Result",
-      description: "Deprecated: opengrok_execute now returns synchronously; use that instead.",
-      inputSchema: {
-        taskId: z.string().describe("Task ID returned by a previous opengrok_execute call"),
-      },
-      annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true, destructiveHint: false },
-    },
-    (args) => {
-      try {
-        const task = taskRegistry.getTask(args.taskId);
-        if (!task) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({ error: "Task not found or expired", taskId: args.taskId }),
-              },
-            ],
-          };
-        }
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                taskId: args.taskId,
-                status: task.status,
-                result: task.result,
-                error: task.error,
-                createdAt: task.createdAt,
-                completedAt: task.completedAt,
-              }),
-            },
-          ],
-        };
-      } catch (err) {
-        return makeToolError("opengrok_get_task_result", err);
-      }
-    }
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2047,7 +2007,8 @@ function registerLegacyTools(
   toolRateLimiter?: ToolRateLimiter
 ): void {
   const desc = (full: string, compact: string): string => compactDescriptions ? compact : full;
-  TOOL_REGISTRATION_ORDER.push("opengrok_search_code");
+  // Per-session health check state — scoped so HTTP sessions don't share latency history.
+  let lastHealthCheckLatencyMs: number | null = null;
   server.registerTool(
     "opengrok_search_code",
     {
@@ -2110,7 +2071,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_find_file");
   server.registerTool(
     "opengrok_find_file",
     {
@@ -2139,7 +2099,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_search_pattern");
   server.registerTool(
     "opengrok_search_pattern",
     {
@@ -2171,7 +2130,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_content");
   server.registerTool(
     "opengrok_get_file_content",
     {
@@ -2196,7 +2154,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_history");
   server.registerTool(
     "opengrok_get_file_history",
     {
@@ -2232,7 +2189,7 @@ function registerLegacyTools(
         return {
           content: [
             { type: "text" as const, text: capResponse(formatFileHistory(history)) },
-            { type: "resource_link" as const, uri: `opengrok://file/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
+            { type: "resource_link" as const, uri: `${config.OPENGROK_BASE_URL}/xref/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
           ],
           structuredContent: structured as unknown as Record<string, unknown>,
         };
@@ -2243,7 +2200,6 @@ function registerLegacyTools(
   );
 
   // Tool: opengrok_get_file_diff — diff between two revisions
-  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_diff");
   server.registerTool(
     "opengrok_get_file_diff",
     {
@@ -2286,7 +2242,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_browse_directory");
   server.registerTool(
     "opengrok_browse_directory",
     {
@@ -2313,7 +2268,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_list_projects");
   server.registerTool(
     "opengrok_list_projects",
     {
@@ -2335,7 +2289,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_annotate");
   server.registerTool(
     "opengrok_get_file_annotate",
     {
@@ -2365,7 +2318,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_search_suggest");
   server.registerTool(
     "opengrok_search_suggest",
     {
@@ -2409,7 +2361,6 @@ function registerLegacyTools(
   // Compound tools
   // -----------------------------------------------------------------------
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_batch_search");
   server.registerTool(
     "opengrok_batch_search",
     {
@@ -2435,7 +2386,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_search_and_read");
   server.registerTool(
     "opengrok_search_and_read",
     {
@@ -2462,7 +2412,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_get_symbol_context");
   server.registerTool(
     "opengrok_get_symbol_context",
     {
@@ -2505,7 +2454,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_index_health");
   server.registerTool(
     "opengrok_index_health",
     {
@@ -2517,26 +2465,82 @@ function registerLegacyTools(
       inputSchema: IndexHealthArgs.shape,
       outputSchema: {
         connected: z.boolean().describe("Whether the OpenGrok server is reachable"),
-        latencyMs: z.number().optional().describe("Round-trip latency in milliseconds (present when connected)"),
+        latencyMs: z.number().optional().describe("Round-trip latency in milliseconds"),
+        indexedProjects: z.number().describe("Number of indexed projects"),
+        latencyTrend: z.enum(["stable", "increasing", "first_check"]).describe("Latency trend since last check"),
+        stalenessScore: z.enum(["healthy", "possibly_stale", "likely_stale"]).describe("Index freshness estimate"),
+        warnings: z.array(z.string()).describe("Any connectivity or index warnings"),
         message: z.string().describe("Human-readable status message"),
       },
       annotations: READ_ONLY_OPEN,
     },
-    async () => {
+    async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_index_health" });
       try {
+        const format = selectFormat("generic", (args as unknown as { response_format?: string }).response_format as never);
+
         const start = Date.now();
         const ok = await client.testConnection();
         const latencyMs = Date.now() - start;
+
+        // Collect project count and any warnings
+        let indexedProjects = 0;
+        const warnings: string[] = [];
+        try {
+          const projects = await client.listProjects();
+          indexedProjects = projects.length;
+        } catch {
+          warnings.push("Could not retrieve project list");
+        }
+
+        // Compute staleness signals
+        let latencyTrend: "stable" | "increasing" | "first_check" = "first_check";
+        let stalenessScore: "healthy" | "possibly_stale" | "likely_stale" = "healthy";
+
+        if (lastHealthCheckLatencyMs !== null) {
+          latencyTrend = latencyMs > lastHealthCheckLatencyMs * 1.5 ? "increasing" : "stable";
+        }
+        lastHealthCheckLatencyMs = latencyMs;
+
+        if (latencyMs > 500) {
+          stalenessScore = latencyTrend === "increasing" ? "likely_stale" : "possibly_stale";
+        }
+        if (indexedProjects === 0 && ok) {
+          warnings.push("No projects indexed");
+          stalenessScore = "possibly_stale";
+        }
+
+        if (ok) {
+          client.warmCache();
+        }
+
         const message = ok
-          ? `OpenGrok: connected (${latencyMs}ms latency)`
+          ? `OpenGrok: connected (${latencyMs}ms, ${indexedProjects} projects, staleness: ${stalenessScore})`
           : "OpenGrok: connection failed";
-        const structuredContent = ok
-          ? { connected: true, latencyMs, message }
-          : { connected: false, message };
+
+        const health = { connected: ok, latencyMs, indexedProjects, latencyTrend, stalenessScore, warnings, message };
+
+        if (format === "json") {
+          return {
+            content: [{ type: "text", text: JSON.stringify(health, null, 2) }],
+            structuredContent: health,
+          };
+        }
+
+        const lines = [
+          "# OpenGrok Health",
+          "",
+          `- **Connected:** ${health.connected}`,
+          `- **Latency:** ${health.latencyMs}ms`,
+          `- **Indexed projects:** ${health.indexedProjects}`,
+          `- **Latency trend:** ${health.latencyTrend}`,
+          `- **Staleness:** ${health.stalenessScore}`,
+          ...(health.warnings.length > 0 ? [`- **Warnings:** ${health.warnings.join(", ")}`] : []),
+        ].join("\n");
+
         return {
-          content: [{ type: "text", text: message }],
-          structuredContent,
+          content: [{ type: "text", text: lines }],
+          structuredContent: health,
         };
       } catch (err) {
         return makeToolError("opengrok_index_health", err);
@@ -2544,7 +2548,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_get_compile_info");
   server.registerTool(
     "opengrok_get_compile_info",
     {
@@ -2571,7 +2574,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_get_file_symbols");
   server.registerTool(
     "opengrok_get_file_symbols",
     {
@@ -2616,7 +2618,7 @@ function registerLegacyTools(
         return {
           content: [
             { type: "text" as const, text: capResponse(formatFileSymbols(result)) },
-            { type: "resource_link" as const, uri: `opengrok://file/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
+            { type: "resource_link" as const, uri: `${config.OPENGROK_BASE_URL}/xref/${args.project}${args.path}`, name: args.path, mimeType: getMimeType(args.path) },
           ],
           structuredContent: structured as unknown as Record<string, unknown>,
         };
@@ -2626,7 +2628,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_call_graph");
   server.registerTool(
     "opengrok_call_graph",
     {
@@ -2674,7 +2675,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_what_changed");
   server.registerTool(
     "opengrok_what_changed",
     {
@@ -2744,7 +2744,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_blame");
   server.registerTool(
     "opengrok_blame",
     {
@@ -2794,7 +2793,6 @@ function registerLegacyTools(
     }
   );
 
-  TOOL_REGISTRATION_ORDER.push("opengrok_dependency_map");
   server.registerTool(
     "opengrok_dependency_map",
     {
@@ -2917,6 +2915,20 @@ function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): voi
 // Task 4.6: MCP Prompts — reusable investigation workflows
 // ---------------------------------------------------------------------------
 
+/**
+ * Sanitize user-supplied prompt arguments to prevent injection of template
+ * directives or tool instructions into the prompt messages.
+ * Strips backtick sequences (MCP tool-call syntax), angle brackets, and
+ * removes embedded newlines that could inject extra instructions.
+ */
+function sanitizePromptArg(value: string): string {
+  return value
+    .replace(/`[^`]*`/g, (m) => m.replace(/[<>]/g, ""))  // strip angle brackets inside backticks
+    .replace(/[\r\n]+/g, " ")                              // collapse newlines → space
+    .trim()
+    .slice(0, 256);                                        // hard cap to prevent oversized inputs
+}
+
 function registerInvestigationPrompts(server: McpServer): void {
   server.registerPrompt(
     "investigate-symbol",
@@ -2930,19 +2942,21 @@ function registerInvestigationPrompts(server: McpServer): void {
       },
     },
     ({ symbol, project }) => {
-      const scope = project ? ` in project \`${project}\`` : "";
+      const sym = sanitizePromptArg(symbol);
+      const proj = project ? sanitizePromptArg(project) : undefined;
+      const scope = proj ? ` in project \`${proj}\`` : "";
       return {
-        description: `Investigate symbol \`${symbol}\`${scope}`,
+        description: `Investigate symbol \`${sym}\`${scope}`,
         messages: [
           {
             role: "user",
             content: {
               type: "text",
               text: [
-                `Investigate the symbol \`${symbol}\`${scope} using the OpenGrok MCP server.`,
+                `Investigate the symbol \`${sym}\`${scope} using the OpenGrok MCP server.`,
                 "",
                 "Follow these steps in order:",
-                `1. **Definition** — use \`opengrok_search_code\` with type \`defs\` to find where \`${symbol}\` is defined.`,
+                `1. **Definition** — use \`opengrok_search_code\` with type \`defs\` to find where \`${sym}\` is defined.`,
                 `2. **Usages** — use \`opengrok_search_code\` with type \`refs\` to find all references.`,
                 `3. **Symbol context** — use \`opengrok_get_symbol_context\` to see the full declaration with surrounding code.`,
                 `4. **Recent changes** — use \`opengrok_what_changed\` or \`opengrok_get_file_history\` on the definition file.`,
@@ -2968,19 +2982,21 @@ function registerInvestigationPrompts(server: McpServer): void {
       },
     },
     ({ feature, project }) => {
-      const scope = project ? ` in project \`${project}\`` : "";
+      const feat = sanitizePromptArg(feature);
+      const proj = project ? sanitizePromptArg(project) : undefined;
+      const scope = proj ? ` in project \`${proj}\`` : "";
       return {
-        description: `Find feature: ${feature}${scope}`,
+        description: `Find feature: ${feat}${scope}`,
         messages: [
           {
             role: "user",
             content: {
               type: "text",
               text: [
-                `Find where the feature "${feature}" is implemented${scope}.`,
+                `Find where the feature "${feat}" is implemented${scope}.`,
                 "",
                 "Approach:",
-                `1. **Full-text search** — use \`opengrok_search_code\` with type \`full\` for keywords related to "${feature}".`,
+                `1. **Full-text search** — use \`opengrok_search_code\` with type \`full\` for keywords related to "${feat}".`,
                 "2. **Path search** — use \`opengrok_search_code\` with type \`path\` to find files named after the feature.",
                 "3. **Read candidates** — use \`opengrok_get_file_content\` to read the most relevant files.",
                 "4. **Browse structure** — use \`opengrok_browse_directory\` on relevant directories to map the module layout.",
@@ -3005,34 +3021,38 @@ function registerInvestigationPrompts(server: McpServer): void {
         project: z.string().describe("OpenGrok project the file belongs to"),
       },
     },
-    ({ path: filePath, project }) => ({
-      description: `Review file: ${filePath}`,
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: [
-              `Perform a code review of \`${filePath}\` in project \`${project}\`.`,
-              "",
-              "Steps:",
-              `1. **Read file** — use \`opengrok_get_file_content\` for project \`${project}\`, path \`${filePath}\`.`,
-              `2. **File history** — use \`opengrok_get_file_history\` to understand recent changes.`,
-              `3. **Symbols** — use \`opengrok_get_file_symbols\` to list the public API surface.`,
-              `4. **Callers** — for each exported symbol, check \`opengrok_search_code\` with type \`refs\` to understand how it is used.`,
-              `5. **Annotations** — use \`opengrok_get_file_annotate\` to see which commits touched which lines.`,
-              "",
-              "Produce a structured review covering:",
-              "- **Purpose**: what the file does",
-              "- **Design observations**: naming, structure, separation of concerns",
-              "- **Potential issues**: bugs, edge cases, error handling",
-              "- **Test coverage signals**: anything that looks under-tested",
-              "- **Recommendations**: concrete, prioritised action items",
-            ].join("\n"),
+    ({ path: filePath, project }) => {
+      const fp = sanitizePromptArg(filePath);
+      const proj = sanitizePromptArg(project);
+      return {
+        description: `Review file: ${fp}`,
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: [
+                `Perform a code review of \`${fp}\` in project \`${proj}\`.`,
+                "",
+                "Steps:",
+                `1. **Read file** — use \`opengrok_get_file_content\` for project \`${proj}\`, path \`${fp}\`.`,
+                `2. **File history** — use \`opengrok_get_file_history\` to understand recent changes.`,
+                `3. **Symbols** — use \`opengrok_get_file_symbols\` to list the public API surface.`,
+                `4. **Callers** — for each exported symbol, check \`opengrok_search_code\` with type \`refs\` to understand how it is used.`,
+                `5. **Annotations** — use \`opengrok_get_file_annotate\` to see which commits touched which lines.`,
+                "",
+                "Produce a structured review covering:",
+                "- **Purpose**: what the file does",
+                "- **Design observations**: naming, structure, separation of concerns",
+                "- **Potential issues**: bugs, edge cases, error handling",
+                "- **Test coverage signals**: anything that looks under-tested",
+                "- **Recommendations**: concrete, prioritised action items",
+              ].join("\n"),
+            },
           },
-        },
-      ],
-    })
+        ],
+      };
+    }
   );
 }
 
@@ -3057,11 +3077,20 @@ class ToolRateLimiter {
 
   /**
    * Acquire a token for the given tool name.
-   * Returns immediately if a token is available, otherwise waits.
+   * Returns immediately if a token is available, otherwise waits up to
+   * `maxWaitMs` (default 30 s). Throws if the limit cannot be satisfied
+   * within the timeout to prevent indefinite request queuing.
    */
-  async acquire(toolName: string): Promise<void> {
-    return new Promise((resolve) => {
+  async acquire(toolName: string, maxWaitMs = 30_000): Promise<void> {
+    const deadline = Date.now() + maxWaitMs;
+
+    return new Promise((resolve, reject) => {
       const checkToken = (): void => {
+        if (Date.now() > deadline) {
+          reject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
+          return;
+        }
+
         const limit = this.limits.get(toolName) ?? this.defaultLimit;
         const interval = 60000 / limit; // ms per token
         const now = Date.now();
@@ -3083,8 +3112,15 @@ class ToolRateLimiter {
           resolve();
         } else {
           // Wait for next token to be available, then try again
-          const waitMs = Math.max(10, (1 - bucket.tokens) * interval);
-          setTimeout(checkToken, waitMs);
+          const waitMs = Math.min(
+            Math.max(10, (1 - bucket.tokens) * interval),
+            deadline - Date.now()
+          );
+          if (waitMs <= 0) {
+            reject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
+          } else {
+            setTimeout(checkToken, waitMs);
+          }
         }
       };
 
@@ -3104,7 +3140,8 @@ function setupNotificationHandlers(server: McpServer, client: OpenGrokClient, co
       auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
       logger.info("Received SIGHUP, reloading config...");
 
-      // Re-read config from environment
+      // Clear the singleton so loadConfig() re-reads from process.env
+      resetConfig();
       const newConfig = loadConfig();
         
         // Check if code mode changed
@@ -3257,11 +3294,11 @@ function getCredentialAgeWarning(): string | null {
 }
 
 /**
- * Build a dependency graph for a file by searching refs up to `depth` levels.
- * "uses"    — finds files that reference/call symbols from this file (refs search).
- *             Note: true include-graph traversal requires content parsing; this is a
- *             best-effort approximation using OpenGrok's refs index.
- * "used_by" — same semantics; both directions use refs search on the filename.
+ * Build a dependency graph for a file by searching up to `depth` levels.
+ * "uses"    — finds files that this file imports/includes (full-text search for
+ *             include/import/require/use directives within the target file's content).
+ *             Uses "full" search on import/include patterns to find what the file depends on.
+ * "used_by" — finds files that reference/call symbols from this file (refs search by filename).
  */
 async function buildDependencyGraph(
   client: OpenGrokClient,
@@ -3271,67 +3308,73 @@ async function buildDependencyGraph(
   direction: "uses" | "used_by" | "both"
 ): Promise<DependencyNode[]> {
   const nodes: DependencyNode[] = [];
-
-  // Track which filenames have been expanded per direction to avoid cycles
-  const expandedUses = new Set<string>();
-  const expandedUsedBy = new Set<string>();
-  // Track full paths already added to nodes to prevent diamond-dependency duplicates
   const seenUsesPaths = new Set<string>();
   const seenUsedByPaths = new Set<string>();
 
-  // Queue: [filename, level]
-  const usesQueue: [string, number][] = [];
-  const usedByQueue: [string, number][] = [];
-
   const rootName = filePath.split("/").pop() ?? "";
 
+  // "uses" direction: level-parallel BFS — all nodes at the same depth are searched concurrently.
   if (direction === "uses" || direction === "both") {
-    usesQueue.push([rootName, 1]);
-  }
-  if (direction === "used_by" || direction === "both") {
-    usedByQueue.push([rootName, 1]);
-  }
+    let frontier: string[] = [filePath];
+    const expandedUses = new Set<string>();
 
-  while (usesQueue.length > 0) {
-    const item = usesQueue.shift();
-    if (!item) break;
-    const [filename, level] = item;
-    if (level > depth) continue;
-    if (expandedUses.has(filename)) continue;
-    expandedUses.add(filename);
+    for (let level = 1; level <= depth && frontier.length > 0; level++) {
+      const toExpand = frontier.filter((p) => !expandedUses.has(p));
+      toExpand.forEach((p) => expandedUses.add(p));
+      frontier = [];
 
-    const results = await client.search(filename, "refs", [project], 20);
-    for (const r of results.results) {
-      if (r.path === filePath) continue; // skip exact self
-      const rName = r.path.split("/").pop() ?? "";
-      if (!seenUsesPaths.has(r.path)) {
-        seenUsesPaths.add(r.path);
-        nodes.push({ path: r.path, level, direction: "uses" });
-      }
-      if (level < depth) {
-        usesQueue.push([rName, level + 1]);
+      if (toExpand.length === 0) break;
+
+      // Issue all searches at this BFS level in parallel
+      const levelResults = await Promise.all(
+        toExpand.map((currentPath) => {
+          const currentName = currentPath.split("/").pop() ?? "";
+          return client.search(currentName, "path", [project], 20);
+        })
+      );
+
+      for (const results of levelResults) {
+        for (const r of results.results) {
+          if (r.path === filePath) continue;
+          if (!seenUsesPaths.has(r.path)) {
+            seenUsesPaths.add(r.path);
+            nodes.push({ path: r.path, level, direction: "uses" });
+          }
+          if (level < depth) frontier.push(r.path);
+        }
       }
     }
   }
 
-  while (usedByQueue.length > 0) {
-    const item = usedByQueue.shift();
-    if (!item) break;
-    const [filename, level] = item;
-    if (level > depth) continue;
-    if (expandedUsedBy.has(filename)) continue;
-    expandedUsedBy.add(filename);
+  // "used_by" direction: level-parallel BFS — find files that reference this file's symbols.
+  if (direction === "used_by" || direction === "both") {
+    let frontier: string[] = [rootName];
+    const expandedUsedBy = new Set<string>();
 
-    const results = await client.search(filename, "refs", [project], 20);
-    for (const r of results.results) {
-      if (r.path === filePath) continue; // skip exact self
-      const rName = r.path.split("/").pop() ?? "";
-      if (!seenUsedByPaths.has(r.path)) {
-        seenUsedByPaths.add(r.path);
-        nodes.push({ path: r.path, level, direction: "used_by" });
-      }
-      if (level < depth) {
-        usedByQueue.push([rName, level + 1]);
+    for (let level = 1; level <= depth && frontier.length > 0; level++) {
+      const toExpand = frontier.filter((n) => !expandedUsedBy.has(n));
+      toExpand.forEach((n) => expandedUsedBy.add(n));
+      frontier = [];
+
+      if (toExpand.length === 0) break;
+
+      // Issue all searches at this BFS level in parallel
+      const levelResults = await Promise.all(
+        toExpand.map((filename) =>
+          client.search(filename, "refs", [project], 20)
+        )
+      );
+
+      for (const results of levelResults) {
+        for (const r of results.results) {
+          if (r.path === filePath) continue;
+          const rName = r.path.split("/").pop() ?? "";
+          if (!seenUsedByPaths.has(r.path)) {
+            seenUsedByPaths.add(r.path);
+            nodes.push({ path: r.path, level, direction: "used_by" });
+          }
+          if (level < depth) frontier.push(rName);
+        }
       }
     }
   }

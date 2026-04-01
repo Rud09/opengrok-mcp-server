@@ -34,6 +34,11 @@ export interface ElicitSchema {
  *  - any error occurs.
  *
  * Always logs the attempt to the audit trail.
+ *
+ * NOTE: `server.server` accesses the raw low-level MCP `Server` inside the
+ * high-level `McpServer` wrapper, because `elicitInput` is not yet promoted
+ * to the `McpServer` public API surface (as of @modelcontextprotocol/sdk 1.x).
+ * If a future SDK version exposes it directly on `McpServer`, update this.
  */
 export async function elicitOrFallback(
   server: McpServer,
@@ -42,7 +47,12 @@ export async function elicitOrFallback(
 ): Promise<ElicitResult> {
   auditLog({ type: "elicitation_request", detail: message });
   try {
-    const result = await server.server.elicitInput({
+    // Access the underlying low-level Server for elicitInput (see NOTE above)
+    const lowLevel = (server as unknown as { server: { elicitInput: (req: unknown) => Promise<unknown> } }).server;
+    if (typeof lowLevel?.elicitInput !== "function") {
+      return { action: "cancel" };
+    }
+    const result = await lowLevel.elicitInput({
       message,
       requestedSchema: schema,
     });

@@ -37,6 +37,8 @@ export class SandboxWorkerPool {
 
   release(handle: WorkerHandle): void {
     if (!handle.isAlive) return;  // don't pool terminated workers
+    // Re-check pool size atomically before pushing; Node.js is single-threaded
+    // but idle timer callbacks could have already pushed during a previous await.
     if (this.idle.length < this.maxIdle) {
       this.idle.push(handle);
       const timer = setTimeout(() => {

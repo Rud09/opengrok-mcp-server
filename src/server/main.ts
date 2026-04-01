@@ -32,7 +32,10 @@ export function resolveConfig(): ReturnType<typeof loadConfig> {
     // No password in env — try the OS keychain before calling loadConfig
     const keychainPassword = retrievePassword(username);
     if (keychainPassword) {
-      return loadConfig({ OPENGROK_PASSWORD: keychainPassword });
+      // Inject into process.env so that subsequent loadConfig() calls (e.g. on SIGHUP)
+      // also have the password available, preventing a split-brain between the first call
+      // (with keychain password) and later calls (without it).
+      process.env['OPENGROK_PASSWORD'] = keychainPassword;
     }
   }
 

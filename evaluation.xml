@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Evaluation file for the OpenGrok MCP Server v9.0.
-  20 questions covering standard mode (26 tools) and Code Mode (5 tools + sandbox API).
+  20 questions covering standard mode (23 tools) and Code Mode (5 tools + sandbox API).
   Use with MCP Inspector or an automated evaluation harness.
 
   Tool inventory:
@@ -12,8 +12,7 @@
       opengrok_search_suggest, opengrok_batch_search, opengrok_search_and_read,
       opengrok_get_symbol_context, opengrok_index_health, opengrok_get_compile_info,
       opengrok_get_file_symbols, opengrok_call_graph, opengrok_what_changed,
-      opengrok_blame, opengrok_dependency_map, opengrok_get_task_result,
-      opengrok_search_pattern, opengrok_get_file_diff
+      opengrok_blame, opengrok_dependency_map
     Code Mode (5 tools + sandbox methods):
       opengrok_api, opengrok_execute, opengrok_read_memory,
       opengrok_update_memory, opengrok_memory_status

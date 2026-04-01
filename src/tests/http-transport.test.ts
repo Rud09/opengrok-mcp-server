@@ -552,40 +552,43 @@ describe("Session management enhancements (Task 5.2)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 5.4: stream parameter on SearchCodeArgs
+// Task 5.4: stream parameter was removed from SearchCodeArgs (dead code)
 // ---------------------------------------------------------------------------
 
 describe("stream parameter on SearchCodeArgs (Task 5.4)", () => {
-  it("SearchCodeArgs accepts stream: false (default)", async () => {
+  it("SearchCodeArgs accepts query without stream (stream field removed)", async () => {
     const { SearchCodeArgs } = await import("../server/models.js");
     const result = SearchCodeArgs.safeParse({
       query: "test",
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.stream).toBe(false);
+      // stream field was removed — it should not be present
+      expect((result.data as Record<string, unknown>).stream).toBeUndefined();
     }
   });
 
-  it("SearchCodeArgs accepts stream: true", async () => {
+  it("SearchCodeArgs accepts extra fields via passthrough (stream is stripped)", async () => {
     const { SearchCodeArgs } = await import("../server/models.js");
+    // stream is no longer in the schema; unknown fields are stripped by Zod
     const result = SearchCodeArgs.safeParse({
       query: "test",
       stream: true,
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.stream).toBe(true);
+      expect((result.data as Record<string, unknown>).stream).toBeUndefined();
     }
   });
 
-  it("SearchCodeArgs rejects non-boolean stream value", async () => {
+  it("SearchCodeArgs parses valid args without stream", async () => {
     const { SearchCodeArgs } = await import("../server/models.js");
     const result = SearchCodeArgs.safeParse({
       query: "test",
       stream: "yes",
     });
-    expect(result.success).toBe(false);
+    // stream is not in the schema; unknown keys are stripped, not rejected
+    expect(result.success).toBe(true);
   });
 });
 

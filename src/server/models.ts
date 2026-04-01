@@ -41,7 +41,6 @@ export const SearchCodeArgs = z.object({
   max_results: z.number().int().min(1).max(100).default(10),
   start_index: z.number().int().min(0).default(0),
   file_type: z.string().optional().describe(FILE_TYPE_DESC),
-  stream: z.boolean().default(false).describe("Stream results via SSE (HTTP transport only)."),
   response_format: RESPONSE_FORMAT,
 });
 

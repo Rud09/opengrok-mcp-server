@@ -89,7 +89,7 @@ const ConfigSchema = z.object({
   // Optimisation — context budget
   OPENGROK_CONTEXT_BUDGET: z
     .enum(["minimal", "standard", "generous"])
-    .default("minimal")
+    .default("standard")
     .describe("Token budget mode: minimal=4KB, standard=8KB, generous=16KB"),
   // Code Mode — 2-tool sandbox (enabled by default)
   OPENGROK_CODE_MODE: z
@@ -137,6 +137,7 @@ export const DEFAULT_PER_TOOL_LIMITS: Record<string, number> = {
   opengrok_batch_search: 5,    // expensive operation
   opengrok_execute: 10,        // Code Mode sandbox overhead
   opengrok_dependency_map: 10, // BFS = multiple requests
+  opengrok_update_memory: 20,  // disk writes — allow bursting but not spamming
 };
 
 // Parse per-tool rate limit config from environment string
@@ -334,8 +335,8 @@ export function loadConfig(overrides?: Record<string, string>): Config {
     data.OPENGROK_PASSWORD_KEY
   );
 
-  // Update credential rotation timestamp if credentials are provided
-  if (password || data.OPENGROK_USERNAME) {
+  // Update credential rotation timestamp only when an actual password is present
+  if (password) {
     const configDir = getConfigDirectory();
     updateCredentialRotationTimestamp(configDir);
   }

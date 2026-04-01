@@ -65,10 +65,10 @@ describe('loadConfig', () => {
     expect(cfg.OPENGROK_CONTEXT_BUDGET).toBe('generous');
   });
 
-  it('defaults OPENGROK_CONTEXT_BUDGET to minimal', () => {
+  it('defaults OPENGROK_CONTEXT_BUDGET to standard', () => {
     delete process.env.OPENGROK_CONTEXT_BUDGET;
     const cfg = loadConfig();
-    expect(cfg.OPENGROK_CONTEXT_BUDGET).toBe('minimal');
+    expect(cfg.OPENGROK_CONTEXT_BUDGET).toBe('standard');
   });
 
   it('defaults OPENGROK_CODE_MODE to true', () => {
