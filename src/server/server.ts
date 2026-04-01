@@ -2979,12 +2979,20 @@ function registerToolDocResources(server: McpServer): void {
 function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): void {
   for (const filename of ALLOWED_FILES) {
     const uri = `opengrok-memory://${filename}`;
+    const filePath = path.join(memoryBank.bankDir, filename);
+    let size: number | undefined;
+    try {
+      size = fs.statSync(filePath).size;
+    } catch {
+      // file doesn't exist yet — omit size
+    }
     server.registerResource(
       filename,
       uri,
       {
         description: `OpenGrok memory bank file: ${filename}`,
         mimeType: "text/markdown",
+        ...(size !== undefined && { size }),
       },
       async () => {
         const content = await memoryBank.read(filename) ?? "";

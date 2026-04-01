@@ -73,6 +73,11 @@ export class MemoryBank {
     this.dir = dir;
   }
 
+  /** Absolute path to the memory bank directory. Used by consumers that need to stat files directly. */
+  get bankDir(): string {
+    return this.dir;
+  }
+
   /**
    * Returns a hash-based file reference for the given file, registering it in
    * the FileReferenceCache. If the content is unchanged since last call, returns
