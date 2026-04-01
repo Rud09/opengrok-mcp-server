@@ -93,6 +93,10 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 - `buildEnv()` exported from `configure.ts` for testability
 - **1,078 tests total** — all passing
 
+**Bug fixes (re-release):**
+- `opengrok_api`: removed `capResponse()` — API spec is static reference data that must be returned complete; with `minimal` budget (4 KB cap) the ~7 KB YAML was truncated, breaking Code Mode entirely
+- `opengrok_read_memory`: removed `capResponse()` — memory bank files have their own write-time size limits (4 KB / 32 KB); the budget cap was redundantly truncating `investigation-log.md` to 4 KB instead of its 32 KB maximum
+
 ---
 
 ## [9.0.2] - 2026-04-01

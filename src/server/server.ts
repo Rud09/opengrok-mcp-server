@@ -1781,7 +1781,7 @@ function registerMemoryTools(
           if (!content) {
             return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
           }
-          return { content: [{ type: "text", text: capResponse(content) }] };
+          return { content: [{ type: "text", text: content }] };
         }
         // Delta encoding: returns "[unchanged]" when hash matches last read
         const content = args.filename === "investigation-log.md"
@@ -1790,7 +1790,7 @@ function registerMemoryTools(
         if (!content) {
           return { content: [{ type: "text", text: `${args.filename} is not yet populated. Start an investigation to fill it.` }] };
         }
-        return { content: [{ type: "text", text: capResponse(content) }] };
+        return { content: [{ type: "text", text: content }] };
       } catch (err) {
         return makeToolError("opengrok_read_memory", err);
       }
@@ -1933,7 +1933,9 @@ function registerCodeModeTools(
         if (!_apiSpecYaml) _apiSpecYaml = yaml.dump(API_SPEC, { lineWidth: 120, noRefs: true });
         const specText = _apiSpecYaml;
         const fullText = projectHint ? `${projectHint}\n\n${specText}` : specText;
-        return { content: [{ type: "text", text: capResponse(fullText) }] };
+        // Do not cap the API spec — it is static reference data that must be
+        // complete for the sandbox to work. Truncating it breaks Code Mode.
+        return { content: [{ type: "text", text: fullText }] };
       } catch (err) {
         return makeToolError("opengrok_api", err);
       }
