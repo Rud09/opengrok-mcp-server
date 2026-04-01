@@ -8,10 +8,12 @@ import { z } from "zod";
 // Shared response format field added to all tool input schemas.
 // Extended with compact formats: tsv (tabular, ~50% token savings), yaml (hierarchical, ~35% savings),
 // text (raw code, minimal overhead), auto (server picks best format per response type).
+// NOTE: .optional().default("auto") ordering ensures the inferred output type is always `string`
+// (not `string | undefined`), avoiding redundant null-guards in tool handlers.
 const RESPONSE_FORMAT = z
   .enum(["markdown", "json", "tsv", "yaml", "text", "toon", "auto"])
-  .default("auto")
   .optional()
+  .default("auto")
   .describe("Output format: markdown, json, tsv, toon, yaml, text, or auto.");
 
 // ---------------------------------------------------------------------------

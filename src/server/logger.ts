@@ -8,6 +8,8 @@
  * Log level: set OPENGROK_LOG_LEVEL=debug to enable debug output.
  */
 
+import { redactString } from "./redact.js";
+
 const LOG_LEVEL = (process.env.OPENGROK_LOG_LEVEL ?? "info").toLowerCase();
 const DEBUG_ENABLED = LOG_LEVEL === "debug";
 
@@ -38,19 +40,6 @@ function sanitizeMeta(meta: unknown): unknown {
     return out;
   }
   return meta;
-}
-
-function redactString(s: string): string {
-  // Basic auth header values
-  let r = s.replace(/Basic\s+[A-Za-z0-9+/=]+/gi, "Basic [REDACTED]");
-  // URL-embedded credentials: user:pass@host
-  r = r.replace(/:[^:@\s]+@/g, ":***@");
-  // Bearer / token schemes
-  r = r.replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [REDACTED]");
-  // Absolute filesystem paths that may reveal internal infrastructure
-  r = r.replace(/\/(?:home|Users|tmp|var|usr|build|opt|mnt|srv)(?:\/\S+)/g, "[path]");
-  r = r.replace(/[A-Z]:\\(?:Users|Windows|Program Files|build)(?:\\\S+)/gi, "[path]");
-  return r;
 }
 
 function ts(): string {

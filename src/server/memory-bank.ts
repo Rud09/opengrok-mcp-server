@@ -18,6 +18,30 @@ import { logger } from "./logger.js";
 import { FileReferenceCache } from "./file-cache.js";
 
 // ---------------------------------------------------------------------------
+// UTF-8 safe truncation helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Truncate a UTF-8 string to at most `maxBytes` bytes without splitting a
+ * multi-byte codepoint sequence.  A raw `Buffer.subarray(0, maxBytes)` can
+ * cut in the middle of a 2–4 byte sequence, producing U+FFFD replacement
+ * characters in the output.  This helper walks backward from `maxBytes` to
+ * the nearest valid codepoint boundary before slicing.
+ *
+ * Continuation bytes are in the range 0x80–0xBF (top two bits = 10xxxxxx).
+ * Walking back past them reaches either a leading byte (0xC0–0xFF) or an
+ * ASCII byte (< 0x80) — both are safe truncation points.
+ */
+function truncateUtf8(s: string, maxBytes: number): string {
+  const buf = Buffer.from(s, "utf8");
+  if (buf.length <= maxBytes) return s;
+  let end = maxBytes;
+  // Walk back past any UTF-8 continuation bytes
+  while (end > 0 && (buf[end] !== undefined) && (buf[end] & 0xC0) === 0x80) end--;
+  return buf.subarray(0, end).toString("utf8");
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -64,6 +88,8 @@ export class MemoryBank {
   private readonly dir: string;
   private lastReadHash = new Map<string, string>();
   readonly fileRefCache = new FileReferenceCache();
+  /** Per-file async mutex: serializes concurrent writes to the same file. */
+  private readonly writeLocks = new Map<string, Promise<void>>();
 
   /**
    * @param dir — absolute path to the memory-bank directory.
@@ -199,6 +225,27 @@ export class MemoryBank {
     mode: "overwrite" | "append" = "overwrite"
   ): Promise<void> {
     this.assertAllowed(filename);
+    // Serialize concurrent writes to the same file with a per-file async mutex.
+    // Without this, two overlapping append calls both read the same base content,
+    // each compute their own append, and the last writer silently wins.
+    const prior = this.writeLocks.get(filename) ?? Promise.resolve();
+    let releaseRef!: () => void;
+    const lock = new Promise<void>((resolve) => { releaseRef = resolve; });
+    this.writeLocks.set(filename, prior.then(() => lock));
+    await prior;
+    try {
+      await this._writeUnlocked(filename, content, mode);
+    } finally {
+      releaseRef();
+    }
+    this.lastReadHash.delete(filename);
+  }
+
+  private async _writeUnlocked(
+    filename: string,
+    content: string,
+    mode: "overwrite" | "append"
+  ): Promise<void> {
     const filePath = path.join(this.dir, filename);
     const maxBytes = MAX_FILE_BYTES[filename as AllowedFile];
 
@@ -224,7 +271,7 @@ export class MemoryBank {
         if (filename === "investigation-log.md") {
           existing = this.trimLogFromTop(existing, headroom);
         } else {
-          existing = Buffer.from(existing, "utf8").subarray(0, headroom).toString("utf8");
+          existing = truncateUtf8(existing, headroom);
         }
       }
 
@@ -246,9 +293,9 @@ export class MemoryBank {
       if (filename === "investigation-log.md") {
         newContent = this.trimLogFromTop(newContent, maxBytes);
       } else {
-        // For other files: hard truncate at limit
+        // For other files: hard truncate at codepoint boundary
         newContent =
-          Buffer.from(newContent, "utf8").subarray(0, maxBytes).toString("utf8") +
+          truncateUtf8(newContent, maxBytes) +
           "\n<!-- Truncated to stay within size limit -->";
       }
     }
@@ -260,8 +307,6 @@ export class MemoryBank {
       logger.warn(`MemoryBank: failed to write ${filename}:`, err);
       throw new Error(`Failed to write memory bank file: ${filename}`);
     }
-
-    this.lastReadHash.delete(filename);
   }
 
   /**
@@ -321,10 +366,7 @@ export class MemoryBank {
     if (sections.length <= 1) {
       const suffix = "\n<!-- Older entries trimmed -->";
       const suffixBytes = Buffer.byteLength(suffix, "utf8");
-      return (
-        Buffer.from(content, "utf8").subarray(0, Math.max(0, maxBytes - suffixBytes)).toString("utf8") +
-        suffix
-      );
+      return truncateUtf8(content, Math.max(0, maxBytes - suffixBytes)) + suffix;
     }
 
     const trimNote = "<!-- Older entries trimmed -->\n\n";
@@ -336,9 +378,9 @@ export class MemoryBank {
     if (older.length === 0) {
       const candidate = trimNote + sections.join("");
       if (Buffer.byteLength(candidate, "utf8") <= maxBytes) return candidate;
-      // Last resort: byte truncate — subtract noteBytes so total ≤ maxBytes
+      // Last resort: truncate at codepoint boundary
       const noteBytes = Buffer.byteLength(trimNote, "utf8");
-      return trimNote + Buffer.from(recent.join(""), "utf8").subarray(0, Math.max(0, maxBytes - noteBytes)).toString("utf8");
+      return trimNote + truncateUtf8(recent.join(""), Math.max(0, maxBytes - noteBytes));
     }
 
     // Score all older sections once — O(n)
@@ -367,11 +409,8 @@ export class MemoryBank {
     const final = trimNote + recent.join("");
     if (Buffer.byteLength(final, "utf8") <= maxBytes) return final;
 
-    // Last resort: byte truncate — subtract trimNote bytes so total stays within maxBytes
-    return (
-      trimNote +
-      Buffer.from(recent.join(""), "utf8").subarray(0, Math.max(0, maxBytes - noteBytes)).toString("utf8")
-    );
+    // Last resort: truncate at codepoint boundary
+    return trimNote + truncateUtf8(recent.join(""), Math.max(0, maxBytes - noteBytes));
   }
 
   private simpleHash(s: string): string {
@@ -393,18 +432,20 @@ export class MemoryBank {
 
     for (const filename of ALLOWED_FILES) {
       const filePath = path.join(this.dir, filename);
-      if (!fs.existsSync(filePath)) continue;
-
+      // No existsSync check here — it's a TOCTOU race with the readFile below,
+      // and the try/catch already handles ENOENT from readFile.
       try {
         const raw = await fsp.readFile(filePath, "utf8");
         if (raw.trimStart().startsWith(STUB_SENTINEL_PREFIX)) continue; // stub
 
+        // Derive size from the already-read content (avoids a second syscall)
+        const sizeKb = (Buffer.byteLength(raw, "utf8") / 1024).toFixed(1);
+        // Use file mtime for age — one stat call per file
         const stat = await fsp.stat(filePath);
         const ageMins = Math.round((Date.now() - stat.mtimeMs) / 60_000);
         const ageStr = ageMins < 60
           ? `${ageMins}m ago`
           : `${Math.round(ageMins / 60)}h ago`;
-        const sizeKb = (Buffer.byteLength(raw, "utf8") / 1024).toFixed(1);
 
         if (filename === "active-task.md") {
           const taskLine = raw.split("\n").find(l => l.startsWith("task:"));
@@ -415,7 +456,7 @@ export class MemoryBank {
           summaries.push(`investigation-log.md: ${entryCount} entr${entryCount === 1 ? "y" : "ies"} (${ageStr})`);
         }
       } catch {
-        // File unreadable — skip silently
+        // File unreadable or does not exist — skip silently
       }
     }
 

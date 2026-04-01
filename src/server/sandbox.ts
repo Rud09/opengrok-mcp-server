@@ -37,12 +37,11 @@ import { auditLog } from "./audit.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { elicitOrFallback, type ElicitSchema, type ElicitResult } from "./elicitation.js";
 import { sampleOrNull } from "./sampling.js";
+import { sanitizeSandboxError as _sanitizeSandboxErrorCore } from "./redact.js";
+import { SHARED_BUFFER_SIZE, STATUS_OFFSET, LENGTH_OFFSET, DATA_OFFSET } from "./sandbox-protocol.js";
 
 // ---------------------------------------------------------------------------
-// Buffer layout constants (must match sandbox-worker.ts)
-// ---------------------------------------------------------------------------
-
-const SHARED_BUFFER_SIZE = 20 + 1024 * 1024;
+// Buffer layout constants are imported from sandbox-protocol.ts (shared with sandbox-worker.ts)
 
 // ---------------------------------------------------------------------------
 // sanitizeSandboxError — strips sensitive data from error messages
@@ -50,7 +49,8 @@ const SHARED_BUFFER_SIZE = 20 + 1024 * 1024;
 
 /**
  * Sanitize an error from the sandbox before returning it to the LLM caller.
- * Strips absolute paths, stack traces, and Node.js internal references.
+ * Extracts the message from various error shapes, then delegates redaction
+ * to the unified sanitizeSandboxError from redact.ts.
  * Truncates to 500 chars maximum.
  */
 export function sanitizeSandboxError(err: unknown): string {
@@ -64,21 +64,7 @@ export function sanitizeSandboxError(err: unknown): string {
   } else {
     message = "Unknown sandbox error";
   }
-  // Strip stack trace lines
-  message = message.split("\n").filter((line) => !/^\s+at\s/.test(line)).join("\n").trim();
-  // Strip Node.js internal module paths
-  message = message.replace(/\bnode:internal\/\S+/g, "<node-internal>");
-  // Strip absolute filesystem paths (must start with a directory separator after the drive, not URL paths)
-  // Matches Unix absolute paths like /home/user/file or /tmp/something but NOT /api/v1/projects
-  message = message.replace(/(?<![a-zA-Z0-9_-])\/(?:home|Users|tmp|var|usr|etc|proc|opt|root|mnt|srv|run)\/[\w.:/\-]+/g, "<path>");
-  // Strip Windows absolute paths
-  message = message.replace(/[A-Za-z]:\\[\S]+/g, "<path>");
-  message = message.replace(/\\\\[\S]+/g, "<path>");
-  // Strip relative paths traversing upward
-  message = message.replace(/\.\.[\\/][\S]*/g, "<path>");
-  // Collapse excess blank lines
-  message = message.replace(/\n{3,}/g, "\n\n").trim();
-  return message.slice(0, 500);
+  return _sanitizeSandboxErrorCore(message).slice(0, 500);
 }
 
 // ---------------------------------------------------------------------------
@@ -561,8 +547,23 @@ export function createSandboxAPI(
 // ---------------------------------------------------------------------------
 
 /**
- * Execute LLM-written JavaScript inside a QuickJS WASM sandbox (Worker thread).
+ * Explicit allowlist of SandboxAPI method names that LLM-written code may
+ * invoke via the SharedArrayBuffer bridge.
  *
+ * Any method NOT in this set is rejected, preventing inherited Object.prototype
+ * properties or future methods accidentally added to SandboxAPI from being
+ * callable by untrusted code.
+ */
+const SANDBOX_ALLOWED_METHODS = new Set<string>([
+  "search", "batchSearch", "getFileContent", "getSymbolContext",
+  "getFileSymbols", "getFileHistory", "getFileAnnotate", "browseDir",
+  "findFile", "getFileOverview", "traceCallChain", "searchSuggest",
+  "getCompileInfo", "indexHealth", "readMemory", "writeMemory",
+  "getFileDiff", "elicit", "sample",
+]);
+
+/**
+ * Execute LLM-written JavaScript inside a QuickJS WASM sandbox (Worker thread).
  * The code has access to `env.opengrok.*` methods that bridge back to the host
  * via SharedArrayBuffer + Atomics (synchronous from code's perspective).
  *
@@ -578,9 +579,9 @@ export async function executeInSandbox(
 ): Promise<string> {
   // Create shared communication buffer (layout pinned — must match sandbox-worker.ts)
   const sharedBuffer = new SharedArrayBuffer(SHARED_BUFFER_SIZE);
-  const statusArray = new Int32Array(sharedBuffer, 0, 4);  // bytes 0–15
-  const lengthArray = new Uint32Array(sharedBuffer, 16, 1); // bytes 16–19
-  const dataArray   = new Uint8Array(sharedBuffer, 20);     // bytes 20+
+  const statusArray = new Int32Array(sharedBuffer, STATUS_OFFSET, 4);
+  const lengthArray = new Uint32Array(sharedBuffer, LENGTH_OFFSET, 1);
+  const dataArray   = new Uint8Array(sharedBuffer, DATA_OFFSET);
 
   let stopped = false;
   let _resolve!: (value: string) => void;
@@ -605,6 +606,10 @@ export async function executeInSandbox(
         const callJson = Buffer.from(dataArray.subarray(0, callLen)).toString("utf8");
         const { method, args } = JSON.parse(callJson) as { method: string; args: unknown[] };
 
+        // Enforce explicit allowlist — reject any method not in the pre-approved set
+        if (!SANDBOX_ALLOWED_METHODS.has(method)) {
+          throw new Error(`Sandbox method not allowed: "${method}"`);
+        }
         const apiMethod = (api as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[method];
         if (typeof apiMethod !== "function") {
           throw new Error(`Unknown API method: ${method}`);
@@ -642,18 +647,16 @@ export async function executeInSandbox(
         }
       }
 
-      // Signal: result_ready — wake up the blocked worker thread
-      Atomics.store(statusArray, 0, 2);
+      // Signal: result_ready — wake up the blocked worker thread.
+      // Reset status to idle (0) BEFORE notifying, rather than in a deferred
+      // setImmediate after. This eliminates the race where a new call from the
+      // worker could set status=1 between Atomics.notify and the deferred reset,
+      // causing the deferred reset to clobber the pending status=1.
+      // The worker's Atomics.wait(statusArray, 0, 1) returns "ok" upon Atomics.notify
+      // regardless of the current value, so it safely reads the buffer contents
+      // that were written above before we cleared the status flag.
+      Atomics.store(statusArray, 0, 0);
       Atomics.notify(statusArray, 0);
-      // Reset to idle after the worker reads the result so the poll loop
-      // doesn't keep finding status=2 on every setImmediate tick.
-      // The worker reads data synchronously after Atomics.wait returns,
-      // so by the next setImmediate the result has already been consumed.
-      setImmediate(() => {
-        if (Atomics.load(statusArray, 0) === 2) {
-          Atomics.store(statusArray, 0, 0);
-        }
-      });
     }
 
     if (!stopped) {

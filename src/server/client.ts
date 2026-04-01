@@ -210,17 +210,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Estimate the byte size of a serializable value without blocking the event loop natively. */
-function estimateBytes(value: unknown): number {
+function estimateBytes(value: unknown, depth = 0): number {
+  if (depth > 20) return 8192; // conservative overestimate for pathologically deep structures
   if (value === null || value === undefined) return 0;
   if (typeof value === "string") return Buffer.byteLength(value, "utf8");
   if (typeof value === "number" || typeof value === "boolean") return 8;
   if (typeof value === "object") {
     let size = 0;
     if (Array.isArray(value)) {
-      for (const item of value) size += estimateBytes(item);
+      for (const item of value) size += estimateBytes(item, depth + 1);
     } else {
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        size += Buffer.byteLength(k, "utf8") + estimateBytes(v);
+        size += Buffer.byteLength(k, "utf8") + estimateBytes(v, depth + 1);
       }
     }
     return size;
@@ -558,6 +559,10 @@ export class OpenGrokClient {
           if (parsedLocation.hostname !== this.baseUrl.hostname || parsedLocation.port !== this.baseUrl.port) {
             throw new Error(`SSRF guard: redirected URL "${parsedLocation}" escapes allowed host "${this.baseUrl.hostname}"`);
           }
+          // Block protocol downgrade (e.g. https → http) to prevent TLS stripping
+          if (parsedLocation.protocol !== this.baseUrl.protocol) {
+            throw new Error(`SSRF guard: redirect changes protocol from "${this.baseUrl.protocol}" to "${parsedLocation.protocol}"`);
+          }
 
           // Consume the unneeded redirect body to prevent fetch/undici memory leaks
           try { await response.text(); } catch { }
@@ -757,6 +762,11 @@ export class OpenGrokClient {
   ): Promise<FileHistory> {
     assertSafePath(path);
     const normalizedPath = path.replace(/^\/+/, "");
+    // Cache key intentionally omits maxEntries: the full history list is cached
+    // once per (project, path) and then sliced to the requested length on retrieval.
+    // A caller requesting fewer entries than a prior caller will always get correct
+    // results (slice is safe). A caller requesting more entries will also get correct
+    // results — the cache stores the full API response, not a truncated one.
     const cacheKey = `${project}:${normalizedPath}`;
 
     let history = this.historyCache?.get(cacheKey);

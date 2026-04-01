@@ -100,8 +100,15 @@ export async function buildCallChain(
       ? []
       : await traceCallers(client, symbol, cappedDepth, cappedDepth, project, new Set());
 
-  // Callees require AST analysis not available via OpenGrok search API
+  // Callees require AST analysis — not available via OpenGrok REST API
   const callees: CallNode[] = [];
+
+  // Inform the LLM explicitly when callees were requested but cannot be provided,
+  // preventing wasted retries.
+  const calleesUnsupportedMessage =
+    direction === "callees" || direction === "both"
+      ? "Callee tracing requires AST analysis which is not available via the OpenGrok search API. Only callers are supported."
+      : undefined;
 
   let truncatedAt: number | undefined;
   if (cappedDepth < depth) {
@@ -114,6 +121,7 @@ export async function buildCallChain(
     callers,
     callees,
     truncatedAt,
+    ...(calleesUnsupportedMessage ? { calleesUnsupportedMessage } : {}),
   };
 }
 
@@ -127,9 +135,9 @@ async function traceCallers(
   depth: number,
   maxDepth: number,
   project: string | undefined,
-  visited: Set<string>
+  visited: Set<string>,
+  symbolsCache: Map<string, import("./models.js").FileSymbols> = new Map()
 ): Promise<CallNode[]> {
-  if (depth === 0 || visited.has(symbol)) return [];
   visited.add(symbol);
 
   const projects = project ? [project] : undefined;
@@ -148,7 +156,8 @@ async function traceCallers(
         client,
         result.project,
         result.path,
-        match.lineNumber
+        match.lineNumber,
+        symbolsCache
       );
 
       const node: CallNode = {
@@ -167,7 +176,8 @@ async function traceCallers(
           depth - 1,
           maxDepth,
           project,
-          visited
+          visited,
+          symbolsCache
         );
         nodes.push(...subCallers);
       }
@@ -185,15 +195,20 @@ async function getEnclosingFunction(
   client: OpenGrokClient,
   project: string,
   filePath: string,
-  lineNumber: number
+  lineNumber: number,
+  symbolsCache: Map<string, import("./models.js").FileSymbols> = new Map()
 ): Promise<string | null> {
   if (!project) return null;
 
-  let symbols;
-  try {
-    symbols = await client.getFileSymbols(project, filePath);
-  } catch {
-    return null;
+  const cacheKey = `${project}:${filePath}`;
+  let symbols = symbolsCache.get(cacheKey);
+  if (!symbols) {
+    try {
+      symbols = await client.getFileSymbols(project, filePath);
+      symbolsCache.set(cacheKey, symbols);
+    } catch {
+      return null;
+    }
   }
 
   // Find symbol whose range encloses the target line
@@ -292,6 +307,9 @@ export function extractImports(text: string, lang: string): string[] {
 }
 
 export function langFromPath(filePath: string): string {
+  // Dotless filenames (Makefile, Dockerfile, etc.) have no extension — return "text"
+  // instead of the full filename, which would be a bogus language tag.
+  if (!filePath.includes(".")) return "text";
   const ext = (filePath.split(".").pop() ?? "").toLowerCase();
   const map: Record<string, string> = {
     cpp: "cpp", cxx: "cpp", cc: "cpp", c: "c",

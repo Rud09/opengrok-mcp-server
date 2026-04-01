@@ -20,7 +20,12 @@ declare const __VERSION__: string;
  * Load config and auto-resolve password from OS keychain if not set via env.
  * The keychain lookup is done before the first loadConfig() call so that the
  * "username set but no password" validation in loadConfig does not exit early.
- * Exported for unit testing.
+ *
+ * The resolved password is passed as an override to loadConfig() rather than
+ * written to process.env, preventing it from leaking into /proc/self/environ
+ * or being visible to child processes and native addons.
+ *
+ * Exported for unit testing and for use as a configLoader callback on SIGHUP.
  */
 export function resolveConfig(): ReturnType<typeof loadConfig> {
   // Peek at the relevant env vars without going through full loadConfig validation
@@ -32,10 +37,10 @@ export function resolveConfig(): ReturnType<typeof loadConfig> {
     // No password in env — try the OS keychain before calling loadConfig
     const keychainPassword = retrievePassword(username);
     if (keychainPassword) {
-      // Inject into process.env so that subsequent loadConfig() calls (e.g. on SIGHUP)
-      // also have the password available, preventing a split-brain between the first call
-      // (with keychain password) and later calls (without it).
-      process.env['OPENGROK_PASSWORD'] = keychainPassword;
+      // Pass the keychain password as an override instead of mutating process.env.
+      // This prevents the plaintext secret from appearing in /proc/self/environ,
+      // being inherited by child processes, or being readable by native addons.
+      return loadConfig({ OPENGROK_PASSWORD: keychainPassword });
     }
   }
 
@@ -130,7 +135,7 @@ if (firstArg === "setup" || firstArg === "--setup") {
     const memoryBank = new MemoryBank(memoryBankDir);
     await memoryBank.ensureDir();
 
-    await runServer(client, config, memoryBank);
+    await runServer(client, config, memoryBank, resolveConfig);
   }
 
   main().catch((err) => {

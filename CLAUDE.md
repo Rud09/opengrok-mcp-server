@@ -79,8 +79,8 @@ Manages credentials (VS Code SecretStorage + encrypted temp files), registers th
 
 ### Operational modes
 
-- **Standard mode** (default): 20 tools, all prefixed `opengrok_` (no memory tools).
-- **Code Mode** (`OPENGROK_CODE_MODE=true`): 5 tools — `opengrok_api` (returns API spec), `opengrok_execute` (runs JS in QuickJS WASM sandbox), plus 3 memory tools (`opengrok_read_memory`, `opengrok_update_memory`, `opengrok_memory_status`). Significant token savings for large multi-language codebases.
+- **Code Mode** (default, `OPENGROK_CODE_MODE=true`): 5 tools — `opengrok_api` (returns API spec), `opengrok_execute` (runs JS in QuickJS WASM sandbox), plus 3 memory tools (`opengrok_read_memory`, `opengrok_update_memory`, `opengrok_memory_status`). Significant token savings for large multi-language codebases.
+- **Standard mode** (`OPENGROK_CODE_MODE=false`): 20 tools, all prefixed `opengrok_` (no memory tools).
 
 ### Key env vars
 

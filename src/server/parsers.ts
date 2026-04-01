@@ -641,19 +641,40 @@ export function parseFileDiff(
   if (allLines.length === 0) return empty;
 
   // Group lines into hunks. A hunk boundary occurs when there's a gap in
-  // sequential new-line numbering (indicating collapsed unchanged lines).
+  // sequential line numbering (indicating collapsed unchanged lines).
+  // Track old and new line counters independently: added lines advance only
+  // the new-line counter, removed lines advance only the old-line counter,
+  // and context lines advance both. Mixing them in a single "effective"
+  // counter produces false splits when a block of removes is followed by
+  // a block of adds whose new-line number is lower than the old-line number.
   const hunks: DiffHunk[] = [];
   let currentHunkLines: DiffLine[] = [allLines[0]];
 
   for (let i = 1; i < allLines.length; i++) {
     const prev = allLines[i - 1];
     const curr = allLines[i];
-    const prevNew = prev.newLineNumber ?? prev.oldLineNumber ?? 0;
-    const currNew = curr.newLineNumber ?? curr.oldLineNumber ?? 0;
 
-    // A gap > 1 in effective line numbering signals collapsed context between hunks.
-    // This applies regardless of what type the current line is (context, added, OR removed).
-    if (currNew - prevNew > 1) {
+    // Determine which counter to compare based on line type.
+    // For context lines: both counters advance in lock-step; use new-line number.
+    // For added lines: only new-line counter advances.
+    // For removed lines: only old-line counter advances.
+    let prevCounter: number;
+    let currCounter: number;
+
+    if (curr.type === 'added') {
+      prevCounter = prev.newLineNumber ?? prev.oldLineNumber ?? 0;
+      currCounter = curr.newLineNumber ?? 0;
+    } else if (curr.type === 'removed') {
+      prevCounter = prev.oldLineNumber ?? prev.newLineNumber ?? 0;
+      currCounter = curr.oldLineNumber ?? 0;
+    } else {
+      // context line
+      prevCounter = prev.newLineNumber ?? prev.oldLineNumber ?? 0;
+      currCounter = curr.newLineNumber ?? curr.oldLineNumber ?? 0;
+    }
+
+    // A gap > 1 signals collapsed context between hunks.
+    if (currCounter - prevCounter > 1) {
       hunks.push(buildHunk(currentHunkLines));
       currentHunkLines = [];
     }

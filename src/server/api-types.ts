@@ -190,8 +190,10 @@ export interface CallChainAPIResult {
   symbol: string;
   direction: "callers" | "callees" | "both";
   callers: CallNode[];
-  callees: CallNode[];         // empty until AST support is added
+  callees: CallNode[];         // always empty — callee tracing requires AST, not available via OpenGrok REST
   truncatedAt?: number;        // depth at which traversal was capped
+  /** Present when the requested direction includes "callees". Informs the LLM not to retry. */
+  calleesUnsupportedMessage?: string;
 }
 
 // ---------------------------------------------------------------------------

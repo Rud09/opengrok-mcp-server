@@ -24,12 +24,11 @@
 import { workerData, parentPort } from "worker_threads";
 import { loadQuickJs, type SandboxOptions } from "@sebastianwessel/quickjs";
 import variant from "@jitl/quickjs-ng-wasmfile-release-sync";
+import { STATUS_OFFSET, LENGTH_OFFSET, DATA_OFFSET } from "./sandbox-protocol.js";
 
 // ---------------------------------------------------------------------------
-// Buffer layout constants (must match sandbox.ts)
+// Buffer layout imported from sandbox-protocol.ts (shared with sandbox.ts)
 // ---------------------------------------------------------------------------
-
-// SHARED_BUFFER_SIZE = 20 + 1024 * 1024  (documented in file header; not used at runtime here)
 
 // ---------------------------------------------------------------------------
 // runJob — execute one unit of LLM code inside QuickJS with the given buffer
@@ -43,9 +42,9 @@ async function runJob(
   code: string
 ): Promise<void> {
   // Typed views into the shared buffer (layout pinned — must match sandbox.ts)
-  const statusArray = new Int32Array(sharedBuffer, 0, 4);  // bytes 0–15
-  const lengthArray = new Uint32Array(sharedBuffer, 16, 1); // bytes 16–19
-  const dataArray   = new Uint8Array(sharedBuffer, 20);     // bytes 20+
+  const statusArray = new Int32Array(sharedBuffer, STATUS_OFFSET, 4);
+  const lengthArray = new Uint32Array(sharedBuffer, LENGTH_OFFSET, 1);
+  const dataArray   = new Uint8Array(sharedBuffer, DATA_OFFSET);
 
   // ---------------------------------------------------------------------------
   // callHostSync — synchronous bridge to main thread async API
@@ -75,7 +74,13 @@ async function runJob(
     // No Atomics.notify here — main thread polls via setImmediate, not Atomics.wait
 
     // Block until main thread writes result (sets status to 2) and notifies
-    Atomics.wait(statusArray, 0, 1);
+    const waitResult = Atomics.wait(statusArray, 0, 1);
+    if (waitResult !== "ok") {
+      // "not-equal": status was already != 1 when we called wait (result arrived before we blocked).
+      // "timed-out": sandbox execution timeout — this should not happen (no timeout param here).
+      // In both cases the buffer contents are indeterminate; throw to surface the problem.
+      throw new Error(`callHostSync: unexpected Atomics.wait result "${waitResult}" for method "${methodName}"`);
+    }
 
     // Read response
     const resLen = lengthArray[0];
@@ -143,8 +148,11 @@ async function runJob(
   if (!parentPort) throw new Error("parentPort is null — worker must run inside worker_threads");
 
   try {
-    // Wrap LLM code: inner IIFE captures `return`, outer exports via `export default`
-    const wrappedCode = `const __result = (() => { ${code} })();\nexport default __result;`;
+    // Wrap LLM code: async IIFE captures `return` (including `return await …`),
+    // outer exports via `export default`. Without the async wrapper, code that
+    // returns a Promise would export the Promise object rather than its resolved
+    // value, causing silent empty results for any LLM-written async code.
+    const wrappedCode = `const __result = await (async () => { ${code} })();\nexport default __result;`;
 
     const result = await runSandboxed(
       async ({ evalCode }) => evalCode(wrappedCode),

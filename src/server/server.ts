@@ -107,6 +107,7 @@ import { logger } from "./logger.js";
 import { auditLog } from "./audit.js";
 import { elicitOrFallback } from "./elicitation.js";
 import { sampleOrNull } from "./sampling.js";
+import { sanitizeErrorMessage } from "./redact.js";
 
 // Memoized YAML dump of API_SPEC (computed once on first use)
 let _apiSpecYaml: string | undefined;
@@ -1512,14 +1513,22 @@ async function dispatchTool(
 
     case "opengrok_search_suggest": {
       const args = SearchSuggestArgs.parse(rawArgs);
-      const result = await client.suggest(args.query, args.project, args.field);
-      if (result.suggestions.length) {
-        return "Suggestions:\n" + result.suggestions.map((s) => `  ${s}`).join("\n");
+      try {
+        const result = await client.suggest(args.query, args.project, args.field);
+        if (result.suggestions.length) {
+          return "Suggestions:\n" + result.suggestions.map((s) => `  ${s}`).join("\n");
+        }
+        if (result.time === 0) {
+          return "No suggestions found. The suggester index appears to be empty — an OpenGrok admin may need to rebuild it.";
+        }
+        return "No suggestions found.";
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        if (status === 404 || status === 405) {
+          return "Suggestions are not available on this OpenGrok instance (suggester endpoint returned 404/405).";
+        }
+        throw err;
       }
-      if (result.time === 0) {
-        return "No suggestions found. The suggester index appears to be empty — an OpenGrok admin may need to rebuild it.";
-      }
-      return "No suggestions found.";
     }
 
     case "opengrok_batch_search": {
@@ -2624,8 +2633,11 @@ function registerLegacyTools(
           ...(health.warnings.length > 0 ? [`- **Warnings:** ${health.warnings.join(", ")}`] : []),
         ].join("\n");
 
+        // structuredContent is always included because this tool declares an outputSchema —
+        // the MCP spec requires structuredContent on every non-error response when outputSchema is set.
         return {
           content: [{ type: "text", text: lines }],
+          structuredContent: health,
         };
       } catch (err) {
         return makeToolError("opengrok_index_health", err);
@@ -2727,16 +2739,16 @@ function registerLegacyTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_call_graph" });
       try {
-        const parsed = CallGraphArgs.parse(args as unknown as Record<string, unknown>);
-        const results = await client.getCallGraph(parsed.project, parsed.symbol);
-        const fmt = selectFormat("search", parsed.response_format as ResponseFormat | undefined);
+        // args is already validated against CallGraphArgs.shape by the MCP SDK
+        const results = await client.getCallGraph(args.project, args.symbol);
+        const fmt = selectFormat("search", args.response_format as ResponseFormat | undefined);
         const maxBytes = MAX_RESPONSE_BYTES_OVERRIDE ?? BUDGET_LIMITS[getActiveBudget()].maxResponseBytes;
         const text = pickSearchFormatter(fmt, maxBytes)(results);
         const structured = {
           _meta: {
             tool: "opengrok_call_graph",
-            project: parsed.project,
-            symbol: parsed.symbol,
+            project: args.project,
+            symbol: args.symbol,
             fetchedAt: new Date().toISOString(),
             version: __VERSION__,
           },
@@ -3214,11 +3226,17 @@ function registerInvestigationPrompts(server: McpServer): void {
  * Per-tool rate limiter using token bucket algorithm.
  * Prevents any single tool from monopolizing the connection.
  * Applies per-tool limits on top of the global client rate limit.
+ *
+ * Uses a single persistent processQueue loop per tool (rather than spawning a
+ * fresh setTimeout on every retry), preventing a timer storm when many callers
+ * are blocked waiting for a low-RPM tool.
  */
 class ToolRateLimiter {
   private readonly buckets = new Map<string, { tokens: number; lastRefill: number }>();
   private readonly limits: Map<string, number>; // tool name → calls per minute
   private readonly defaultLimit: number;
+  private readonly queues = new Map<string, Array<{ deadline: number; resolve: () => void; reject: (e: Error) => void }>>();
+  private readonly processing = new Map<string, boolean>();
 
   constructor(limits: Record<string, number>, defaultLimit: number = 60) {
     this.limits = new Map(Object.entries(limits));
@@ -3232,56 +3250,82 @@ class ToolRateLimiter {
    * within the timeout to prevent indefinite request queuing.
    */
   async acquire(toolName: string, maxWaitMs = 30_000): Promise<void> {
-    const deadline = Date.now() + maxWaitMs;
+    const limit = this.limits.get(toolName) ?? this.defaultLimit;
+    const now = Date.now();
 
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const safeResolve = (): void => { if (!settled) { settled = true; resolve(); } };
-      const safeReject = (err: Error): void => { if (!settled) { settled = true; reject(err); } };
+    // Fast path: token available immediately
+    let bucket = this.buckets.get(toolName);
+    if (!bucket) {
+      bucket = { tokens: limit, lastRefill: now };
+      this.buckets.set(toolName, bucket);
+    } else {
+      const interval = 60000 / limit;
+      const elapsed = now - bucket.lastRefill;
+      bucket.tokens = Math.min(limit, bucket.tokens + (elapsed / interval));
+      bucket.lastRefill = now;
+    }
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return;
+    }
 
-      const checkToken = (): void => {
-        if (Date.now() > deadline) {
-          safeReject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
-          return;
-        }
-
-        const limit = this.limits.get(toolName) ?? this.defaultLimit;
-        const interval = 60000 / limit; // ms per token
-        const now = Date.now();
-
-        let bucket = this.buckets.get(toolName);
-        if (!bucket) {
-          bucket = { tokens: limit, lastRefill: now };
-          this.buckets.set(toolName, bucket);
-        }
-
-        // Refill tokens based on elapsed time
-        const elapsed = now - bucket.lastRefill;
-        const tokensToAdd = (elapsed / interval) * 1;
-        bucket.tokens = Math.min(limit, bucket.tokens + tokensToAdd);
-        bucket.lastRefill = now;
-
-        if (bucket.tokens >= 1) {
-          bucket.tokens -= 1;
-          safeResolve();
-        } else {
-          // Reject immediately if the deadline has already passed.
-          const remaining = deadline - Date.now();
-          if (remaining <= 0) {
-            safeReject(new Error(`Rate limit exceeded for ${toolName}: no token available within ${maxWaitMs}ms`));
-            return;
-          }
-          // Wait for next token to be available, then try again
-          const waitMs = Math.min(
-            Math.max(10, (1 - bucket.tokens) * interval),
-            remaining
-          );
-          setTimeout(checkToken, waitMs);
-        }
-      };
-
-      checkToken();
+    // Slow path: enqueue and wait for a processing loop tick
+    return new Promise<void>((resolve, reject) => {
+      const deadline = now + maxWaitMs;
+      let queue = this.queues.get(toolName);
+      if (!queue) {
+        queue = [];
+        this.queues.set(toolName, queue);
+      }
+      queue.push({ deadline, resolve, reject });
+      if (!this.processing.get(toolName)) {
+        this.processing.set(toolName, true);
+        void this.processQueue(toolName);
+      }
     });
+  }
+
+  private async processQueue(toolName: string): Promise<void> {
+    const limit = this.limits.get(toolName) ?? this.defaultLimit;
+    const interval = 60000 / limit; // ms per token
+
+    while (true) {
+      const queue = this.queues.get(toolName);
+      if (!queue || queue.length === 0) {
+        this.processing.set(toolName, false);
+        return;
+      }
+
+      const now = Date.now();
+      // Expire any callers that have passed their deadline
+      while (queue.length > 0 && now > (queue[0]?.deadline ?? 0)) {
+        const expired = queue.shift();
+        if (!expired) break;
+        const err = new Error(`Rate limit exceeded for ${toolName}: no token available within the timeout`);
+        auditLog({ type: "rate_limited", tool: toolName, detail: err.message.slice(0, 200) });
+        expired.reject(err);
+      }
+      if (queue.length === 0) {
+        this.processing.set(toolName, false);
+        return;
+      }
+
+      // Refill bucket
+      const bucket = this.buckets.get(toolName);
+      if (!bucket) { this.processing.set(toolName, false); return; }
+      const elapsed = now - bucket.lastRefill;
+      bucket.tokens = Math.min(limit, bucket.tokens + (elapsed / interval));
+      bucket.lastRefill = now;
+
+      if (bucket.tokens >= 1) {
+        bucket.tokens -= 1;
+        queue.shift()?.resolve();
+      } else {
+        // Sleep until next token is available
+        const waitMs = Math.max(10, Math.ceil((1 - bucket.tokens) * interval));
+        await new Promise<void>((r) => setTimeout(r, waitMs));
+      }
+    }
   }
 }
 
@@ -3290,8 +3334,18 @@ let _sighupRegistered = false;
 /**
  * Task 4.9: Setup handlers for notifications/tools/list_changed.
  * Monitors for config changes (SIGHUP) and connectivity status changes.
+ *
+ * @param configLoader - Function that resolves the full config, including keychain
+ *   lookup if applicable. Passed from the entry point so SIGHUP reloads go through
+ *   the same path as initial startup (preventing a stale closure over the original
+ *   loadConfig reference, which would skip keychain credentials on reload).
  */
-function setupNotificationHandlers(_server: McpServer, _client: OpenGrokClient, config: Config): void {
+function setupNotificationHandlers(
+  _server: McpServer,
+  _client: OpenGrokClient,
+  config: Config,
+  configLoader: () => Config = loadConfig
+): void {
   // On SIGHUP, reload config and notify if code mode changed.
   // Guard against duplicate registrations (e.g. if called more than once per process).
   if (_sighupRegistered) return;
@@ -3301,9 +3355,9 @@ function setupNotificationHandlers(_server: McpServer, _client: OpenGrokClient, 
       auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
       logger.info("Received SIGHUP, reloading config...");
 
-      // Clear the singleton so loadConfig() re-reads from process.env
+      // Clear the singleton so the next loadConfig() re-reads from process.env
       resetConfig();
-      const newConfig = loadConfig();
+      const newConfig = configLoader();
 
       // Check if code mode changed
       if (newConfig.OPENGROK_CODE_MODE !== config.OPENGROK_CODE_MODE) {
@@ -3356,7 +3410,8 @@ export function startHealthCheckPolling(server: McpServer, client: OpenGrokClien
 export async function runServer(
   client: OpenGrokClient,
   config: Config,
-  memoryBank?: MemoryBank
+  memoryBank?: MemoryBank,
+  configLoader?: () => Config
 ): Promise<void> {
   // Inject memory status into instructions so the LLM sees prior context at session start.
   const codeMode = config.OPENGROK_CODE_MODE;
@@ -3414,7 +3469,7 @@ export async function runServer(
   }
 
   // Task 4.9: Monitor config changes and connectivity for tool list changes
-  setupNotificationHandlers(server, client, config);
+  setupNotificationHandlers(server, client, config, configLoader);
 
   await server.connect(transport);
 
@@ -3426,21 +3481,6 @@ export async function runServer(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function sanitizeErrorMessage(message: string): string {
-  let sanitized = message.replace(/Basic\s+[A-Za-z0-9+/=]+/gi, "Basic [REDACTED]");
-  sanitized = sanitized.replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [REDACTED]");
-  sanitized = sanitized.replace(/:[^:@\s]+@/g, ":***@");
-  sanitized = sanitized.replace(
-    /\/(?:home|Users|tmp|var|usr|build|opt|mnt|srv|root|etc|proc|run)(?:\/\S+)/g,
-    "[path]"
-  );
-  sanitized = sanitized.replace(
-    /[A-Z]:\\(?:Users|Windows|Program Files|build)(?:\\\S+)/gi,
-    "[path]"
-  );
-  return sanitized.slice(0, 2048);
-}
 
 /**
  * Get credential age warning (if applicable).
@@ -3553,7 +3593,7 @@ async function buildDependencyGraph(
     let frontier: string[] = [rootName];
     const expandedUsedBy = new Set<string>();
 
-    for (let level = 1; level <= depth && frontier.length > 0; level++) {
+    outerLoop: for (let level = 1; level <= depth && frontier.length > 0; level++) {
       if (seenUsedByPaths.size >= DEPENDENCY_GRAPH_MAX_NODES) break;
       const toExpand = frontier.filter((n) => !expandedUsedBy.has(n));
       toExpand.forEach((n) => expandedUsedBy.add(n));
@@ -3573,7 +3613,7 @@ async function buildDependencyGraph(
           if (r.path === filePath) continue;
           const rName = r.path.split("/").pop() ?? "";
           if (!seenUsedByPaths.has(r.path)) {
-            if (seenUsedByPaths.size >= DEPENDENCY_GRAPH_MAX_NODES) break;
+            if (seenUsedByPaths.size >= DEPENDENCY_GRAPH_MAX_NODES) break outerLoop;
             seenUsedByPaths.add(r.path);
             nodes.push({ path: r.path, level, direction: "used_by" });
           }
@@ -3592,8 +3632,8 @@ async function buildDependencyGraph(
 
 export {
   sanitizeErrorMessage,
-  capResponse as _capResponse,
   sanitizeErrorMessage as _sanitizeErrorMessage,
+  capResponse as _capResponse,
   resolveFileFromIndex as _resolveFileFromIndex,
   buildLocalLayer as _buildLocalLayer,
   tryLocalRead as _tryLocalRead,

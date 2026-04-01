@@ -31,6 +31,8 @@ export interface AuditEvent {
 }
 
 let auditLogFile: string | null = null;
+/** Count of audit entries dropped due to file-write failures (for monitoring). */
+let droppedAuditEvents = 0;
 
 /**
  * Configure the audit log file path for compliance export.
@@ -38,6 +40,11 @@ let auditLogFile: string | null = null;
  */
 export function configureAuditLog(filePath: string | undefined): void {
   auditLogFile = filePath ?? null;
+}
+
+/** Returns the number of audit log entries dropped due to file write failures since process start. */
+export function getDroppedAuditEventCount(): number {
+  return droppedAuditEvents;
 }
 
 /**
@@ -66,9 +73,19 @@ export function auditLog(event: AuditEvent): void {
     try {
       fs.appendFileSync(auditLogFile, entryStr + "\n");
     } catch (err) {
-      process.stderr.write(
-        JSON.stringify({ ts, error: "Failed to write audit log file", detail: String(err) }) + "\n"
-      );
+      droppedAuditEvents++;
+      // Emit a warning every 10 dropped events to avoid log flooding while
+      // ensuring the operator is notified that audit entries are being lost.
+      if (droppedAuditEvents === 1 || droppedAuditEvents % 10 === 0) {
+        process.stderr.write(
+          JSON.stringify({
+            ts,
+            error: "Failed to write audit log file",
+            droppedTotal: droppedAuditEvents,
+            detail: String(err),
+          }) + "\n"
+        );
+      }
     }
   }
 }

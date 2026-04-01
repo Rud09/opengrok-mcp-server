@@ -46,6 +46,12 @@ const zIntString = (defaultVal: string) =>
       return n;
     });
 
+/** Like zIntString but also rejects zero and negative values. */
+const zPositiveIntString = (defaultVal: string) =>
+  zIntString(defaultVal).refine((n) => n >= 1, {
+    message: `must be a positive integer (≥ 1)`,
+  });
+
 const ConfigSchema = z.object({
   OPENGROK_BASE_URL: z.string().default(""),
   OPENGROK_USERNAME: z.string().default(""),
@@ -61,18 +67,18 @@ const ConfigSchema = z.object({
     .string()
     .default("true")
     .transform((v) => v.toLowerCase() !== "false"),
-  OPENGROK_CACHE_SEARCH_TTL: zIntString("300"),
-  OPENGROK_CACHE_FILE_TTL: zIntString("600"),
-  OPENGROK_CACHE_HISTORY_TTL: zIntString("1800"),
-  OPENGROK_CACHE_PROJECTS_TTL: zIntString("3600"),
-  OPENGROK_CACHE_MAX_SIZE: zIntString("500"),
-  OPENGROK_CACHE_MAX_BYTES: zIntString("52428800"), // 50 MB default total cache budget
+  OPENGROK_CACHE_SEARCH_TTL: zPositiveIntString("300"),
+  OPENGROK_CACHE_FILE_TTL: zPositiveIntString("600"),
+  OPENGROK_CACHE_HISTORY_TTL: zPositiveIntString("1800"),
+  OPENGROK_CACHE_PROJECTS_TTL: zPositiveIntString("3600"),
+  OPENGROK_CACHE_MAX_SIZE: zPositiveIntString("500"),
+  OPENGROK_CACHE_MAX_BYTES: zPositiveIntString("52428800"), // 50 MB default total cache budget
   // Rate limit
   OPENGROK_RATELIMIT_ENABLED: z
     .string()
     .default("true")
     .transform((v) => v.toLowerCase() !== "false"),
-  OPENGROK_RATELIMIT_RPM: zIntString("60"),
+  OPENGROK_RATELIMIT_RPM: zPositiveIntString("60"),
   // Proxy
   HTTP_PROXY: z.string().default(""),
   HTTPS_PROXY: z.string().default(""),
