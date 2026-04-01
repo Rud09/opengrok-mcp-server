@@ -1,59 +1,20 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
 /**
  * Tests for per-tool rate limiting.
  * Verifies token bucket behavior, custom limits, and default limit application.
+ * Now imports the real ToolRateLimiter from its dedicated module.
  */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ToolRateLimiter } from '../server/tool-rate-limiter.js';
+import { DEFAULT_PER_TOOL_LIMITS } from '../server/config.js';
 
-// We'll test the ToolRateLimiter by re-implementing it here in the test
-// since it's not exported. This validates the logic independently.
-class ToolRateLimiterTest {
-  private readonly buckets = new Map<string, { tokens: number; lastRefill: number }>();
-  private readonly limits: Map<string, number>;
-  private readonly defaultLimit: number;
-
-  constructor(limits: Record<string, number>, defaultLimit: number = 60) {
-    this.limits = new Map(Object.entries(limits));
-    this.defaultLimit = defaultLimit;
-  }
-
-  async acquire(toolName: string): Promise<void> {
-    return new Promise((resolve) => {
-      const checkToken = (): void => {
-        const limit = this.limits.get(toolName) ?? this.defaultLimit;
-        const interval = 60000 / limit; // ms per token
-        const now = Date.now();
-
-        let bucket = this.buckets.get(toolName);
-        if (!bucket) {
-          bucket = { tokens: limit, lastRefill: now };
-          this.buckets.set(toolName, bucket);
-        }
-
-        // Refill tokens based on elapsed time
-        const elapsed = now - bucket.lastRefill;
-        const tokensToAdd = (elapsed / interval) * 1;
-        bucket.tokens = Math.min(limit, bucket.tokens + tokensToAdd);
-        bucket.lastRefill = now;
-
-        if (bucket.tokens >= 1) {
-          bucket.tokens -= 1;
-          resolve();
-        } else {
-          // Wait for next token to be available, then try again
-          const waitMs = Math.max(10, (1 - bucket.tokens) * interval);
-          setTimeout(checkToken, waitMs);
-        }
-      };
-
-      checkToken();
-    });
-  }
-}
+// Silence audit log stderr in tests
+vi.mock('../server/audit.js', () => ({
+  auditLog: vi.fn(),
+}));
 
 describe('ToolRateLimiter', () => {
   it('applies default limit when tool name not in config', async () => {
-    const limiter = new ToolRateLimiterTest({}, 60); // default 60 calls/min
+    const limiter = new ToolRateLimiter({}, 60); // default 60 calls/min
     const start = Date.now();
     await limiter.acquire('unknown_tool');
     const elapsed = Date.now() - start;
@@ -66,7 +27,7 @@ describe('ToolRateLimiter', () => {
       opengrok_batch_search: 5,  // 5 calls/min = 1 call per 12000ms
       opengrok_execute: 10,
     };
-    const limiter = new ToolRateLimiterTest(limits);
+    const limiter = new ToolRateLimiter(limits);
     const start = Date.now();
     await limiter.acquire('opengrok_batch_search');
     const elapsed = Date.now() - start;
@@ -75,7 +36,7 @@ describe('ToolRateLimiter', () => {
   });
 
   it('resolves immediately when tokens available', async () => {
-    const limiter = new ToolRateLimiterTest({ opengrok_search_code: 60 });
+    const limiter = new ToolRateLimiter({ opengrok_search_code: 60 });
     const start = Date.now();
     
     // First call should be immediate
@@ -86,7 +47,7 @@ describe('ToolRateLimiter', () => {
 
   it('delays when exhausted (enforces rate limit)', async () => {
     // Use a high-rate limit (120 calls/min = 500ms per token) for test speed
-    const limiter = new ToolRateLimiterTest({ test_tool: 120 }, 60);
+    const limiter = new ToolRateLimiter({ test_tool: 120 }, 60);
     
     // First call consumes one token (immediate)
     const start1 = Date.now();
@@ -121,7 +82,7 @@ describe('ToolRateLimiter', () => {
       tool_a: 5,  // 5 calls/min = 12000ms per token
       tool_b: 60, // 60 calls/min = 1000ms per token
     };
-    const limiter = new ToolRateLimiterTest(limits);
+    const limiter = new ToolRateLimiter(limits);
 
     // Both should resolve immediately (initial tokens available)
     const start = Date.now();
@@ -132,7 +93,7 @@ describe('ToolRateLimiter', () => {
   });
 
   it('maintains separate token buckets per tool', async () => {
-    const limiter = new ToolRateLimiterTest({ 
+    const limiter = new ToolRateLimiter({ 
       tool1: 60, 
       tool2: 60 
     });
@@ -150,6 +111,27 @@ describe('ToolRateLimiter', () => {
     await limiter.acquire('tool2');
     const tool2Elapsed = Date.now() - tool2Start;
     expect(tool2Elapsed).toBeLessThan(50);
+  });
+
+  it('rejects when deadline exceeded', async () => {
+    // 1 call/min = 60 s per token; with maxWaitMs=50ms it should reject immediately
+    const limiter = new ToolRateLimiter({ slow_tool: 1 });
+
+    // Consume the initial token
+    await limiter.acquire('slow_tool');
+
+    // Second call has no token available and a short deadline — should reject
+    await expect(limiter.acquire('slow_tool', 50)).rejects.toThrow(/Rate limit exceeded/);
+  });
+});
+
+describe('DEFAULT_PER_TOOL_LIMITS', () => {
+  it('includes expected tool limits', () => {
+    expect(DEFAULT_PER_TOOL_LIMITS.opengrok_batch_search).toBe(5);
+    expect(DEFAULT_PER_TOOL_LIMITS.opengrok_execute).toBe(10);
+    expect(DEFAULT_PER_TOOL_LIMITS.opengrok_dependency_map).toBe(10);
+    expect(DEFAULT_PER_TOOL_LIMITS.opengrok_call_graph).toBe(5);
+    expect(DEFAULT_PER_TOOL_LIMITS.opengrok_search_and_read).toBe(10);
   });
 });
 
@@ -170,3 +152,4 @@ describe('parsePerToolLimits', () => {
     expect(expectedDefaults.opengrok_dependency_map).toBe(10);
   });
 });
+

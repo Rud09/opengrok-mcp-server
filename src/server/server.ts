@@ -85,6 +85,8 @@ import {
   WhatChangedOutput,
   DependencyMapOutput,
   BlameOutput,
+  FileDiffOutput,
+  CallGraphOutput,
 } from "./models.js";
 import type {
   FileContent,
@@ -108,6 +110,7 @@ import { auditLog } from "./audit.js";
 import { elicitOrFallback } from "./elicitation.js";
 import { sampleOrNull } from "./sampling.js";
 import { sanitizeErrorMessage } from "./redact.js";
+import { ToolRateLimiter } from "./tool-rate-limiter.js";
 
 // Memoized YAML dump of API_SPEC (computed once on first use)
 let _apiSpecYaml: string | undefined;
@@ -492,13 +495,13 @@ Get compiler flags and include paths for a C/C++ file from compile_commands.json
  * then legacy tools (when Code Mode is disabled).
  */
 export const TOOL_REGISTRATION_ORDER: string[] = [
-  // Memory tools (always registered in Code Mode)
+  // Code Mode tools (registered first when OPENGROK_CODE_MODE=true)
+  "opengrok_api",
+  "opengrok_execute",
+  // Memory tools (always registered in Code Mode, after the two core tools)
   "opengrok_memory_status",
   "opengrok_read_memory",
   "opengrok_update_memory",
-  // Code Mode tools (registered when OPENGROK_CODE_MODE=true)
-  "opengrok_api",
-  "opengrok_execute",
   // Legacy tools (registered in standard mode)
   "opengrok_search_code",
   "opengrok_find_file",
@@ -1184,11 +1187,10 @@ async function executeBatchSearch(
 // ---------------------------------------------------------------------------
 
 async function handleSearchAndRead(
-  rawArgs: Record<string, unknown>,
+  args: z.infer<typeof SearchAndReadArgs>,
   client: OpenGrokClient,
   config: Config
 ): Promise<string> {
-  const args = SearchAndReadArgs.parse(rawArgs);
   const searchResults = await client.search(
     args.query,
     args.search_type,
@@ -1538,7 +1540,7 @@ async function dispatchTool(
     }
 
     case "opengrok_search_and_read":
-      return handleSearchAndRead(rawArgs, client, config);
+      return handleSearchAndRead(SearchAndReadArgs.parse(rawArgs), client, config);
 
     case "opengrok_get_symbol_context": {
       const { text } = await handleGetSymbolContextStructured(rawArgs, client, config);
@@ -1727,7 +1729,7 @@ export function createServer(
     registerLegacyTools(server, client, config, local, compactDescriptions, toolRateLimiter);
   }
 
-  // Task 4.5: Register memory files as MCP Resources
+  // Register memory files as MCP Resources
   if (memoryBank) {
     registerMemoryResources(server, memoryBank);
   }
@@ -1735,7 +1737,7 @@ export function createServer(
   // Task 3B: Register tool documentation as MCP Resources at opengrok-docs://tools/{name}
   registerToolDocResources(server);
 
-  // Task 4.6: Register MCP Prompts
+  // Register MCP Prompts
   registerInvestigationPrompts(server);
 
   // Task 5.13: MCP Completions infrastructure ready for SDK v2
@@ -2017,6 +2019,15 @@ function registerCodeModeTools(
       const currentTurn = ++turn;
 
       try {
+        // Reject code containing null bytes or bidi/zero-width override characters.
+        // These can be used to obscure the true content of the submitted code.
+        if (/[\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]/.test(args.code)) {
+          return makeToolError("opengrok_execute", new Error("Code rejected: contains bidi/zero-width characters"));
+        }
+        if (args.code.includes('\0')) {
+          return makeToolError("opengrok_execute", new Error("Code rejected: contains null bytes"));
+        }
+
         const budget = BUDGET_LIMITS[getActiveBudget()];
         // sandboxApi is intentionally created per execution: this gives each invocation a fresh
         // write-call counter (MAX_SANDBOX_WRITES_PER_EXECUTION = 5 per call).
@@ -2098,14 +2109,16 @@ function registerLegacyTools(
 ): void {
   const desc = (full: string, compact: string): string => compactDescriptions ? compact : full;
   // Per-session health check state — scoped so HTTP sessions don't share latency history.
-  let lastHealthCheckLatencyMs: number | null = null;
+  // Rolling window of last 3 latency samples — reduces false-positive "increasing" signals
+  // caused by normal single-sample variance (e.g. 200ms → 305ms → 190ms).
+  const latencyHistory: number[] = [];
   server.registerTool(
     "opengrok_search_code",
     {
       title: "Search Code",
       description: desc(
         "Full-text or symbol search across one or all OpenGrok projects.",
-        "(fallback) search the codebase"
+        "Search code (full-text or symbol)"
       ),
       inputSchema: SearchCodeArgs.shape,
       outputSchema: SearchResultsOutput.shape,
@@ -2165,7 +2178,7 @@ function registerLegacyTools(
     "opengrok_find_file",
     {
       title: "Find File",
-      description: desc("Find files by name across all or one project.", "(fallback) find file by name pattern"),
+      description: desc("Find files by name across all or one project.", "Find file by name"),
       inputSchema: FindFileArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -2195,7 +2208,7 @@ function registerLegacyTools(
       title: "Search Pattern",
       description: desc(
         "Search the codebase using a regular expression pattern.",
-        "(fallback) regex pattern search"
+        "Regex pattern search"
       ),
       inputSchema: SearchPatternArgs.shape,
       annotations: READ_ONLY_OPEN,
@@ -2225,7 +2238,7 @@ function registerLegacyTools(
       title: "Get File Content",
       description: desc(
         "Fetch file content with optional line range.",
-        "(fallback) read file lines — always pass start_line + end_line"
+        "Read file lines (use start_line+end_line)"
       ),
       inputSchema: GetFileContentArgs.shape,
       outputSchema: FileContentOutput.shape,
@@ -2251,7 +2264,7 @@ function registerLegacyTools(
     "opengrok_get_file_history",
     {
       title: "Get File History",
-      description: desc("Show git commit history for a file.", "(fallback) file commit history"),
+      description: desc("Show git commit history for a file.", "File commit history"),
       inputSchema: GetFileHistoryArgs.shape,
       outputSchema: FileHistoryOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -2299,9 +2312,10 @@ function registerLegacyTools(
       title: "Get File Diff",
       description: desc(
         "Diff between two revisions of a file (unified diff format).",
-        "(fallback) diff between two file revisions"
+        "Diff two file revisions"
       ),
       inputSchema: GetFileDiffArgs.shape,
+      outputSchema: FileDiffOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2339,7 +2353,7 @@ function registerLegacyTools(
     "opengrok_browse_directory",
     {
       title: "Browse Directory",
-      description: desc("List files and subdirectories in a project directory.", "(fallback) list directory contents"),
+      description: desc("List files and subdirectories in a project directory.", "List directory contents"),
       inputSchema: BrowseDirectoryArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -2365,7 +2379,7 @@ function registerLegacyTools(
     "opengrok_list_projects",
     {
       title: "List Projects",
-      description: desc("List all indexed OpenGrok projects.", "(fallback) list all indexed projects"),
+      description: desc("List all indexed OpenGrok projects.", "List all indexed projects"),
       inputSchema: ListProjectsArgs.shape,
       outputSchema: ProjectsListOutput.shape,
       annotations: READ_ONLY_OPEN,
@@ -2387,8 +2401,10 @@ function registerLegacyTools(
     {
       title: "Get File Annotate",
       description: desc(
-        "Annotate each line with its last commit (git blame).",
-        "(fallback) line-by-line blame"
+        "Annotate each line with its last commit (git blame). " +
+        "Note: start_line/end_line filtering is applied after fetching the full annotation " +
+        "(OpenGrok API limitation — no partial annotation endpoint exists).",
+        "Line-by-line blame"
       ),
       inputSchema: GetFileAnnotateArgs.shape,
       annotations: READ_ONLY_OPEN,
@@ -2415,7 +2431,7 @@ function registerLegacyTools(
     "opengrok_search_suggest",
     {
       title: "Search Suggest",
-      description: desc("Autocomplete suggestions for a partial search query.", "(fallback) search autocomplete suggestions"),
+      description: desc("Autocomplete suggestions for a partial search query.", "Search autocomplete suggestions"),
       inputSchema: SearchSuggestArgs.shape,
       annotations: READ_ONLY_OPEN,
     },
@@ -2460,7 +2476,7 @@ function registerLegacyTools(
       title: "Batch Search",
       description: desc(
         "Execute 2-5 parallel OpenGrok searches in one call.",
-        "(fallback) 2–5 parallel searches in 1 call"
+        "Run 2–5 parallel searches"
       ),
       inputSchema: BatchSearchArgs.shape,
       outputSchema: BatchSearchOutput.shape,
@@ -2485,7 +2501,7 @@ function registerLegacyTools(
       title: "Search and Read",
       description: desc(
         "Search then read matching files in a single call.",
-        "(fallback) search + surrounding code in 1 call"
+        "Search and read surrounding code"
       ),
       inputSchema: SearchAndReadArgs.shape,
       annotations: READ_ONLY_OPEN,
@@ -2493,11 +2509,8 @@ function registerLegacyTools(
     async (args) => {
       auditLog({ type: "tool_invoke", tool: "opengrok_search_and_read" });
       try {
-        const text = await handleSearchAndRead(
-          args as unknown as Record<string, unknown>,
-          client,
-          config
-        );
+        // args is already validated by the MCP SDK against SearchAndReadArgs.shape
+        const text = await handleSearchAndRead(args, client, config);
         return { content: [{ type: "text", text: capResponse(text) }] };
       } catch (err) {
         return makeToolError("opengrok_search_and_read", err);
@@ -2511,7 +2524,7 @@ function registerLegacyTools(
       title: "Get Symbol Context",
       description: desc(
         "Complete symbol investigation: definition + header + references in one call.",
-        "(fallback) symbol definition + header + refs in 1 call"
+        "Symbol definition, header and refs"
       ),
       inputSchema: GetSymbolContextArgs.shape,
       outputSchema: SymbolContextOutput.shape,
@@ -2555,7 +2568,7 @@ function registerLegacyTools(
       title: "Index Health",
       description: desc(
         "Check OpenGrok server health and indexed project list.",
-        "(fallback) server connectivity and index status"
+        "Server connectivity and index status"
       ),
       inputSchema: IndexHealthArgs.shape,
       outputSchema: {
@@ -2588,14 +2601,21 @@ function registerLegacyTools(
           warnings.push("Could not retrieve project list");
         }
 
-        // Compute staleness signals
+        // Compute staleness signals using a rolling average of the last 3 samples.
+        // A single-sample 1.5× threshold produces too many false positives (e.g.
+        // normal variance 200ms → 305ms → 190ms would falsely trigger "increasing").
+        // The rolling average smooths out transient spikes.
         let latencyTrend: "stable" | "increasing" | "first_check" = "first_check";
         let stalenessScore: "healthy" | "possibly_stale" | "likely_stale" = "healthy";
 
-        if (lastHealthCheckLatencyMs !== null) {
-          latencyTrend = latencyMs > lastHealthCheckLatencyMs * 1.5 ? "increasing" : "stable";
+        if (latencyHistory.length > 0) {
+          const avg = latencyHistory.reduce((a, b) => a + b, 0) / latencyHistory.length;
+          latencyTrend = latencyMs > avg * 1.5 ? "increasing" : "stable";
         }
-        lastHealthCheckLatencyMs = latencyMs;
+
+        // Keep at most the last 3 samples
+        latencyHistory.push(latencyMs);
+        if (latencyHistory.length > 3) latencyHistory.shift();
 
         if (latencyMs > 500) {
           stalenessScore = latencyTrend === "increasing" ? "likely_stale" : "possibly_stale";
@@ -2651,7 +2671,7 @@ function registerLegacyTools(
       title: "Get Compile Info",
       description: desc(
         "Get compiler flags and include paths from compile_commands.json.",
-        "(fallback) compiler flags for a file (requires local compile_commands.json)"
+        "Compiler flags (requires compile_commands.json)"
       ),
       inputSchema: GetCompileInfoArgs.shape,
       annotations: READ_ONLY_LOCAL,
@@ -2677,7 +2697,7 @@ function registerLegacyTools(
       title: "Get File Symbols",
       description: desc(
         "List all symbols (functions, classes, variables) defined in a file.",
-        "(fallback) file symbols list — call before get_file_content"
+        "File symbols list"
       ),
       inputSchema: GetFileSymbolsArgs.shape,
       outputSchema: FileSymbolsOutput.shape,
@@ -2731,9 +2751,10 @@ function registerLegacyTools(
       title: "Get Call Graph",
       description: desc(
         "Find all callers and callees of a function or method symbol.",
-        "(fallback) callers and callees of a symbol"
+        "Callers and callees of a symbol"
       ),
       inputSchema: CallGraphArgs.shape,
+      outputSchema: CallGraphOutput.shape,
       annotations: READ_ONLY_OPEN,
     },
     async (args) => {
@@ -2763,7 +2784,8 @@ function registerLegacyTools(
         };
         return {
           content: [{ type: "text", text }],
-          ...(fmt === "json" ? { structuredContent: structured as unknown as Record<string, unknown> } : {}),
+          // outputSchema is declared — structuredContent must always be present on non-error responses.
+          structuredContent: structured as unknown as Record<string, unknown>,
         };
       } catch (err) {
         return makeToolError("opengrok_call_graph", err);
@@ -2777,7 +2799,7 @@ function registerLegacyTools(
       title: "What Changed",
       description: desc(
         "Show which lines changed recently in a file, grouped by commit.",
-        "(fallback) recent line changes grouped by commit"
+        "Recent line changes grouped by commit"
       ),
       inputSchema: WhatChangedArgs.shape,
       outputSchema: WhatChangedOutput.shape,
@@ -2845,7 +2867,7 @@ function registerLegacyTools(
       title: "Git Blame",
       description: desc(
         "Git blame with optional diff for a file path.",
-        "(fallback) git blame annotation"
+        "Git blame annotation"
       ),
       inputSchema: BlameArgs.shape,
       outputSchema: BlameOutput.shape,
@@ -2867,7 +2889,7 @@ function registerLegacyTools(
         }
 
         const structured: z.infer<typeof BlameOutput> = {
-          _meta: { tool: "opengrok_blame", project: args.project, path: args.path, fetchedAt: new Date().toISOString(), version: VERSION },
+          _meta: { tool: "opengrok_blame", project: args.project, path: args.path, fetchedAt: new Date().toISOString(), version: __VERSION__ },
           entries: displayLines.map((l) => ({
             line: l.lineNumber,
             commit: l.revision ?? "",
@@ -2893,7 +2915,7 @@ function registerLegacyTools(
       title: "Dependency Map",
       description: desc(
         "Build #include/import dependency graph (configurable depth).",
-        "(fallback) #include/import dependency graph, configurable depth"
+        "Include/import dependency graph"
       ),
       inputSchema: DependencyMapArgs.shape,
       outputSchema: DependencyMapOutput.shape,
@@ -2997,7 +3019,7 @@ function registerToolDocResources(server: McpServer): void {
 }
 
 // ---------------------------------------------------------------------------
-// Task 4.5: MCP Resources — expose memory bank files for direct browsing
+// MCP Resources — expose memory bank files for direct browsing
 // ---------------------------------------------------------------------------
 
 function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): void {
@@ -3031,7 +3053,7 @@ function registerMemoryResources(server: McpServer, memoryBank: MemoryBank): voi
 }
 
 // ---------------------------------------------------------------------------
-// Task 4.6: MCP Prompts — reusable investigation workflows
+// MCP Prompts — reusable investigation workflows
 // ---------------------------------------------------------------------------
 
 /**
@@ -3044,6 +3066,7 @@ function sanitizePromptArg(value: string): string {
   return value
     .replace(/`([^`]*)`/g, (_, inner: string) => inner.replace(/[<>]/g, ""))  // strip backtick delimiters and angle brackets inside
     .replace(/[\r\n]+/g, " ")                                          // collapse newlines → space
+    .replace(/[*_#[\]()]/g, "")                                        // strip markdown emphasis/heading/link chars
     .trim()
     .slice(0, 256);                                        // hard cap to prevent oversized inputs
 }
@@ -3218,121 +3241,10 @@ function registerInvestigationPrompts(server: McpServer): void {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Run the server over stdio
-// ---------------------------------------------------------------------------
-
-/**
- * Per-tool rate limiter using token bucket algorithm.
- * Prevents any single tool from monopolizing the connection.
- * Applies per-tool limits on top of the global client rate limit.
- *
- * Uses a single persistent processQueue loop per tool (rather than spawning a
- * fresh setTimeout on every retry), preventing a timer storm when many callers
- * are blocked waiting for a low-RPM tool.
- */
-class ToolRateLimiter {
-  private readonly buckets = new Map<string, { tokens: number; lastRefill: number }>();
-  private readonly limits: Map<string, number>; // tool name → calls per minute
-  private readonly defaultLimit: number;
-  private readonly queues = new Map<string, Array<{ deadline: number; resolve: () => void; reject: (e: Error) => void }>>();
-  private readonly processing = new Map<string, boolean>();
-
-  constructor(limits: Record<string, number>, defaultLimit: number = 60) {
-    this.limits = new Map(Object.entries(limits));
-    this.defaultLimit = defaultLimit;
-  }
-
-  /**
-   * Acquire a token for the given tool name.
-   * Returns immediately if a token is available, otherwise waits up to
-   * `maxWaitMs` (default 30 s). Throws if the limit cannot be satisfied
-   * within the timeout to prevent indefinite request queuing.
-   */
-  async acquire(toolName: string, maxWaitMs = 30_000): Promise<void> {
-    const limit = this.limits.get(toolName) ?? this.defaultLimit;
-    const now = Date.now();
-
-    // Fast path: token available immediately
-    let bucket = this.buckets.get(toolName);
-    if (!bucket) {
-      bucket = { tokens: limit, lastRefill: now };
-      this.buckets.set(toolName, bucket);
-    } else {
-      const interval = 60000 / limit;
-      const elapsed = now - bucket.lastRefill;
-      bucket.tokens = Math.min(limit, bucket.tokens + (elapsed / interval));
-      bucket.lastRefill = now;
-    }
-    if (bucket.tokens >= 1) {
-      bucket.tokens -= 1;
-      return;
-    }
-
-    // Slow path: enqueue and wait for a processing loop tick
-    return new Promise<void>((resolve, reject) => {
-      const deadline = now + maxWaitMs;
-      let queue = this.queues.get(toolName);
-      if (!queue) {
-        queue = [];
-        this.queues.set(toolName, queue);
-      }
-      queue.push({ deadline, resolve, reject });
-      if (!this.processing.get(toolName)) {
-        this.processing.set(toolName, true);
-        void this.processQueue(toolName);
-      }
-    });
-  }
-
-  private async processQueue(toolName: string): Promise<void> {
-    const limit = this.limits.get(toolName) ?? this.defaultLimit;
-    const interval = 60000 / limit; // ms per token
-
-    while (true) {
-      const queue = this.queues.get(toolName);
-      if (!queue || queue.length === 0) {
-        this.processing.set(toolName, false);
-        return;
-      }
-
-      const now = Date.now();
-      // Expire any callers that have passed their deadline
-      while (queue.length > 0 && now > (queue[0]?.deadline ?? 0)) {
-        const expired = queue.shift();
-        if (!expired) break;
-        const err = new Error(`Rate limit exceeded for ${toolName}: no token available within the timeout`);
-        auditLog({ type: "rate_limited", tool: toolName, detail: err.message.slice(0, 200) });
-        expired.reject(err);
-      }
-      if (queue.length === 0) {
-        this.processing.set(toolName, false);
-        return;
-      }
-
-      // Refill bucket
-      const bucket = this.buckets.get(toolName);
-      if (!bucket) { this.processing.set(toolName, false); return; }
-      const elapsed = now - bucket.lastRefill;
-      bucket.tokens = Math.min(limit, bucket.tokens + (elapsed / interval));
-      bucket.lastRefill = now;
-
-      if (bucket.tokens >= 1) {
-        bucket.tokens -= 1;
-        queue.shift()?.resolve();
-      } else {
-        // Sleep until next token is available
-        const waitMs = Math.max(10, Math.ceil((1 - bucket.tokens) * interval));
-        await new Promise<void>((r) => setTimeout(r, waitMs));
-      }
-    }
-  }
-}
-
 let _sighupRegistered = false;
 
 /**
- * Task 4.9: Setup handlers for notifications/tools/list_changed.
+ * Setup handlers for notifications/tools/list_changed.
  * Monitors for config changes (SIGHUP) and connectivity status changes.
  *
  * @param configLoader - Function that resolves the full config, including keychain
@@ -3354,6 +3266,17 @@ function setupNotificationHandlers(
     try {
       auditLog({ type: "config_load", detail: "SIGHUP: config reload initiated" });
       logger.info("Received SIGHUP, reloading config...");
+
+      // IMPORTANT: Only environment-variable-sourced fields (e.g. OPENGROK_CODE_MODE,
+      // OPENGROK_CONTEXT_BUDGET) are re-read on SIGHUP. Changes to OPENGROK_BASE_URL,
+      // OPENGROK_USERNAME, OPENGROK_PASSWORD, and all other credentials are NOT applied
+      // because live tool handlers hold a closure over the original frozen config object
+      // and the OpenGrokClient was constructed at startup with the initial credentials.
+      // A full process restart is required for URL and credential changes to take effect.
+      logger.warn(
+        "SIGHUP: OPENGROK_BASE_URL and credential changes require a full process restart to take effect. " +
+        "Only runtime flags (e.g. OPENGROK_CODE_MODE, OPENGROK_CONTEXT_BUDGET) are re-applied."
+      );
 
       // Clear the singleton so the next loadConfig() re-reads from process.env
       resetConfig();
@@ -3380,7 +3303,7 @@ function setupNotificationHandlers(
 }
 
 /**
- * Task 4.9: Start health check polling after server connects.
+ * Start health check polling after server connects.
  * Every 5 minutes, tests connectivity and sends notification if status changes.
  * Returns the interval ID so it can be cleaned up if needed.
  */
@@ -3461,14 +3384,14 @@ export async function runServer(
     );
   }
 
-  // Task 4.14: Check credential age and warn if stale
+  // Check credential age and warn if stale
   const credentialAgeWarning = getCredentialAgeWarning();
   if (credentialAgeWarning) {
-    logger.warn(`Task 4.14 — ${credentialAgeWarning}`);
+    logger.warn(credentialAgeWarning);
     auditLog({ type: "config_load", detail: credentialAgeWarning });
   }
 
-  // Task 4.9: Monitor config changes and connectivity for tool list changes
+  // Monitor config changes and connectivity for tool list changes
   setupNotificationHandlers(server, client, config, configLoader);
 
   await server.connect(transport);
@@ -3484,7 +3407,6 @@ export async function runServer(
 
 /**
  * Get credential age warning (if applicable).
- * Task 4.14: Credential Rotation Warnings
  * Returns warning string if credentials are older than 90 days.
  */
 function getCredentialAgeWarning(): string | null {
@@ -3501,9 +3423,12 @@ function getCredentialAgeWarning(): string | null {
  * Each path segment is percent-encoded to handle spaces and special chars.
  */
 function buildXrefUri(baseUrl: string, project: string, filePath: string): string {
+  // Strip any trailing slash from baseUrl to prevent double-slash in the URI
+  // (e.g. "https://host/" + "/xref/..." → "https://host//xref/..." is invalid).
+  const normalizedBase = baseUrl.replace(/\/+$/, "");
   const encodedProject = encodeURIComponent(project);
   const encodedPath = filePath.split("/").map((seg) => encodeURIComponent(seg)).join("/");
-  return `${baseUrl}/xref/${encodedProject}${encodedPath}`;
+  return `${normalizedBase}/xref/${encodedProject}${encodedPath}`;
 }
 
 const DEPENDENCY_GRAPH_MAX_NODES = 50;

@@ -632,7 +632,7 @@ describe('BlameArgs superRefine validation', () => {
 // ---------------------------------------------------------------------------
 // audit.ts — appendFileSync error fallback branch (lines 69-72)
 // ---------------------------------------------------------------------------
-import { auditLog, configureAuditLog } from '../server/audit.js';
+import { auditLog, configureAuditLog, getAuditWriteQueue } from '../server/audit.js';
 
 describe('auditLog file write error fallback', () => {
   afterEach(() => {
@@ -640,14 +640,17 @@ describe('auditLog file write error fallback', () => {
     vi.restoreAllMocks();
   });
 
-  it('writes fallback error to stderr when audit file path is unwritable', () => {
-    // Use a path whose parent directory does not exist — appendFileSync will throw ENOENT
+  it('writes fallback error to stderr when audit file path is unwritable', async () => {
+    // Use a path whose parent directory does not exist — fsp.appendFile will throw ENOENT
     configureAuditLog('/nonexistent_dir_xyz/audit.log');
     const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
     auditLog({ type: 'config_load' });
 
-    // Should have written twice: once for the event, once for the fallback error
+    // Wait for the async write queue to flush (including the error-fallback write)
+    await getAuditWriteQueue();
+
+    // Should have written twice: once for the event (sync), once for the fallback error (async)
     expect(stderrSpy).toHaveBeenCalledTimes(2);
     const secondCall = stderrSpy.mock.calls[1][0] as string;
     const parsed = JSON.parse(secondCall.trim());

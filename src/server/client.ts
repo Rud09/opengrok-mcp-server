@@ -7,7 +7,7 @@ import pRetry, { AbortError } from "p-retry";
 import { minimatch } from "minimatch";
 import { URL } from "url";
 import { isIPv4, isIPv6 } from "node:net";
-import { Agent } from "undici";
+import { Agent, ProxyAgent, type Dispatcher } from "undici";
 import type { Config } from "./config";
 import { logger } from "./logger.js";
 import type {
@@ -103,6 +103,7 @@ interface CacheEntry<V> {
 export class TTLCache<K, V> {
   private map = new Map<K, CacheEntry<V>>();
   private totalBytes = 0;
+  private writeCount = 0;
 
   constructor(
     private readonly maxEntries: number,
@@ -167,18 +168,13 @@ export class TTLCache<K, V> {
     return this.get(key) !== undefined;
   }
 
-  private writeCount = 0;
-
   private evictExpired(): void {
     const now = Date.now();
     for (const [k, entry] of this.map) {
-      /* v8 ignore start -- time-based branch; entries expire only when real time passes,
-         not exercised in unit tests where Date.now() is effectively frozen */
       if (now > entry.expiresAt) {
         this.totalBytes -= entry.sizeBytes;
         this.map.delete(k);
       }
-      /* v8 ignore stop */
     }
   }
 
@@ -438,7 +434,7 @@ export class OpenGrokClient {
   private readonly authHeader: string | undefined;
   private readonly verifySsl: boolean;
   private readonly rateLimiter: RateLimiter | undefined;
-  private readonly agent: Agent | undefined;
+  private readonly agent: Dispatcher | undefined;
   private annotateEndpoint: 'annotate' | 'xref' | null = null;
 
   // Caches
@@ -464,9 +460,24 @@ export class OpenGrokClient {
       keepAliveTimeout: 60_000,
       keepAliveMaxTimeout: 300_000,
     };
-    this.agent = this.verifySsl
-      ? new Agent(agentOptions)
-      : new Agent({ ...agentOptions, connect: { rejectUnauthorized: false } });
+
+    // Apply HTTP/HTTPS proxy if configured. undici does NOT auto-read standard
+    // proxy env vars (unlike node-fetch), so we must wire ProxyAgent explicitly.
+    // HTTPS_PROXY takes precedence over HTTP_PROXY when both are set.
+    const proxyUrl = config.HTTPS_PROXY || config.HTTP_PROXY;
+    if (proxyUrl) {
+      /* v8 ignore start -- proxy path; tested in client-extended with proxy config */
+      this.agent = new ProxyAgent({
+        uri: proxyUrl,
+        ...agentOptions,
+        ...(this.verifySsl ? {} : { requestTls: { rejectUnauthorized: false } }),
+      });
+      /* v8 ignore stop */
+    } else {
+      this.agent = this.verifySsl
+        ? new Agent(agentOptions)
+        : new Agent({ ...agentOptions, connect: { rejectUnauthorized: false } });
+    }
 
     if (config.OPENGROK_USERNAME && config.OPENGROK_PASSWORD) {
       const b64 = Buffer.from(
@@ -762,11 +773,14 @@ export class OpenGrokClient {
   ): Promise<FileHistory> {
     assertSafePath(path);
     const normalizedPath = path.replace(/^\/+/, "");
-    // Cache key intentionally omits maxEntries: the full history list is cached
-    // once per (project, path) and then sliced to the requested length on retrieval.
-    // A caller requesting fewer entries than a prior caller will always get correct
-    // results (slice is safe). A caller requesting more entries will also get correct
-    // results — the cache stores the full API response, not a truncated one.
+    // Cache key intentionally omits maxEntries. Correctness relies on the upstream
+    // OpenGrok API returning the full history list in a single response (no server-side
+    // pagination applied to the history endpoint). If the API returns exactly N entries
+    // on the first call, a subsequent caller requesting >N entries will silently receive
+    // N with no truncation indicator. This is an accepted trade-off: the cache stores
+    // the full API response and slices to the requested length on retrieval.
+    // If the upstream API begins paginating, add maxEntries to the cache key to
+    // prevent silent under-delivery.
     const cacheKey = `${project}:${normalizedPath}`;
 
     let history = this.historyCache?.get(cacheKey);

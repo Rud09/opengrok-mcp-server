@@ -25,6 +25,10 @@ export class SandboxWorkerPool {
   private idleTimers = new Map<WorkerHandle, ReturnType<typeof setTimeout>>();
 
   acquire(): WorkerHandle {
+    // `idle.pop()` atomically removes the handle from the idle list before any
+    // postMessage is sent. Because Node.js is single-threaded (event loop), no
+    // concurrent acquire() call can observe and dispatch the same handle between
+    // the pop() and the first postMessage — preventing double-dispatch.
     const handle = this.idle.pop();
     if (handle) {
       const timer = this.idleTimers.get(handle);

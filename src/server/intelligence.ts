@@ -81,6 +81,13 @@ export async function buildFileOverview(
 const MAX_CALL_CHAIN_DEPTH = 4;
 
 /**
+ * Maximum total recursive search calls allowed in a single buildCallChain invocation.
+ * Without this cap, worst-case fan-out at depth=4 is 10×3×10×3×10×3×10×3 = 810,000 searches.
+ * The cap limits actual API requests to a predictable budget.
+ */
+const MAX_CALL_CHAIN_SEARCH_BUDGET = 50;
+
+/**
  * Trace callers (or callees) of a symbol up to MAX_CALL_CHAIN_DEPTH.
  *
  * IMPORTANT: callees direction is NOT implemented (requires AST).
@@ -95,10 +102,14 @@ export async function buildCallChain(
 ): Promise<CallChainAPIResult> {
   const cappedDepth = Math.min(depth, MAX_CALL_CHAIN_DEPTH);
 
+  // Shared mutable budget counter — passed by reference through recursion so
+  // all branches share the same call budget and total searches are bounded.
+  const searchBudget = { remaining: MAX_CALL_CHAIN_SEARCH_BUDGET };
+
   const callers: CallNode[] =
     direction === "callees"
       ? []
-      : await traceCallers(client, symbol, cappedDepth, cappedDepth, project, new Set());
+      : await traceCallers(client, symbol, cappedDepth, cappedDepth, project, new Set(), new Map(), searchBudget);
 
   // Callees require AST analysis — not available via OpenGrok REST API
   const callees: CallNode[] = [];
@@ -136,9 +147,16 @@ async function traceCallers(
   maxDepth: number,
   project: string | undefined,
   visited: Set<string>,
-  symbolsCache: Map<string, import("./models.js").FileSymbols> = new Map()
+  symbolsCache: Map<string, import("./models.js").FileSymbols> = new Map(),
+  searchBudget: { remaining: number } = { remaining: MAX_CALL_CHAIN_SEARCH_BUDGET }
 ): Promise<CallNode[]> {
   visited.add(symbol);
+
+  // Enforce the total search budget across all recursive branches.
+  if (searchBudget.remaining <= 0) {
+    return [];
+  }
+  searchBudget.remaining--;
 
   const projects = project ? [project] : undefined;
   let searchResult;
@@ -169,7 +187,7 @@ async function traceCallers(
       };
       nodes.push(node);
 
-      if (callerSym && depth > 1) {
+      if (callerSym && depth > 1 && !visited.has(callerSym) && searchBudget.remaining > 0) {
         const subCallers = await traceCallers(
           client,
           callerSym,
@@ -177,7 +195,8 @@ async function traceCallers(
           maxDepth,
           project,
           visited,
-          symbolsCache
+          symbolsCache,
+          searchBudget
         );
         nodes.push(...subCallers);
       }

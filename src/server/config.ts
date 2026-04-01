@@ -135,6 +135,8 @@ export const DEFAULT_PER_TOOL_LIMITS: Record<string, number> = {
   opengrok_execute: 10,        // Code Mode sandbox overhead
   opengrok_dependency_map: 10, // BFS = multiple requests
   opengrok_update_memory: 20,  // disk writes — allow bursting but not spamming
+  opengrok_call_graph: 5,      // recursive O(n²) search fan-out; budget counter provides inner cap
+  opengrok_search_and_read: 10, // compound tool — performs multiple API calls per invocation
 };
 
 // Parse per-tool rate limit config from environment string

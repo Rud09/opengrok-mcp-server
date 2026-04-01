@@ -16,6 +16,12 @@ const DEBUG_ENABLED = LOG_LEVEL === "debug";
 /**
  * Redact sensitive values from an arbitrary log payload before writing to stderr.
  * Handles strings, Error objects, and nested plain objects.
+ *
+ * NOTE: Object redaction is shallow (depth 1). Nested objects beyond depth 1
+ * are recursed but only their immediate string values are redacted — deeply
+ * nested Authorization headers or credentials are not guaranteed to be caught.
+ * For structured payloads with unknown depth, prefer redactString() at the
+ * callsite instead.
  */
 function sanitizeMeta(meta: unknown): unknown {
   if (meta === null || meta === undefined || meta === "") return meta;

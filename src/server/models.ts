@@ -518,3 +518,52 @@ export const BlameOutput = z.object({
   _meta: MetaSchema,
   entries: z.array(BlameLineEntry),
 });
+
+/** Output schema for opengrok_get_file_diff */
+export const FileDiffOutput = z.object({
+  _meta: z.object({
+    tool: z.string(),
+    project: z.string(),
+    path: z.string(),
+    rev1: z.string(),
+    rev2: z.string(),
+    fetchedAt: z.string(),
+    version: z.string(),
+  }),
+  stats: z.object({
+    linesAdded: z.number(),
+    linesRemoved: z.number(),
+  }).optional(),
+  hunks: z.array(
+    z.object({
+      oldStart: z.number(),
+      oldCount: z.number(),
+      newStart: z.number(),
+      newCount: z.number(),
+      lines: z.number(),
+    })
+  ),
+});
+
+/** Output schema for opengrok_call_graph */
+export const CallGraphOutput = z.object({
+  _meta: z.object({
+    tool: z.string(),
+    project: z.string(),
+    symbol: z.string(),
+    fetchedAt: z.string(),
+    version: z.string(),
+  }),
+  results: z.array(
+    z.object({
+      file: z.string(),
+      project: z.string(),
+      lines: z.array(
+        z.object({
+          number: z.number(),
+          content: z.string(),
+        })
+      ),
+    })
+  ),
+});

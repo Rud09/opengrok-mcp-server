@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { sanitizeSandboxError } from '../server/sandbox.js';
-import { auditLog, configureAuditLog, exportAuditLogAsCSV, exportAuditLogAsJSON } from '../server/audit.js';
+import { auditLog, configureAuditLog, exportAuditLogAsCSV, exportAuditLogAsJSON, getAuditWriteQueue } from '../server/audit.js';
 
 // ---------------------------------------------------------------------------
 // Task 4.10 — sanitizeSandboxError
@@ -248,12 +248,13 @@ describe('auditLog with file output', () => {
     configureAuditLog(undefined);
   });
 
-  it('appends to file when configureAuditLog is set', () => {
+  it('appends to file when configureAuditLog is set', async () => {
     tmpFile = path.join(os.tmpdir(), `audit-test-${Date.now()}.log`);
     configureAuditLog(tmpFile);
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     auditLog({ type: 'config_load' });
     vi.restoreAllMocks();
+    await getAuditWriteQueue();
     const contents = fs.readFileSync(tmpFile, 'utf-8');
     const parsed = JSON.parse(contents.trim());
     expect(parsed.type).toBe('config_load');

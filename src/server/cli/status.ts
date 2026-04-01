@@ -8,7 +8,24 @@ const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : (process.env[
 
 export async function runStatus(): Promise<void> {
   const config = loadConfig();
-  const client = new OpenGrokClient(config);
+
+  let client: OpenGrokClient;
+  try {
+    client = new OpenGrokClient(config);
+  } catch (e) {
+    const msg = (e as Error).message ?? String(e);
+    if (!config.OPENGROK_BASE_URL || msg.includes("OPENGROK_BASE_URL")) {
+      console.error(
+        "OpenGrok MCP Server is not configured.\n" +
+        "  Run: npx opengrok-mcp-server setup\n" +
+        "  Or set the OPENGROK_BASE_URL environment variable."
+      );
+    } else {
+      console.error(`Configuration error: ${msg}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
 
   console.log(`OpenGrok MCP Server v${VERSION}`);
   console.log(`  URL:       ${config.OPENGROK_BASE_URL}`);

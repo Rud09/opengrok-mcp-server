@@ -160,6 +160,34 @@ describe('elicitOrFallback (unit)', () => {
     const result = await realElicit(mockServer, 'Pick project', schema);
     expect(result.action).toBe('decline');
   });
+
+  it('falls back to cancel when server.server.elicitInput is not a function (SDK API changed)', async () => {
+    // This test validates that the server.server cast in elicitation.ts correctly handles
+    // the case where the SDK renames or removes the internal server property.
+    // If this test fails, the SDK API has changed and elicitation.ts must be updated.
+    const { elicitOrFallback: realElicit } = await vi.importActual<
+      typeof import('../server/elicitation.js')
+    >('../server/elicitation.js');
+
+    // Simulate a future SDK where server.server does not have elicitInput
+    const mockServer = { server: {} } as unknown as McpServer;
+    const result = await realElicit(mockServer, 'Pick project', schema);
+    expect(result.action).toBe('cancel');
+  });
+
+  it('SDK cast is valid: real McpServer instance has server.elicitInput accessible', async () => {
+    // Validates the server.server cast against the CURRENTLY INSTALLED SDK version.
+    // If this test fails after an SDK upgrade, update the cast in elicitation.ts.
+    const { McpServer: RealMcpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+    const realServer = new RealMcpServer({
+      name: 'test',
+      version: '1.0',
+    });
+    const lowLevel = (realServer as unknown as { server?: { elicitInput?: unknown } }).server;
+    expect(typeof lowLevel?.elicitInput, 
+      'server.server.elicitInput must be a function — if this fails, the SDK renamed or moved the property; update elicitation.ts'
+    ).toBe('function');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,8 @@ import {
   configureAuditLog,
   exportAuditLogAsCSV,
   exportAuditLogAsJSON,
+  getAuditWriteQueue,
+  resetDroppedAuditEventCount,
 } from '../server/audit.js';
 
 describe('auditLog', () => {
@@ -84,24 +86,26 @@ describe('auditLog', () => {
     spy.mockRestore();
   });
 
-  it('writes to file when configureAuditLog is set', () => {
+  it('writes to file when configureAuditLog is set', async () => {
     configureAuditLog(tmpFile);
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     auditLog({ type: 'config_load' });
     spy.mockRestore();
+    await getAuditWriteQueue();
     expect(fs.existsSync(tmpFile)).toBe(true);
     const content = fs.readFileSync(tmpFile, 'utf8');
     expect(content).toContain('config_load');
   });
 
-  it('writes both to stderr and file when file is configured', () => {
+  it('writes both to stderr and file when file is configured', async () => {
     configureAuditLog(tmpFile);
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     auditLog({ type: 'auth_used' });
     expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+    await getAuditWriteQueue();
     const content = fs.readFileSync(tmpFile, 'utf8');
     expect(content).toContain('auth_used');
-    spy.mockRestore();
   });
 
   it('does not write to file when configureAuditLog is not set', () => {
@@ -112,11 +116,12 @@ describe('auditLog', () => {
     expect(fs.existsSync(tmpFile)).toBe(false);
   });
 
-  it('exportAuditLogAsCSV round-trips to CSV', () => {
+  it('exportAuditLogAsCSV round-trips to CSV', async () => {
     configureAuditLog(tmpFile);
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     auditLog({ type: 'tool_invoke', tool: 'opengrok_search', project: 'p1', detail: 'test' });
     spy.mockRestore();
+    await getAuditWriteQueue();
     const csv = exportAuditLogAsCSV(tmpFile);
     expect(csv).toContain('tool_invoke');
     expect(csv).toContain('opengrok_search');
@@ -124,11 +129,12 @@ describe('auditLog', () => {
     expect(csv.split('\n')[0]).toContain('timestamp');
   });
 
-  it('exportAuditLogAsCSV header contains all expected columns', () => {
+  it('exportAuditLogAsCSV header contains all expected columns', async () => {
     configureAuditLog(tmpFile);
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     auditLog({ type: 'config_load' });
     spy.mockRestore();
+    await getAuditWriteQueue();
     const csv = exportAuditLogAsCSV(tmpFile);
     const header = csv.split('\n')[0];
     expect(header).toContain('type');
@@ -137,11 +143,12 @@ describe('auditLog', () => {
     expect(header).toContain('detail');
   });
 
-  it('exportAuditLogAsJSON returns parseable array', () => {
+  it('exportAuditLogAsJSON returns parseable array', async () => {
     configureAuditLog(tmpFile);
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     auditLog({ type: 'sandbox_exec', tool: 'opengrok_execute' });
     spy.mockRestore();
+    await getAuditWriteQueue();
     const json = exportAuditLogAsJSON(tmpFile);
     const arr = JSON.parse(json);
     expect(Array.isArray(arr)).toBe(true);
@@ -149,12 +156,13 @@ describe('auditLog', () => {
     expect(arr[0].type).toBe('sandbox_exec');
   });
 
-  it('exportAuditLogAsJSON multiple entries', () => {
+  it('exportAuditLogAsJSON multiple entries', async () => {
     configureAuditLog(tmpFile);
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     auditLog({ type: 'tool_invoke', tool: 'opengrok_search' });
     auditLog({ type: 'config_load' });
     spy.mockRestore();
+    await getAuditWriteQueue();
     const json = exportAuditLogAsJSON(tmpFile);
     const arr = JSON.parse(json);
     expect(arr.length).toBe(2);
@@ -186,12 +194,13 @@ describe('auditLog', () => {
     spy.mockRestore();
   });
 
-  it('appends multiple entries to file', () => {
+  it('appends multiple entries to file', async () => {
     configureAuditLog(tmpFile);
     const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     auditLog({ type: 'tool_invoke', tool: 'opengrok_search' });
     auditLog({ type: 'rate_limited', tool: 'opengrok_search' });
     spy.mockRestore();
+    await getAuditWriteQueue();
     const content = fs.readFileSync(tmpFile, 'utf8');
     const lines = content.trim().split('\n');
     expect(lines.length).toBe(2);

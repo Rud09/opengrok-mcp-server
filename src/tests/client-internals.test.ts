@@ -221,6 +221,36 @@ describe('TTLCache', () => {
     expect(cache.get('k0')).toBeUndefined();
     expect(cache.get('k10')).toBe(10);
   });
+
+  it('evictExpired removes expired entries using fake timers', () => {
+    // Use vitest fake timers so the time-based eviction branch is actually exercised
+    // in a controlled way — no real-time spinning, no flakiness.
+    vi.useFakeTimers();
+    try {
+      const ttlMs = 5_000; // 5 second TTL
+      const cache = new TTLCache<string, number>(100, 100_000, ttlMs);
+
+      // Insert 9 entries at t=0
+      for (let i = 0; i < 9; i++) cache.set(`k${i}`, i, 8);
+
+      // Advance clock past the TTL so all entries are now expired
+      vi.advanceTimersByTime(ttlMs + 1);
+
+      // Insert 10th entry — this is the 10th write, which triggers evictExpired().
+      // At this point Date.now() returns a time after all entries' expiresAt,
+      // so the eviction loop removes all 9 expired entries.
+      cache.set('k10', 10, 8);
+
+      // All original entries should be gone (evicted as expired)
+      for (let i = 0; i < 9; i++) {
+        expect(cache.get(`k${i}`), `k${i} should be evicted`).toBeUndefined();
+      }
+      // The newly inserted entry must survive
+      expect(cache.get('k10')).toBe(10);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // -----------------------------------------------------------------------

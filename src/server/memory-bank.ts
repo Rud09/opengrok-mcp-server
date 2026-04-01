@@ -11,6 +11,7 @@
  * - Uses __dirname-relative default (NOT process.cwd()) for correct VS Code subprocess behavior
  */
 
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
@@ -235,10 +236,12 @@ export class MemoryBank {
     await prior;
     try {
       await this._writeUnlocked(filename, content, mode);
+      // Delete INSIDE the try block, before releasing the lock, so that the next
+      // waiting writer cannot observe a stale hash between the delete and the release.
+      this.lastReadHash.delete(filename);
     } finally {
       releaseRef();
     }
-    this.lastReadHash.delete(filename);
   }
 
   private async _writeUnlocked(
@@ -414,11 +417,11 @@ export class MemoryBank {
   }
 
   private simpleHash(s: string): string {
-    let h = 0;
-    for (let i = 0; i < s.length; i++) {
-      h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-    }
-    return h.toString(36);
+    // SHA-256 truncated to 16 hex chars — collision-safe for delta detection.
+    // (The previous 32-bit polynomial had ~1% birthday collision probability
+    // at 65K inputs, which could cause readWithDelta() to return "[unchanged]"
+    // when the content had actually changed.)
+    return crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);
   }
 
   /**

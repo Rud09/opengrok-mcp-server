@@ -6,10 +6,12 @@
  * file/code content.
  *
  * When OPENGROK_AUDIT_LOG_FILE is configured, also appends to file for
- * compliance export.
+ * compliance export. File writes are non-blocking (async) to avoid stalling
+ * the event loop on every tool invocation.
  */
 
 import * as fs from "fs";
+import * as fsp from "fs/promises";
 
 export type AuditEventType =
   | "tool_invoke"
@@ -35,6 +37,34 @@ let auditLogFile: string | null = null;
 let droppedAuditEvents = 0;
 
 /**
+ * Simple async write queue — serializes concurrent appends to the audit log
+ * file to prevent interleaved lines under high concurrency while remaining
+ * non-blocking for the caller (fire-and-forget).
+ */
+let _writeQueue: Promise<void> = Promise.resolve();
+
+function enqueueAuditWrite(filePath: string, line: string): void {
+  _writeQueue = _writeQueue.then(() =>
+    fsp.appendFile(filePath, line).catch((err) => {
+      droppedAuditEvents++;
+      // Emit a warning every 10 dropped events to avoid log flooding while
+      // ensuring the operator is notified that audit entries are being lost.
+      if (droppedAuditEvents === 1 || droppedAuditEvents % 10 === 0) {
+        const ts = new Date().toISOString();
+        process.stderr.write(
+          JSON.stringify({
+            ts,
+            error: "Failed to write audit log file",
+            droppedTotal: droppedAuditEvents,
+            detail: String(err),
+          }) + "\n"
+        );
+      }
+    })
+  );
+}
+
+/**
  * Configure the audit log file path for compliance export.
  * When set, audit events are appended to this file in addition to stderr.
  */
@@ -45,6 +75,17 @@ export function configureAuditLog(filePath: string | undefined): void {
 /** Returns the number of audit log entries dropped due to file write failures since process start. */
 export function getDroppedAuditEventCount(): number {
   return droppedAuditEvents;
+}
+
+/** Exposed for testing: returns the current write queue promise so tests can await all pending writes. */
+export function getAuditWriteQueue(): Promise<void> {
+  return _writeQueue;
+}
+
+/** Exposed for testing: resets the dropped event counter. */
+export function resetDroppedAuditEventCount(): void {
+  droppedAuditEvents = 0;
+  _writeQueue = Promise.resolve();
 }
 
 /**
@@ -70,23 +111,8 @@ export function auditLog(event: AuditEvent): void {
   process.stderr.write(entryStr + "\n");
 
   if (auditLogFile) {
-    try {
-      fs.appendFileSync(auditLogFile, entryStr + "\n");
-    } catch (err) {
-      droppedAuditEvents++;
-      // Emit a warning every 10 dropped events to avoid log flooding while
-      // ensuring the operator is notified that audit entries are being lost.
-      if (droppedAuditEvents === 1 || droppedAuditEvents % 10 === 0) {
-        process.stderr.write(
-          JSON.stringify({
-            ts,
-            error: "Failed to write audit log file",
-            droppedTotal: droppedAuditEvents,
-            detail: String(err),
-          }) + "\n"
-        );
-      }
-    }
+    // Non-blocking: enqueue the write so the event loop is not stalled on I/O.
+    enqueueAuditWrite(auditLogFile, entryStr + "\n");
   }
 }
 
