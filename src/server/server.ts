@@ -14,7 +14,7 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
 import { z, ZodError } from "zod";
 import type { OpenGrokClient } from "./client.js";
-import { extractLineRange } from "./client.js";
+import { assertSafePath, extractLineRange } from "./client.js";
 import type { Config } from "./config.js";
 import { parsePerToolLimits, getConfigDirectory, checkCredentialAge, loadConfig, resetConfig } from "./config.js";
 import {
@@ -590,6 +590,11 @@ async function tryLocalRead(
   startLine?: number,
   endLine?: number
 ): Promise<FileContent | null> {
+  try {
+    assertSafePath(filePath);
+  } catch {
+    return null;
+  }
   const normalized = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
   if (
     normalized.includes("../") ||
@@ -665,6 +670,11 @@ async function readFileAtAbsPath(
   startLine?: number,
   endLine?: number
 ): Promise<FileContent | null> {
+  try {
+    assertSafePath(absPath);
+  } catch {
+    return null;
+  }
   try {
     const rawContent = await fsp.readFile(absPath, "utf8");
     const { text: content, totalLines } = extractLineRange(rawContent, startLine, endLine);
@@ -1668,10 +1678,10 @@ export function createServer(
     // LLM cannot see or call legacy tools in this mode; all queries go through the sandbox.
     registerCodeModeTools(server, client, config, memoryBank, local, toolRateLimiter);
   } else {
-    // Standard mode: 23 legacy tools only. Memory tools are Code Mode only.
+    // Standard mode: legacy tools only. Memory tools are exclusive to Code Mode.
     // Compact descriptions when budget=minimal to save ~1,400 tokens.
     const compactDescriptions = config.OPENGROK_CONTEXT_BUDGET === "minimal";
-    registerLegacyTools(server, client, config, local, compactDescriptions, undefined, toolRateLimiter);
+    registerLegacyTools(server, client, config, local, compactDescriptions, toolRateLimiter);
   }
 
   // Task 4.5: Register memory files as MCP Resources
@@ -2038,7 +2048,6 @@ function registerLegacyTools(
   config: Config,
   local: LocalLayer,
   compactDescriptions: boolean,
-  memoryBank?: MemoryBank,
   toolRateLimiter?: ToolRateLimiter
 ): void {
   const desc = (full: string, compact: string): string => compactDescriptions ? compact : full;
@@ -2888,10 +2897,6 @@ function registerLegacyTools(
     }
   );
 
-  // Memory bank tools — available when a MemoryBank is provided
-  if (memoryBank) {
-    registerMemoryTools(server, memoryBank, config);
-  }
   // registerLegacyTools intentionally returns void — server is mutated in place
 }
 
@@ -3358,6 +3363,7 @@ export async function runServer(
 
 function sanitizeErrorMessage(message: string): string {
   let sanitized = message.replace(/Basic\s+[A-Za-z0-9+/=]+/gi, "Basic [REDACTED]");
+  sanitized = sanitized.replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [REDACTED]");
   sanitized = sanitized.replace(/:[^:@\s]+@/g, ":***@");
   sanitized = sanitized.replace(
     /\/(?:home|tmp|var|usr|build|opt|mnt|srv)(?:\/\S+)/g,
@@ -3391,6 +3397,8 @@ function getCredentialAgeWarning(): string | null {
  *             Uses "full" search on import/include patterns to find what the file depends on.
  * "used_by" — finds files that reference/call symbols from this file (refs search by filename).
  */
+const DEPENDENCY_GRAPH_MAX_NODES = 50;
+
 async function buildDependencyGraph(
   client: OpenGrokClient,
   project: string,
@@ -3410,6 +3418,7 @@ async function buildDependencyGraph(
     const expandedUses = new Set<string>();
 
     for (let level = 1; level <= depth && frontier.length > 0; level++) {
+      if (seenUsesPaths.size >= DEPENDENCY_GRAPH_MAX_NODES) break;
       const toExpand = frontier.filter((p) => !expandedUses.has(p));
       toExpand.forEach((p) => expandedUses.add(p));
       frontier = [];
@@ -3428,6 +3437,7 @@ async function buildDependencyGraph(
         for (const r of results.results) {
           if (r.path === filePath) continue;
           if (!seenUsesPaths.has(r.path)) {
+            if (seenUsesPaths.size >= DEPENDENCY_GRAPH_MAX_NODES) break;
             seenUsesPaths.add(r.path);
             nodes.push({ path: r.path, level, direction: "uses" });
           }
@@ -3443,6 +3453,7 @@ async function buildDependencyGraph(
     const expandedUsedBy = new Set<string>();
 
     for (let level = 1; level <= depth && frontier.length > 0; level++) {
+      if (seenUsedByPaths.size >= DEPENDENCY_GRAPH_MAX_NODES) break;
       const toExpand = frontier.filter((n) => !expandedUsedBy.has(n));
       toExpand.forEach((n) => expandedUsedBy.add(n));
       frontier = [];
@@ -3461,6 +3472,7 @@ async function buildDependencyGraph(
           if (r.path === filePath) continue;
           const rName = r.path.split("/").pop() ?? "";
           if (!seenUsedByPaths.has(r.path)) {
+            if (seenUsedByPaths.size >= DEPENDENCY_GRAPH_MAX_NODES) break;
             seenUsedByPaths.add(r.path);
             nodes.push({ path: r.path, level, direction: "used_by" });
           }
