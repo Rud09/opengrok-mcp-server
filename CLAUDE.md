@@ -46,7 +46,7 @@ All three are bundled by esbuild (`esbuild.js`). The build also copies `emscript
 ### MCP Server layer (`src/server/`)
 
 - **`main.ts`** — Entry point. Loads config, constructs `OpenGrokClient` and `MemoryBank`, calls `runServer()`.
-- **`server.ts`** — Tool registrations via `McpServer.registerTool()` (MCP SDK high-level API): ~20 in standard mode, 5 in Code Mode (`opengrok_api` + `opengrok_execute` + 3 memory tools). Contains `SERVER_INSTRUCTIONS`, `capResponse()`, `sanitizeErrorMessage()`, `registerLegacyTools()`, `registerCodeModeTools()`, and `dispatchTool()`. This is the largest file; tool handlers, MCP Resources, Prompts, Elicitation, and Sampling live here.
+- **`server.ts`** — Tool registrations via `McpServer.registerTool()` (MCP SDK high-level API): ~20 in standard mode, 5 in Code Mode (`opengrok_api` + `opengrok_execute` + 3 memory tools). Contains `SERVER_INSTRUCTIONS`, `capResponse()`, `registerLegacyTools()`, `registerCodeModeTools()`, and `dispatchTool()`. This is the largest file; tool handlers, MCP Resources, Prompts, Elicitation, and Sampling live here.
 - **`config.ts`** — `loadConfig()` parses env vars through a Zod schema. Supports encrypted credential files (AES-256-GCM; auto-upgrades legacy AES-256-CBC). `BUDGET_LIMITS` defines the three context budget tiers. Config is singleton and frozen.
 - **`client.ts`** — `OpenGrokClient`: HTTP fetches via undici, TTL cache, token-bucket rate limiter, `p-retry` retry logic, SSRF protection (`buildSafeUrl`), path-traversal validation (`assertSafePath`).
 - **`models.ts`** — Zod input schemas for all tools + structured output schemas (`IndexHealthOutput`, `BlameOutput`, `WhatChangedOutput`, `DependencyMapOutput`, etc.). `RESPONSE_FORMAT` is a shared field added to every tool input schema.
@@ -64,6 +64,9 @@ All three are bundled by esbuild (`esbuild.js`). The build also copies `emscript
 - **`audit.ts`** — `auditLog()`: structured audit logging to stderr + optional `OPENGROK_AUDIT_LOG_FILE` (CSV/JSON). All tool invocations emit audit events.
 - **`elicitation.ts`** — MCP Elicitation wrapper: `server.elicitInput()` for project-picker form with graceful fallback for unsupported clients.
 - **`sampling.ts`** — `sampleOrNull()`: production MCP Sampling with retry/backoff/10 s timeout/model preference. Used for error explanation and graph summarization.
+- **`redact.ts`** — `redactString()`, `sanitizeErrorMessage()`, `sanitizeSandboxError()`: unified credential/path/PII redaction. Single source-of-truth shared by logger, server error responses, and sandbox error capture.
+- **`sandbox-protocol.ts`** — SharedArrayBuffer layout constants (`STATUS_OFFSET`, `LENGTH_OFFSET`, `DATA_OFFSET`, `DATA_REGION_BYTES`). Shared between `sandbox.ts` (main thread) and `sandbox-worker.ts` (worker) to prevent protocol mismatches.
+- **`tool-rate-limiter.ts`** — `ToolRateLimiter`: per-tool sliding-window token-bucket rate limiting with deadline-based queue expiry. Complements the global client rate limiter with granular per-tool RPM enforcement via `OPENGROK_PER_TOOL_RATELIMIT`.
 - **`http-transport.ts`** — Streamable HTTP transport (`OPENGROK_HTTP_PORT`). Per-session McpServer factory, session TTL sweep, CORS allowlist (`OPENGROK_ALLOWED_ORIGINS`), security headers (CSP, X-Frame-Options, X-Content-Type-Options). OAuth 2.1 resource server: JWT validation via `jose`, no `/token` endpoint, RFC 9728 metadata at `/.well-known/oauth-protected-resource`. RBAC enforcement.
 - **`rbac.ts`** — RBAC engine: admin/developer/readonly roles, `hasPermission()`, `parseRbacConfig()`, `ROLE_PERMISSIONS` map, fail-safe readonly default.
 - **`file-cache.ts`** — `FileReferenceCache`: SHA-256 content-addressed cache for `investigation-log.md` (`OPENGROK_ENABLE_FILES_API`).
