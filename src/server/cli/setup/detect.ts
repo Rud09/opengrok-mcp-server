@@ -7,6 +7,7 @@ export interface DetectedClients {
   claudeCode: boolean;
   vscode: boolean;
   codex: boolean;
+  copilotCli: boolean;
 }
 
 export function detectInstalledClients(): DetectedClients {
@@ -27,5 +28,14 @@ export function detectInstalledClients(): DetectedClients {
     : join(homedir(), '.config', 'codex', 'config.toml');
   const codex = existsSync(codexConfigPath);
 
-  return { claudeCode, vscode, codex };
+  // GitHub Copilot CLI: detect via `copilot` binary or existing config dir
+  const copilotBinary = spawnSync('copilot', ['--version'], {
+    stdio: 'pipe',
+    timeout: 5000,
+    shell: false,
+  }).status === 0;
+  const copilotConfigDir = join(homedir(), '.copilot');
+  const copilotCli = copilotBinary || existsSync(copilotConfigDir);
+
+  return { claudeCode, vscode, codex, copilotCli };
 }

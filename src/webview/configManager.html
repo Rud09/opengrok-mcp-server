@@ -384,11 +384,11 @@
 
     <!-- Actions -->
     <div class="actions">
-        <button class="btn-secondary" onclick="testConnection()" id="testBtn" aria-label="Test Connection">
+        <button class="btn-secondary" id="testBtn" aria-label="Test Connection">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
             Test Connection
         </button>
-        <button class="btn-primary" onclick="saveConfiguration()" id="saveBtn" aria-label="Save Configuration">
+        <button class="btn-primary" id="saveBtn" aria-label="Save Configuration">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
             Save
         </button>
@@ -612,6 +612,9 @@
                     break;
             }
         });
+
+        document.getElementById('testBtn').addEventListener('click', testConnection);
+        document.getElementById('saveBtn').addEventListener('click', saveConfiguration);
 
         vscode.postMessage({ type: 'getConfig' });
     </script>

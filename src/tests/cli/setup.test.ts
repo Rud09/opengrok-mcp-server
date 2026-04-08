@@ -152,7 +152,7 @@ describe('configureClaudeCode', () => {
     configureClaudeCode({ url: 'https://og.example.com', username: 'alice' });
     expect(cp.spawnSync).toHaveBeenCalledWith(
       'claude',
-      expect.arrayContaining(['--env', 'OPENGROK_USERNAME=alice']),
+      expect.arrayContaining(['-e', 'OPENGROK_USERNAME=alice']),
       expect.anything()
     );
   });
@@ -295,17 +295,107 @@ OPENGROK_BASE_URL = "https://old.example.com"
   });
 });
 
+describe('configureCopilotCli', () => {
+  beforeEach(() => {
+    mocks.existsResult = false;
+    mocks.readFileResult = '';
+    mocks.writeFileCalls = [];
+    mocks.mkdirCalls = 0;
+    vi.clearAllMocks();
+  });
+
+  it('writes mcpServers entry to ~/.copilot/mcp-config.json', async () => {
+    const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
+    configureCopilotCli({ url: 'https://og.example.com' });
+
+    const fs = await import('fs');
+    expect(fs.writeFileSync).toHaveBeenCalled();
+    const written = JSON.parse(String((fs.writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]));
+    expect(written.mcpServers['opengrok-mcp']).toMatchObject({
+      type: 'local',
+      command: 'npx',
+      args: ['-y', 'opengrok-mcp-server'],
+    });
+    expect(written.mcpServers['opengrok-mcp'].env['OPENGROK_BASE_URL']).toBe('https://og.example.com');
+  });
+
+  it('creates ~/.copilot directory via mkdirSync', async () => {
+    const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
+    configureCopilotCli({ url: 'https://og.example.com' });
+
+    const fs = await import('fs');
+    expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining('.copilot'), { recursive: true });
+  });
+
+  it('merges into existing mcp-config.json (idempotent)', async () => {
+    const existing = JSON.stringify({
+      mcpServers: { 'opengrok-mcp': { type: 'local', command: 'old', args: [], env: { OPENGROK_BASE_URL: 'https://old.example.com' } } },
+    });
+    mocks.existsResult = true;
+    mocks.readFileResult = existing;
+
+    const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
+    configureCopilotCli({ url: 'https://new.example.com' });
+
+    const fs = await import('fs');
+    const written = JSON.parse(String((fs.writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]));
+    expect(written.mcpServers['opengrok-mcp'].env['OPENGROK_BASE_URL']).toBe('https://new.example.com');
+    expect(Object.keys(written.mcpServers)).toHaveLength(1);
+  });
+
+  it('includes OPENGROK_USERNAME when username is provided', async () => {
+    const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
+    configureCopilotCli({ url: 'https://og.example.com', username: 'dave' });
+
+    const fs = await import('fs');
+    const written = JSON.parse(String((fs.writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]));
+    expect(written.mcpServers['opengrok-mcp'].env['OPENGROK_USERNAME']).toBe('dave');
+  });
+});
+
+describe('detectInstalledClients — copilotCli', () => {
+  beforeEach(() => {
+    mocks.spawnSyncStatus = 1;
+    mocks.existsResult = false;
+    vi.clearAllMocks();
+  });
+
+  it('reports copilotCli=true when copilot binary exits 0', async () => {
+    mocks.spawnSyncStatus = 0;
+    const { detectInstalledClients } = await import('../../server/cli/setup/detect.js');
+    const result = detectInstalledClients();
+    expect(result.copilotCli).toBe(true);
+  });
+
+  it('reports copilotCli=true when ~/.copilot dir exists (even if binary missing)', async () => {
+    mocks.spawnSyncStatus = 1;
+    mocks.existsResult = true;
+    const { detectInstalledClients } = await import('../../server/cli/setup/detect.js');
+    const result = detectInstalledClients();
+    expect(result.copilotCli).toBe(true);
+  });
+
+  it('reports copilotCli=false when binary missing and dir absent', async () => {
+    mocks.spawnSyncStatus = 1;
+    mocks.existsResult = false;
+    const { detectInstalledClients } = await import('../../server/cli/setup/detect.js');
+    const result = detectInstalledClients();
+    expect(result.copilotCli).toBe(false);
+  });
+});
+
 describe('runSetup wizard — verifySsl prompt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Stub detect/configure so the wizard doesn't try to spawn child processes
     vi.doMock('../../server/cli/setup/detect.js', () => ({
-      detectInstalledClients: vi.fn(() => ({ claudeCode: false, vscode: false, codex: false })),
+      detectInstalledClients: vi.fn(() => ({ claudeCode: false, vscode: false, codex: false, copilotCli: false })),
     }));
     vi.doMock('../../server/cli/setup/configure.js', () => ({
       configureClaudeCode: vi.fn(),
       configureVSCode: vi.fn(),
       configureCodex: vi.fn(),
+      configureCopilotCli: vi.fn(),
     }));
     // Default: all prompts return non-cancelled values
     clackMocks.text.mockResolvedValue('https://og.example.com/source/');

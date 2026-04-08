@@ -1,6 +1,6 @@
 import * as p from '@clack/prompts';
 import { detectInstalledClients } from './detect.js';
-import { configureClaudeCode, configureVSCode, configureCodex } from './configure.js';
+import { configureClaudeCode, configureVSCode, configureCodex, configureCopilotCli } from './configure.js';
 import { storeCredentials } from '../keychain.js';
 
 export async function runSetup(): Promise<void> {
@@ -247,8 +247,18 @@ export async function runSetup(): Promise<void> {
     }
   }
 
-  if (!clients.claudeCode && !clients.vscode && !clients.codex) {
-    p.log.warn('No supported MCP clients detected. Install Claude Code CLI, VS Code, or Codex CLI and re-run setup.');
+  if (clients.copilotCli) {
+    spin.start('Configuring GitHub Copilot CLI...');
+    try {
+      configureCopilotCli(mcpConfig);
+      spin.stop('GitHub Copilot CLI configured \u2713');
+    } catch (e) {
+      spin.stop(`GitHub Copilot CLI: ${(e as Error).message}`);
+    }
+  }
+
+  if (!clients.claudeCode && !clients.vscode && !clients.codex && !clients.copilotCli) {
+    p.log.warn('No supported MCP clients detected. Install Claude Code CLI, VS Code, Codex CLI, or GitHub Copilot CLI and re-run setup.');
   }
 
   p.outro('Setup complete! Run `opengrok-mcp status` to verify the connection.');
