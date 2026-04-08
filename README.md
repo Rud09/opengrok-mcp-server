@@ -362,7 +362,7 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 
 VS Code users can set `opengrok-mcp.codeMode`, `opengrok-mcp.contextBudget`, `opengrok-mcp.memoryBankDir`, `opengrok-mcp.defaultProject`, `opengrok-mcp.responseFormatOverride`, and `opengrok-mcp.compileDbPaths` in VS Code settings instead.
 
-> **MCP SDK Note:** This version uses `@modelcontextprotocol/sdk` v1.28.0.
+> **MCP SDK Note:** This version uses `@modelcontextprotocol/sdk` v1.29.0.
 > MCP SDK v2 is in pre-alpha; we will migrate when stable (expected Q3-Q4 2026).
 > v2 will enable enhanced completions for tool parameters and resource templates.
 

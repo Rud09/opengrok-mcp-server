@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `env.opengrok.elicit()` and `env.opengrok.sample()` bring interactive user prompts and AI-powered query reformulation directly into the Code Mode sandbox. Zero-result searches auto-inject `_suggestions` when sampling is available. `opengrok_api` gains a session-start project picker. `elicitOrFallback` migrated from deprecated `Server` to `McpServer`. **1,115 tests, ≥89% coverage.**
 
+- 🛡️ **v9.2** — Security Hardening, SDK 1.29.0 & Enterprise Reliability
+
+MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. **1,104 tests, ≥89% coverage.**
+
 - 🎨 **v9.1** — Five env-only settings surfaced in all UI surfaces (WebView, CLI wizard, VS Code Settings): Files API Cache, AI Sampling Model, AI Sampling Token Budget, Audit Log File, Request Rate Limit. Context budget default corrected (`minimal`→`standard`). Quick Configure command removed. `opengrok_api` and `opengrok_read_memory` no longer budget-capped (static/managed content must not be truncated). **1,078 tests.**
 
 ### 🔑 v8.0 — Security Hardening & OS Keychain Integration
@@ -59,7 +63,58 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
-## [9.1.9] - 2026-04-01
+## [9.2.0] - 2026-04-08
+
+### 🛡️ Security Hardening, SDK 1.29.0 & Enterprise Reliability
+
+MCP SDK 1.29.0 upgrade with `registerResource()` API, 3 new internal modules (`redact.ts`, `sandbox-protocol.ts`, `tool-rate-limiter.ts`), comprehensive security hardening across audit logging, credential storage, sandbox isolation, and error sanitization. Default response format changed from `markdown` to `auto` (server picks optimal format per content type). **1,104 tests, ≥89% coverage.**
+
+**New modules:**
+- `redact.ts` — unified credential/path/PII redaction: `redactString()`, `sanitizeErrorMessage()` (2 KB cap, stack trace stripping), `sanitizeSandboxError()` (aggressive path markers). Single source-of-truth replacing duplicated logic across logger, server, and sandbox
+- `sandbox-protocol.ts` — SharedArrayBuffer layout constants shared between main thread and worker thread, preventing protocol mismatches
+- `tool-rate-limiter.ts` — per-tool sliding-window token-bucket rate limiter with deadline-based queue expiry (batch_search: 5 rpm, call_graph: 5 rpm, dependency_map: 10 rpm, execute: 10 rpm)
+
+**SDK & dependencies:**
+- `@modelcontextprotocol/sdk` 1.28.0 → 1.29.0: migrated from deprecated `server.resource()` to `server.registerResource()`, added `mimeType`/`description`/`size` metadata on MCP resources
+
+**Security:**
+- Audit logging: async write queue (`fsp.appendFile`) replaces blocking `fs.appendFileSync`; serial queue prevents interleaved lines; dropped-event counter for observability
+- Credential storage: hostname-based key derivation replaced with stable `sha256(opengrok-mcp:username:platform)` — fixes broken credentials after DHCP/VPN/container hostname changes; transparent one-time migration from legacy keys
+- Credentials passed as `loadConfig()` override instead of mutating `process.env` — prevents plaintext secrets in `/proc/self/environ`
+- SSRF: HTTPS→HTTP protocol downgrade on redirects now blocked
+- Sandbox: bidi/zero-width character rejection in submitted code; explicit 17-method API allowlist; per-execution write cap (`MAX_SANDBOX_WRITES_PER_EXECUTION = 5`); Atomics status reset race fixed
+- Config: new `zPositiveIntString()` validator ensures cache/rate-limit values are ≥ 1
+
+**Bug fixes:**
+- Sandbox code execution: async IIFE wrapper (`await (async () => { ... })()`) properly awaits Promise results — fixes silent empty results for async LLM code
+- Call graph: `MAX_CALL_CHAIN_SEARCH_BUDGET = 50` caps recursive fan-out (worst case was 810,000 API calls)
+- Memory bank: per-file async mutex prevents concurrent write races; SHA-256 content hash replaces 32-bit polynomial (collision risk at 65K inputs); UTF-8-safe truncation prevents U+FFFD from split multi-byte sequences
+- File content: `sizeBytes` now uses `fullContent` not sliced range; end-line calculation based on displayed lines
+- File diff: independent old/new line counters for hunk boundary detection; relaxed `<span class>` regex for attribute order variations
+- Blame output: separate caps for range (500 lines) vs. full-file (200 lines) requests
+- Health check: rolling 3-sample latency window reduces false-positive "increasing" signals
+- Formatters: `getMaxInlineLines()` evaluated at call time (respects SIGHUP config reloads)
+- Observation masker: improved symbol extraction (snake_case, Java getters/setters, stricter file path matching)
+- Status command: graceful error when `OPENGROK_BASE_URL` not set; uses validated boolean for Code Mode
+
+**Behavioral changes:**
+- Default response format changed from `markdown` to `auto` — server selects TSV for search (~50% token savings), YAML for symbol context (~35% savings), text for file content
+- `outputSchema` and `structuredContent` removed from all tools (simplifies MCP compliance)
+- `SERVER_INSTRUCTIONS` expanded with format documentation, rate limit warnings, Code Mode patterns, and sandbox behavioral notes
+- Tool descriptions include rate limit indicators for expensive operations
+
+**Refactoring:**
+- Shared `executeBrowseDirectory()`, `executeGetFileAnnotate()`, `executeSearchSuggest()` helpers eliminate duplicated logic between `dispatchTool()` and `registerLegacyTools()`
+- Search results shallow-cloned before mutation to protect TTL cache entries
+- Call graph: file-level symbol cache reduces redundant API calls during deep recursion
+- `langFromPath()` handles dotless filenames (Makefile, Dockerfile → "text")
+
+**Tests:**
+- 49 new tests covering async audit writes, formula-injection sanitization, TTL cache eviction, JSON response formats, SDK forward-compatibility, and per-tool rate limiting
+- `tool-rate-limiter.test.ts` refactored to import real module instead of re-implementing
+- **1,104 tests total**
+
+---
 
 ### 🔍 MCP Audit Fixes
 
