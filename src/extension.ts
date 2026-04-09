@@ -841,7 +841,7 @@ async function handleWebviewTestConnection(
         const base = parsed.href.replace(/\/+$/, '');
         // Use the configured API version — hardcoding v1 fails when server uses v2
         const apiUrl = new URL(`${base}/api/${apiVersion}/projects`);
-        const b64 = Buffer.from(`${username}:${password}`).toString('base64');
+        const authHeader = username ? { 'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}` } : {};
 
         await new Promise<void>((resolve, reject) => {
             const makeRequest = (targetUrl: URL, proxyUrl?: URL): void => {
@@ -868,7 +868,7 @@ async function handleWebviewTestConnection(
                                 port: Number(targetUrl.port) || 443,
                                 path: targetUrl.pathname + targetUrl.search,
                                 method: 'GET',
-                                headers: { 'Authorization': `Basic ${b64}`, 'Accept': 'application/json' },
+                                headers: { ...authHeader, 'Accept': 'application/json' },
                                 rejectUnauthorized: verifySsl,
                                 socket,
                             };
@@ -889,7 +889,7 @@ async function handleWebviewTestConnection(
                             port: Number(proxyUrl.port) || 8080,
                             path: targetUrl.href,
                             method: 'GET',
-                            headers: { 'Authorization': `Basic ${b64}`, 'Accept': 'application/json' },
+                            headers: { ...authHeader, 'Accept': 'application/json' },
                         };
                     }
                 } else {
@@ -898,7 +898,7 @@ async function handleWebviewTestConnection(
                         port: targetUrl.port || (isHttps ? 443 : 80),
                         path: targetUrl.pathname + targetUrl.search,
                         method: 'GET',
-                        headers: { 'Authorization': `Basic ${b64}`, 'Accept': 'application/json' },
+                        headers: { ...authHeader, 'Accept': 'application/json' },
                         rejectUnauthorized: verifySsl,
                     };
                 }
@@ -983,27 +983,32 @@ async function handleSaveConfiguration(
     const oldUsername = config.get<string>('username');
 
     let finalPassword = password;
-    if (!finalPassword && oldUsername) {
+    if (!finalPassword && username && oldUsername) {
         finalPassword = await secretStorage.get(`opengrok-password-${oldUsername}`);
     }
 
-    if (!finalPassword) {
+    // Password is only required when a username is set (anonymous access allowed)
+    if (username && !finalPassword) {
         postMessage({ type: 'error', message: 'Password is required' });
         return;
     }
 
     // Write to OS keychain so server can auto-read on startup
-    try {
-        const { Entry } = await import('@napi-rs/keyring');
-        new Entry('opengrok-mcp', username).setPassword(finalPassword);
-    } catch (keychainErr) {
-        log(`Warning: OS keychain unavailable (${keychainErr}). Server will rely on env OPENGROK_PASSWORD or encrypted file fallback.`);
+    if (username && finalPassword) {
+        try {
+            const { Entry } = await import('@napi-rs/keyring');
+            new Entry('opengrok-mcp', username).setPassword(finalPassword);
+        } catch (keychainErr) {
+            log(`Warning: OS keychain unavailable (${keychainErr}). Server will rely on env OPENGROK_PASSWORD or encrypted file fallback.`);
+        }
+        _credentialsSynced = true;
     }
-    _credentialsSynced = true;
 
     // Store password BEFORE config updates so credentials are never lost if a
     // config.update() call throws (e.g. unregistered key).
-    await secretStorage.store(`opengrok-password-${username}`, finalPassword);
+    if (username && finalPassword) {
+        await secretStorage.store(`opengrok-password-${username}`, finalPassword);
+    }
 
     if (oldUsername && oldUsername !== username) {
         await secretStorage.delete(`opengrok-password-${oldUsername}`);

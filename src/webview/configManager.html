@@ -474,14 +474,15 @@
             var proxy = document.getElementById('proxy').value.trim();
             var apiVersion = document.getElementById('apiVersion').value;
 
-            if (!baseUrl || !username) { showToast('error', 'URL and Username are required'); return; }
-            if (!password && !currentConfig.hasPassword) { showToast('error', 'Password is required'); return; }
+            if (!baseUrl) { showToast('error', 'URL is required'); return; }
+            // Password only required when a username is set (anonymous access is allowed)
+            if (username && !password && !currentConfig.hasPassword) { showToast('error', 'Password is required for authenticated connections'); return; }
 
             setLoading('testBtn', true, 'Testing', TEST_SVG);
             setStatusBar('info', 'Testing connection…');
 
-            if (!password && currentConfig.hasPassword) {
-                // No password in field + existing saved password → use saved credentials
+            if (username && !password && currentConfig.hasPassword) {
+                // Username set, no password in field, but existing saved password → use saved credentials
                 vscode.postMessage({ type: 'silentTestConnection' });
             } else {
                 vscode.postMessage({ type: 'testConnection', data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, apiVersion: apiVersion } });
@@ -508,8 +509,8 @@
             var auditLogFile = document.getElementById('auditLogFile').value.trim();
             var rateLimitRpm = parseInt(document.getElementById('rateLimitRpm').value, 10) || 60;
 
-            if (!baseUrl || !username) { showToast('error', 'URL and Username are required'); return; }
-            if (!password && !currentConfig.hasPassword) { showToast('error', 'Password required for new connection'); return; }
+            if (!baseUrl) { showToast('error', 'URL is required'); return; }
+            if (username && !password && !currentConfig.hasPassword) { showToast('error', 'Password required for authenticated connections'); return; }
             try {
                 var parsed = new URL(baseUrl);
                 if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {

@@ -56,13 +56,15 @@ export function buildEnv(config: McpConfig): Record<string, string> {
 }
 
 export function configureClaudeCode(config: McpConfig): void {
-  const scope = config.scope ?? 'user';
+  const scope = config.scope ?? 'local';
   const env = buildEnv(config);
-  const args: string[] = ['mcp', 'add', '--transport', 'stdio', '--scope', scope];
+  // Server name must come before -e flags: -e is variadic (<env...>) and
+  // will otherwise consume the server name as an env var value.
+  const args: string[] = ['mcp', 'add', '--transport', 'stdio', '--scope', scope, 'opengrok-mcp'];
   for (const [k, v] of Object.entries(env)) {
     args.push('-e', `${k}=${v}`);
   }
-  args.push('opengrok-mcp', '--', 'npx', '-y', 'opengrok-mcp-server');
+  args.push('--', 'npx', '-y', 'opengrok-mcp-server');
   const result = spawnSync('claude', args, { stdio: 'pipe', encoding: 'utf8', shell: false });
   if (result.status !== 0) {
     throw new Error(`claude mcp add failed: ${String(result.stderr ?? '')}`);
@@ -84,7 +86,7 @@ export function configureVSCode(config: McpConfig): string | undefined {
     args: ['-y', 'opengrok-mcp-server'],
     env,
   });
-  const result = spawnSync('code', ['--add-mcp', mcpDef], {
+  const result = spawnSync('code', ['--add-mcp', mcpDef, '--reuse-window'], {
     stdio: 'pipe',
     encoding: 'utf8',
     shell: false,

@@ -133,16 +133,29 @@ describe('configureClaudeCode', () => {
     expect(() => configureClaudeCode({ url: 'https://og.example.com' })).toThrow(/failed/);
   });
 
-  it('uses user scope by default', async () => {
+  it('uses local scope by default', async () => {
     mocks.spawnSyncStatus = 0;
     const cp = await import('child_process');
     const { configureClaudeCode } = await import('../../server/cli/setup/configure.js');
     configureClaudeCode({ url: 'https://og.example.com' });
     expect(cp.spawnSync).toHaveBeenCalledWith(
       'claude',
-      expect.arrayContaining(['--scope', 'user']),
+      expect.arrayContaining(['--scope', 'local']),
       expect.anything()
     );
+  });
+
+  it('server name comes before -e flags (avoids variadic consumption)', async () => {
+    mocks.spawnSyncStatus = 0;
+    const cp = await import('child_process');
+    const { configureClaudeCode } = await import('../../server/cli/setup/configure.js');
+    configureClaudeCode({ url: 'https://og.example.com', username: 'alice' });
+    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
+    const nameIdx = callArgs.indexOf('opengrok-mcp');
+    const firstEnvIdx = callArgs.indexOf('-e');
+    expect(nameIdx).toBeGreaterThan(-1);
+    expect(firstEnvIdx).toBeGreaterThan(-1);
+    expect(nameIdx).toBeLessThan(firstEnvIdx);
   });
 
   it('includes OPENGROK_USERNAME in args when username is provided', async () => {
@@ -176,14 +189,14 @@ describe('configureVSCode', () => {
 
   afterEach(() => vi.clearAllMocks());
 
-  it('calls code --add-mcp with shell: false', async () => {
+  it('calls code --add-mcp with --reuse-window and shell: false', async () => {
     mocks.spawnSyncStatus = 0;
     const cp = await import('child_process');
     const { configureVSCode } = await import('../../server/cli/setup/configure.js');
     configureVSCode({ url: 'https://og.example.com' });
     expect(cp.spawnSync).toHaveBeenCalledWith(
       'code',
-      expect.arrayContaining(['--add-mcp']),
+      expect.arrayContaining(['--add-mcp', '--reuse-window']),
       expect.objectContaining({ shell: false })
     );
   });
