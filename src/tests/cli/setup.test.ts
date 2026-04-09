@@ -183,58 +183,62 @@ describe('configureClaudeCode', () => {
 
 describe('configureVSCode', () => {
   beforeEach(() => {
-    mocks.spawnSyncStatus = 0;
+    mocks.existsResult = false;
+    mocks.readFileResult = '';
+    mocks.writeFileCalls = [];
+    mocks.mkdirCalls = 0;
     vi.clearAllMocks();
   });
 
   afterEach(() => vi.clearAllMocks());
 
-  it('calls code --add-mcp with --reuse-window and shell: false', async () => {
-    mocks.spawnSyncStatus = 0;
+  it('writes directly to user-level mcp.json (no code binary invoked)', async () => {
     const cp = await import('child_process');
     const { configureVSCode } = await import('../../server/cli/setup/configure.js');
     configureVSCode({ url: 'https://og.example.com' });
-    expect(cp.spawnSync).toHaveBeenCalledWith(
-      'code',
-      expect.arrayContaining(['--add-mcp', '--reuse-window']),
-      expect.objectContaining({ shell: false })
-    );
-  });
-
-  it('falls back to writing .vscode/mcp.json when code --add-mcp fails', async () => {
-    mocks.spawnSyncStatus = 1;
-    mocks.writeFileCalls = [];
-    mocks.mkdirCalls = 0;
-    const { configureVSCode } = await import('../../server/cli/setup/configure.js');
-    // Should NOT throw — falls back to writing .vscode/mcp.json
-    expect(() => configureVSCode({ url: 'https://og.example.com' })).not.toThrow();
-    // Should have written the fallback .vscode/mcp.json file
+    // Must NOT invoke the code binary
+    expect(cp.spawnSync).not.toHaveBeenCalledWith('code', expect.anything(), expect.anything());
+    // Must write a file
     expect(mocks.writeFileCalls.length).toBeGreaterThan(0);
     const writtenPath = mocks.writeFileCalls[0]?.[0] ?? '';
     expect(writtenPath).toMatch(/mcp\.json$/);
   });
 
-  it('includes OPENGROK_USERNAME in MCP definition when username is provided', async () => {
-    mocks.spawnSyncStatus = 0;
-    const cp = await import('child_process');
-    const { configureVSCode } = await import('../../server/cli/setup/configure.js');
-    configureVSCode({ url: 'https://og.example.com', username: 'bob' });
-    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
-    // The second arg to spawnSync is ['--add-mcp', JSON_STRING]
-    const mcpJson = callArgs.find((a) => a.includes('OPENGROK_BASE_URL')) ?? '';
-    const parsed = JSON.parse(mcpJson) as { env: Record<string, string> };
-    expect(parsed.env['OPENGROK_USERNAME']).toBe('bob');
-  });
-
-  it('omits OPENGROK_USERNAME from MCP definition when username is not provided', async () => {
-    mocks.spawnSyncStatus = 0;
-    const cp = await import('child_process');
+  it('writes correct servers entry to mcp.json', async () => {
     const { configureVSCode } = await import('../../server/cli/setup/configure.js');
     configureVSCode({ url: 'https://og.example.com' });
-    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
-    const mcpJson = callArgs.find((a) => a.includes('OPENGROK_BASE_URL')) ?? '';
-    const parsed = JSON.parse(mcpJson) as { env: Record<string, string> };
-    expect(parsed.env['OPENGROK_USERNAME']).toBeUndefined();
+    const written = JSON.parse(String(mocks.writeFileCalls[0]?.[1]));
+    expect(written.servers['opengrok-mcp']).toMatchObject({
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', 'opengrok-mcp-server'],
+    });
+    expect(written.servers['opengrok-mcp'].env['OPENGROK_BASE_URL']).toBe('https://og.example.com');
+  });
+
+  it('includes OPENGROK_USERNAME when username is provided', async () => {
+    const { configureVSCode } = await import('../../server/cli/setup/configure.js');
+    configureVSCode({ url: 'https://og.example.com', username: 'bob' });
+    const written = JSON.parse(String(mocks.writeFileCalls[0]?.[1]));
+    expect(written.servers['opengrok-mcp'].env['OPENGROK_USERNAME']).toBe('bob');
+  });
+
+  it('omits OPENGROK_USERNAME when username is not provided', async () => {
+    const { configureVSCode } = await import('../../server/cli/setup/configure.js');
+    configureVSCode({ url: 'https://og.example.com' });
+    const written = JSON.parse(String(mocks.writeFileCalls[0]?.[1]));
+    expect(written.servers['opengrok-mcp'].env['OPENGROK_USERNAME']).toBeUndefined();
+  });
+
+  it('merges into existing mcp.json (idempotent)', async () => {
+    const existing = JSON.stringify({ servers: { 'other-server': { type: 'stdio' }, 'opengrok-mcp': { type: 'stdio', env: { OPENGROK_BASE_URL: 'https://old.example.com' } } } });
+    mocks.existsResult = true;
+    mocks.readFileResult = existing;
+    const { configureVSCode } = await import('../../server/cli/setup/configure.js');
+    configureVSCode({ url: 'https://new.example.com' });
+    const written = JSON.parse(String(mocks.writeFileCalls[0]?.[1]));
+    expect(written.servers['other-server']).toBeDefined();
+    expect(written.servers['opengrok-mcp'].env['OPENGROK_BASE_URL']).toBe('https://new.example.com');
   });
 });
 

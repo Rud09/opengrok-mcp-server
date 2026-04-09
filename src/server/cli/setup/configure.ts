@@ -71,32 +71,30 @@ export function configureClaudeCode(config: McpConfig): void {
   }
 }
 
+/** Returns the VS Code user-level mcp.json path for the current platform. */
+function vscodeUserMcpJsonPath(): string {
+  const home = homedir();
+  if (process.platform === 'win32') {
+    return join(process.env['APPDATA'] ?? home, 'Code', 'User', 'mcp.json');
+  }
+  if (process.platform === 'darwin') {
+    return join(home, 'Library', 'Application Support', 'Code', 'User', 'mcp.json');
+  }
+  // Linux / other
+  return join(process.env['XDG_CONFIG_HOME'] ?? join(home, '.config'), 'Code', 'User', 'mcp.json');
+}
+
 /**
- * Configure VS Code MCP settings.
- * Returns the fallback file path if `code --add-mcp` was unavailable and a
- * .vscode/mcp.json file was written instead, or undefined if the CLI succeeded.
+ * Configure VS Code MCP settings by writing to the user-level mcp.json.
+ * This avoids launching a VS Code window (which `code --add-mcp` does).
+ * Returns the path written.
  */
-export function configureVSCode(config: McpConfig): string | undefined {
+export function configureVSCode(config: McpConfig): string {
   const env = buildEnv(config);
+  const mcpJsonPath = vscodeUserMcpJsonPath();
+  const mcpDir = dirname(mcpJsonPath);
 
-  // Try `code --add-mcp` first (VS Code 1.100+)
-  const mcpDef = JSON.stringify({
-    name: 'opengrok-mcp',
-    command: 'npx',
-    args: ['-y', 'opengrok-mcp-server'],
-    env,
-  });
-  const result = spawnSync('code', ['--add-mcp', mcpDef, '--reuse-window'], {
-    stdio: 'pipe',
-    encoding: 'utf8',
-    shell: false,
-  });
-
-  if (result.status === 0) return undefined;
-
-  // Fallback: write .vscode/mcp.json in the current working directory
-  const vscodeDir = join(process.cwd(), '.vscode');
-  const mcpJsonPath = join(vscodeDir, 'mcp.json');
+  mkdirSync(mcpDir, { recursive: true });
 
   let existing: { servers?: Record<string, unknown> } = {};
   if (existsSync(mcpJsonPath)) {
@@ -105,13 +103,7 @@ export function configureVSCode(config: McpConfig): string | undefined {
     } catch { /* treat as empty */ }
   }
 
-  if (!existsSync(vscodeDir)) {
-    mkdirSync(vscodeDir, { recursive: true });
-  }
-
   const servers = { ...(existing.servers ?? {}) };
-  // Idempotent: replace existing opengrok-mcp entry
-  delete servers['opengrok-mcp'];
   servers['opengrok-mcp'] = {
     type: 'stdio',
     command: 'npx',

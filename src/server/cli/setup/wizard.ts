@@ -226,12 +226,8 @@ export async function runSetup(): Promise<void> {
   if (clients.vscode) {
     spin.start('Configuring VS Code / Copilot CLI...');
     try {
-      const fallbackPath = configureVSCode(mcpConfig);
-      if (fallbackPath) {
-        spin.stop(`VS Code configured \u2713 (wrote ${fallbackPath})`);
-      } else {
-        spin.stop('VS Code configured \u2713');
-      }
+      const writtenPath = configureVSCode(mcpConfig);
+      spin.stop(`VS Code configured \u2713 (wrote ${writtenPath})`);
     } catch (e) {
       spin.stop(`VS Code: ${(e as Error).message}`);
     }
