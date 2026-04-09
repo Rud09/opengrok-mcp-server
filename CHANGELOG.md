@@ -63,6 +63,14 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.2.2] - 2026-04-09
+
+### 🐛 Bug Fix — `opengrok_index_health` always reports `connected: false`
+
+`testConnection()` used `this.request()` which throws `AbortError` for any 4xx response (including 401 Unauthorized). The catch block returned `false`, so servers requiring authentication always appeared unreachable. Fixed by using raw `fetch()` directly — bypasses the retry/error-throwing logic and treats any `status < 500` as connected.
+
+---
+
 ## [9.2.1] - 2026-04-09
 
 ### 🐛 Bug Fixes — Setup Wizard & Connectivity

@@ -944,9 +944,15 @@ export class OpenGrokClient {
 
   async testConnection(): Promise<boolean> {
     try {
-      const url = buildSafeUrl(this.baseUrl, "");
-      const response = await this.request(url, TIMEOUTS.default);
-      // Accept any non-error HTTP status — we just want to know the server is reachable
+      // Use raw fetch (not this.request) so 4xx responses don't throw — we only
+      // want to know the server is reachable, not that the request succeeded.
+      const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+        headers: { "User-Agent": `OpenGrok-MCP/${CLIENT_VERSION}` },
+        redirect: "manual",
+        signal: AbortSignal.timeout(TIMEOUTS.default),
+      };
+      if (this.agent) fetchOptions.dispatcher = this.agent;
+      const response = await fetch(this.baseUrl.toString(), fetchOptions as RequestInit);
       return response.status < 500;
     } catch {
       return false;
