@@ -63,6 +63,22 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.2.1] - 2026-04-09
+
+### 🐛 Bug Fixes — Setup Wizard & Connectivity
+
+**Setup wizard:**
+- **GitHub Copilot CLI support** added — wizard detects `copilot` binary or `~/.copilot/` directory and writes `~/.copilot/mcp-config.json` automatically
+- **VS Code removed from CLI wizard** — the VS Code extension handles VS Code configuration directly; running the CLI wizard no longer launches a VS Code window or writes VS Code config files
+- **`claude mcp add` fix** — server name `opengrok-mcp` now correctly placed before `-e` flags in the argument list; variadic `-e <env...>` was consuming the server name as an env var value when it appeared after the flags, causing "Invalid environment variable format: opengrok-mcp" errors
+- **Default scope changed** from `user` to `local` for Claude Code CLI
+
+**Connection reliability:**
+- **Test connection fix** — `opengrok_index_health` and the VS Code config UI test connection now hit the server's base URL and check HTTP status code (< 500 = reachable), matching the VS Code command behavior. Previously both hit `/api/v1/projects` and validated JSON, which incorrectly reported failure when the server requires authentication for API endpoints
+- **VS Code config UI** — fixed stuck "Test Connection" button (no longer silently swallows the result), fixed slow "Save Configuration" (parallel `Promise.all` instead of 13 sequential awaits), fixed buttons not responding (CSP blocked inline `onclick` handlers; replaced with `addEventListener` in nonce-approved script block)
+
+---
+
 ## [9.2.0] - 2026-04-08
 
 ### 🛡️ Security Hardening, SDK 1.29.0 & Enterprise Reliability

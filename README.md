@@ -85,7 +85,7 @@ The wizard stores credentials securely in the OS keychain (macOS Keychain, Windo
 | `opengrok-mcp status` | Health check: validates connectivity and detects installed MCP clients |
 | `opengrok-mcp --version` | Print version and exit |
 
-`setup` supports Claude Code CLI, VS Code/Copilot CLI, and Codex CLI. Credentials are stored in the OS keychain with an AES-256-GCM encrypted file fallback for headless/CI environments.
+`setup` supports **Claude Code CLI**, **GitHub Copilot CLI**, and **Codex CLI**. VS Code is configured automatically by the extension — no CLI step needed. Credentials are stored in the OS keychain with an AES-256-GCM encrypted file fallback for headless/CI environments.
 
 ### 🔌 Third-Party Client Support
 

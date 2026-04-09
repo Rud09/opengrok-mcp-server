@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { dirname, join, resolve } from 'path';
+import { dirname, join } from 'path';
 import { parse as tomlParse, stringify as tomlStringify } from '@iarna/toml';
 import type { JsonMap, AnyJson } from '@iarna/toml';
 
@@ -116,33 +116,21 @@ export function configureVSCode(config: McpConfig): string {
 }
 
 /**
- * Configure GitHub Copilot CLI MCP settings by writing to ~/.copilot/mcp-config.json.
- * The Copilot CLI has no non-interactive CLI command for MCP configuration, so we
- * write the JSON config file directly (idempotent: replaces existing opengrok-mcp entry).
+ * Configure GitHub Copilot CLI MCP settings using `copilot mcp add`.
+ * Uses the Copilot CLI's own command so config is written in the format it expects.
  */
 export function configureCopilotCli(config: McpConfig): void {
-  const configDir = join(homedir(), '.copilot');
-  const configPath = resolve(configDir, 'mcp-config.json');
-
-  mkdirSync(configDir, { recursive: true });
-
-  let existing: { mcpServers?: Record<string, unknown> } = {};
-  if (existsSync(configPath)) {
-    try {
-      existing = JSON.parse(readFileSync(configPath, 'utf8')) as { mcpServers?: Record<string, unknown> };
-    } catch { /* treat as empty */ }
+  const env = buildEnv(config);
+  // `copilot mcp add <name> --env K=V ... -- command args`
+  const args: string[] = ['mcp', 'add', 'opengrok-mcp'];
+  for (const [k, v] of Object.entries(env)) {
+    args.push('--env', `${k}=${v}`);
   }
-
-  const servers = { ...(existing.mcpServers ?? {}) };
-  servers['opengrok-mcp'] = {
-    type: 'local',
-    command: 'npx',
-    args: ['-y', 'opengrok-mcp-server'],
-    env: buildEnv(config),
-    tools: ['*'],
-  };
-
-  writeFileSync(configPath, JSON.stringify({ ...existing, mcpServers: servers }, null, 2), 'utf8');
+  args.push('--', 'npx', '-y', 'opengrok-mcp-server');
+  const result = spawnSync('copilot', args, { stdio: 'pipe', encoding: 'utf8', shell: false });
+  if (result.status !== 0) {
+    throw new Error(`copilot mcp add failed: ${String(result.stderr ?? '')}`);
+  }
 }
 
 export function configureCodex(config: McpConfig): void {

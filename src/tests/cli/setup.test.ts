@@ -307,59 +307,63 @@ OPENGROK_BASE_URL = "https://old.example.com"
 
 describe('configureCopilotCli', () => {
   beforeEach(() => {
-    mocks.existsResult = false;
-    mocks.readFileResult = '';
-    mocks.writeFileCalls = [];
-    mocks.mkdirCalls = 0;
+    mocks.spawnSyncStatus = 0;
     vi.clearAllMocks();
   });
 
-  it('writes mcpServers entry to ~/.copilot/mcp-config.json', async () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it('calls copilot mcp add with array args (no shell injection)', async () => {
+    mocks.spawnSyncStatus = 0;
+    const cp = await import('child_process');
     const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
     configureCopilotCli({ url: 'https://og.example.com' });
-
-    const fs = await import('fs');
-    expect(fs.writeFileSync).toHaveBeenCalled();
-    const written = JSON.parse(String((fs.writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]));
-    expect(written.mcpServers['opengrok-mcp']).toMatchObject({
-      type: 'local',
-      command: 'npx',
-      args: ['-y', 'opengrok-mcp-server'],
-    });
-    expect(written.mcpServers['opengrok-mcp'].env['OPENGROK_BASE_URL']).toBe('https://og.example.com');
+    expect(cp.spawnSync).toHaveBeenCalledWith(
+      'copilot',
+      expect.arrayContaining(['mcp', 'add']),
+      expect.objectContaining({ shell: false })
+    );
   });
 
-  it('creates ~/.copilot directory via mkdirSync', async () => {
+  it('throws when copilot mcp add fails', async () => {
+    mocks.spawnSyncStatus = 1;
+    const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
+    expect(() => configureCopilotCli({ url: 'https://og.example.com' })).toThrow(/failed/);
+  });
+
+  it('includes OPENGROK_BASE_URL in --env args', async () => {
+    mocks.spawnSyncStatus = 0;
+    const cp = await import('child_process');
     const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
     configureCopilotCli({ url: 'https://og.example.com' });
-
-    const fs = await import('fs');
-    expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining('.copilot'), { recursive: true });
-  });
-
-  it('merges into existing mcp-config.json (idempotent)', async () => {
-    const existing = JSON.stringify({
-      mcpServers: { 'opengrok-mcp': { type: 'local', command: 'old', args: [], env: { OPENGROK_BASE_URL: 'https://old.example.com' } } },
-    });
-    mocks.existsResult = true;
-    mocks.readFileResult = existing;
-
-    const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
-    configureCopilotCli({ url: 'https://new.example.com' });
-
-    const fs = await import('fs');
-    const written = JSON.parse(String((fs.writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]));
-    expect(written.mcpServers['opengrok-mcp'].env['OPENGROK_BASE_URL']).toBe('https://new.example.com');
-    expect(Object.keys(written.mcpServers)).toHaveLength(1);
+    expect(cp.spawnSync).toHaveBeenCalledWith(
+      'copilot',
+      expect.arrayContaining(['--env', 'OPENGROK_BASE_URL=https://og.example.com']),
+      expect.anything()
+    );
   });
 
   it('includes OPENGROK_USERNAME when username is provided', async () => {
+    mocks.spawnSyncStatus = 0;
+    const cp = await import('child_process');
     const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
     configureCopilotCli({ url: 'https://og.example.com', username: 'dave' });
+    expect(cp.spawnSync).toHaveBeenCalledWith(
+      'copilot',
+      expect.arrayContaining(['--env', 'OPENGROK_USERNAME=dave']),
+      expect.anything()
+    );
+  });
 
-    const fs = await import('fs');
-    const written = JSON.parse(String((fs.writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]));
-    expect(written.mcpServers['opengrok-mcp'].env['OPENGROK_USERNAME']).toBe('dave');
+  it('passes npx -y opengrok-mcp-server as the command after --', async () => {
+    mocks.spawnSyncStatus = 0;
+    const cp = await import('child_process');
+    const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
+    configureCopilotCli({ url: 'https://og.example.com' });
+    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
+    const sepIdx = callArgs.indexOf('--');
+    expect(sepIdx).toBeGreaterThan(-1);
+    expect(callArgs.slice(sepIdx)).toEqual(['--', 'npx', '-y', 'opengrok-mcp-server']);
   });
 });
 

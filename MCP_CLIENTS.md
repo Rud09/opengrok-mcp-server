@@ -38,7 +38,7 @@ Run the guided wizard — it configures your MCP client and stores credentials s
 npx opengrok-mcp-server setup
 ```
 
-Supports **Claude Code CLI**, **VS Code/Copilot CLI**, and **Codex CLI**. The wizard:
+Supports **Claude Code CLI**, **GitHub Copilot CLI**, and **Codex CLI**. VS Code is configured automatically by the VS Code extension — no CLI step needed. The wizard:
 - Prompts for your OpenGrok URL, username, and password
 - Tests the connection
 - Writes the correct MCP config file for the detected client
@@ -87,7 +87,32 @@ Credentials are read from the OS keychain automatically on startup — no env va
 
 ---
 
-### VS Code Copilot CLI
+### VS Code (GitHub Copilot Chat)
+
+> **Recommended:** Install the VSIX extension — it configures VS Code automatically.
+> No CLI setup needed.
+
+If you prefer manual config, create `~/.config/Code/User/mcp.json` (Linux/macOS) or
+`%APPDATA%\Code\User\mcp.json` (Windows):
+
+```json
+{
+  "servers": {
+    "opengrok-mcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "opengrok-mcp-server"],
+      "env": {
+        "OPENGROK_BASE_URL": "https://opengrok.example.com/source/"
+      }
+    }
+  }
+}
+```
+
+---
+
+### GitHub Copilot CLI
 
 Run the wizard:
 
@@ -95,18 +120,21 @@ Run the wizard:
 npx opengrok-mcp-server setup
 ```
 
-Select **VS Code / Copilot** when prompted. The wizard writes the config to your
-`settings.json` or workspace `.vscode/mcp.json` as appropriate.
+The wizard detects `copilot` binary or `~/.copilot/` directory and writes the config to
+`~/.copilot/mcp-config.json` automatically.
 
-Manual config in `.vscode/mcp.json`:
+Manual config in `~/.copilot/mcp-config.json`:
 
 ```json
 {
-  "servers": {
-    "opengrok": {
-      "type": "stdio",
+  "mcpServers": {
+    "opengrok-mcp": {
+      "type": "local",
       "command": "npx",
-      "args": ["opengrok-mcp-server"]
+      "args": ["-y", "opengrok-mcp-server"],
+      "env": {
+        "OPENGROK_BASE_URL": "https://opengrok.example.com/source/"
+      }
     }
   }
 }
