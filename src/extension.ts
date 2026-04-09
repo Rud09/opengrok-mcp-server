@@ -832,123 +832,37 @@ async function handleWebviewTestConnection(
     postMessage: (msg: Record<string, unknown>) => void,
     data: { baseUrl: string; username: string; password: string; verifySsl: boolean; proxy?: string; apiVersion?: string }
 ): Promise<void> {
-    const { baseUrl, username, password, verifySsl, proxy, apiVersion = 'v1' } = data;
+    const { baseUrl, username, password, verifySsl } = data;
 
     postMessage({ type: 'testing', message: 'Testing connection...' });
 
     try {
         const parsed = new URL(baseUrl);
-        const base = parsed.href.replace(/\/+$/, '');
-        // Use the configured API version — hardcoding v1 fails when server uses v2
-        const apiUrl = new URL(`${base}/api/${apiVersion}/projects`);
-        const authHeader = username ? { 'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}` } : {};
+        const headers: Record<string, string> = {};
+        if (username) {
+            headers['Authorization'] = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+        }
 
-        await new Promise<void>((resolve, reject) => {
-            const makeRequest = (targetUrl: URL, proxyUrl?: URL): void => {
-                const isHttps = targetUrl.protocol === 'https:';
-                const protocol = isHttps ? https : http;
+        const statusCode = await httpGet(parsed, headers, verifySsl);
 
-                // Proxy-aware request options
-                // Use a wide type to accommodate both http and https-specific options
-                let options: http.RequestOptions & { rejectUnauthorized?: boolean };
-                if (proxyUrl) {
-                    if (isHttps) {
-                        // HTTPS target via proxy: use CONNECT tunnel
-                        const connectReq = http.request({
-                            hostname: proxyUrl.hostname,
-                            port: Number(proxyUrl.port) || 8080,
-                            method: 'CONNECT',
-                            path: `${targetUrl.hostname}:${Number(targetUrl.port) || 443}`,
-                        });
-                        connectReq.on('connect', (_res, socket) => {
-                            // socket comes from the CONNECT tunnel — cast is required since Node.js
-                            // typings don't expose the `socket` injection option in RequestOptions
-                            const tunnelOpts = {
-                                hostname: targetUrl.hostname,
-                                port: Number(targetUrl.port) || 443,
-                                path: targetUrl.pathname + targetUrl.search,
-                                method: 'GET',
-                                headers: { ...authHeader, 'Accept': 'application/json' },
-                                rejectUnauthorized: verifySsl,
-                                socket,
-                            };
-                            const tunnelReq = https.request(
-                                tunnelOpts as unknown as https.RequestOptions,
-                                handleResponse
-                            );
-                            tunnelReq.on('error', (err: Error) => reject(err));
-                            tunnelReq.end();
-                        });
-                        connectReq.on('error', (err: Error) => reject(err));
-                        connectReq.end();
-                        return;
-                    } else {
-                        // HTTP target via proxy: use absolute URL as path
-                        options = {
-                            hostname: proxyUrl.hostname,
-                            port: Number(proxyUrl.port) || 8080,
-                            path: targetUrl.href,
-                            method: 'GET',
-                            headers: { ...authHeader, 'Accept': 'application/json' },
-                        };
-                    }
-                } else {
-                    options = {
-                        hostname: targetUrl.hostname,
-                        port: targetUrl.port || (isHttps ? 443 : 80),
-                        path: targetUrl.pathname + targetUrl.search,
-                        method: 'GET',
-                        headers: { ...authHeader, 'Accept': 'application/json' },
-                        rejectUnauthorized: verifySsl,
-                    };
-                }
-
-                const req = protocol.request(options, handleResponse);
-                req.on('error', (err: Error) => reject(err));
-                req.setTimeout(10000, () => {
-                    req.destroy();
-                    reject(new Error('Connection timed out'));
-                });
-                req.end();
-            };
-
-            const handleResponse = (res: http.IncomingMessage): void => {
-                let body = '';
-                res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-                res.on('end', () => {
-                    if (res.statusCode === 401) {
-                        reject(new Error('Authentication failed (401). Check username/password.'));
-                    } else if (res.statusCode === 403) {
-                        reject(new Error('Access denied (403). Check credentials or server permissions.'));
-                    } else if (!res.statusCode || res.statusCode >= 400) {
-                        reject(new Error(`Server returned status ${res.statusCode} — is this an OpenGrok server?`));
-                    } else {
-                        try {
-                            const json = JSON.parse(body);
-                            // Accept both array (API v1) and object (API v2) responses
-                            const isValid = Array.isArray(json) || (typeof json === 'object' && json !== null);
-                            if (!isValid) {
-                                reject(new Error('Unexpected response format — is this an OpenGrok server?'));
-                            } else {
-                                resolve();
-                            }
-                        } catch {
-                            reject(new Error('Response is not JSON — is this an OpenGrok server?'));
-                        }
-                    }
-                });
-            };
-
-            const proxyUrl = proxy ? (() => { try { return new URL(proxy); } catch { return undefined; } })() : undefined;
-            makeRequest(apiUrl, proxyUrl);
-        });
-
-        log('✓ Webview test connection successful');
-        postMessage({ type: 'testSuccess', message: '✓ Connection successful!' });
+        if (statusCode >= 200 && statusCode < 400) {
+            log('✓ Webview test connection successful');
+            postMessage({ type: 'testSuccess', message: '✓ Connection successful!' });
+        } else if (statusCode === 401) {
+            postMessage({ type: 'error', message: '✗ Authentication failed (401). Check username/password.' });
+        } else if (statusCode === 403) {
+            postMessage({ type: 'error', message: '✗ Access denied (403). Check credentials or server permissions.' });
+        } else {
+            postMessage({ type: 'error', message: `✗ Server returned HTTP ${statusCode} — is this an OpenGrok server?` });
+        }
     } catch (error: unknown) {
         const errMsg = error instanceof Error ? error.message : String(error);
         log(`✗ Webview test connection failed: ${errMsg}`);
-        postMessage({ type: 'error', message: `✗ Connection failed: ${errMsg}` });
+        if (errMsg.includes('certificate') || errMsg.includes('self-signed') || errMsg.includes('CERT') || errMsg.includes('SSL')) {
+            postMessage({ type: 'error', message: '✗ SSL certificate error. Disable SSL verification in advanced settings if using a self-signed cert.' });
+        } else {
+            postMessage({ type: 'error', message: `✗ Connection failed: ${errMsg}` });
+        }
     }
 }
 

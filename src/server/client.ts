@@ -944,11 +944,10 @@ export class OpenGrokClient {
 
   async testConnection(): Promise<boolean> {
     try {
-      const url = buildSafeUrl(this.baseUrl, `${this.apiPath}/projects`);
+      const url = buildSafeUrl(this.baseUrl, "");
       const response = await this.request(url, TIMEOUTS.default);
-      const json = await response.json() as unknown;
-      // Accept both array (API v1) and object (API v2) responses
-      return Array.isArray(json) || (typeof json === "object" && json !== null);
+      // Accept any non-error HTTP status — we just want to know the server is reachable
+      return response.status < 500;
     } catch {
       return false;
     }
