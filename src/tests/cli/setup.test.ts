@@ -82,13 +82,6 @@ describe('detectInstalledClients', () => {
     expect(result.claudeCode).toBe(false);
   });
 
-  it('reports vscode=true when code --version exits 0', async () => {
-    mocks.spawnSyncStatus = 0;
-    const { detectInstalledClients } = await import('../../server/cli/setup/detect.js');
-    const result = detectInstalledClients();
-    expect(result.vscode).toBe(true);
-  });
-
   it('reports codex=false when config file does not exist', async () => {
     mocks.spawnSyncStatus = 1;
     mocks.existsResult = false;
@@ -406,7 +399,7 @@ describe('runSetup wizard — verifySsl prompt', () => {
     vi.clearAllMocks();
     // Stub detect/configure so the wizard doesn't try to spawn child processes
     vi.doMock('../../server/cli/setup/detect.js', () => ({
-      detectInstalledClients: vi.fn(() => ({ claudeCode: false, vscode: false, codex: false, copilotCli: false })),
+      detectInstalledClients: vi.fn(() => ({ claudeCode: false, codex: false, copilotCli: false })),
     }));
     vi.doMock('../../server/cli/setup/configure.js', () => ({
       configureClaudeCode: vi.fn(),

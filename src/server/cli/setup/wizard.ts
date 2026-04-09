@@ -1,6 +1,6 @@
 import * as p from '@clack/prompts';
 import { detectInstalledClients } from './detect.js';
-import { configureClaudeCode, configureVSCode, configureCodex, configureCopilotCli } from './configure.js';
+import { configureClaudeCode, configureCodex, configureCopilotCli } from './configure.js';
 import { storeCredentials } from '../keychain.js';
 
 export async function runSetup(): Promise<void> {
@@ -223,16 +223,6 @@ export async function runSetup(): Promise<void> {
     }
   }
 
-  if (clients.vscode) {
-    spin.start('Configuring VS Code Copilot Chat...');
-    try {
-      const writtenPath = configureVSCode(mcpConfig);
-      spin.stop(`VS Code Copilot Chat configured \u2713 (wrote ${writtenPath})`);
-    } catch (e) {
-      spin.stop(`VS Code Copilot Chat: ${(e as Error).message}`);
-    }
-  }
-
   if (clients.codex) {
     spin.start('Configuring Codex CLI...');
     try {
@@ -253,8 +243,8 @@ export async function runSetup(): Promise<void> {
     }
   }
 
-  if (!clients.claudeCode && !clients.vscode && !clients.codex && !clients.copilotCli) {
-    p.log.warn('No supported MCP clients detected. Install Claude Code CLI, VS Code, GitHub Copilot CLI, or Codex CLI and re-run setup.');
+  if (!clients.claudeCode && !clients.codex && !clients.copilotCli) {
+    p.log.warn('No supported MCP clients detected. Install Claude Code CLI, GitHub Copilot CLI, or Codex CLI and re-run setup.');
   }
 
   p.outro('Setup complete! Run `opengrok-mcp status` to verify the connection.');

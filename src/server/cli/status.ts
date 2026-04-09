@@ -50,7 +50,6 @@ export async function runStatus(): Promise<void> {
   const clients = detectInstalledClients();
   console.log('\n  Configured in:');
   console.log(`    ${clients.claudeCode ? '✓' : '✗'} Claude Code CLI`);
-  console.log(`    ${clients.vscode ? '✓' : '✗'} VS Code Copilot Chat`);
   console.log(`    ${clients.codex ? '✓' : '✗'} Codex CLI`);
   console.log(`    ${clients.copilotCli ? '✓' : '✗'} GitHub Copilot CLI`);
 

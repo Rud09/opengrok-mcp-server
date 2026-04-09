@@ -5,19 +5,12 @@ import { join } from 'path';
 
 export interface DetectedClients {
   claudeCode: boolean;
-  vscode: boolean;
   codex: boolean;
   copilotCli: boolean;
 }
 
 export function detectInstalledClients(): DetectedClients {
   const claudeCode = spawnSync('claude', ['--version'], {
-    stdio: 'pipe',
-    timeout: 5000,
-    shell: false,
-  }).status === 0;
-
-  const vscode = spawnSync('code', ['--version'], {
     stdio: 'pipe',
     timeout: 5000,
     shell: false,
@@ -37,5 +30,5 @@ export function detectInstalledClients(): DetectedClients {
   const copilotConfigDir = join(homedir(), '.copilot');
   const copilotCli = copilotBinary || existsSync(copilotConfigDir);
 
-  return { claudeCode, vscode, codex, copilotCli };
+  return { claudeCode, codex, copilotCli };
 }
