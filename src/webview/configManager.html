@@ -481,12 +481,8 @@
             setLoading('testBtn', true, 'Testing', TEST_SVG);
             setStatusBar('info', 'Testing connection…');
 
-            if (username && !password && currentConfig.hasPassword) {
-                // Username set, no password in field, but existing saved password → use saved credentials
-                vscode.postMessage({ type: 'silentTestConnection' });
-            } else {
-                vscode.postMessage({ type: 'testConnection', data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, apiVersion: apiVersion } });
-            }
+            // Always send testConnection — the extension looks up saved password if field is empty
+            vscode.postMessage({ type: 'testConnection', data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, apiVersion: apiVersion } });
         }
 
         function saveConfiguration() {

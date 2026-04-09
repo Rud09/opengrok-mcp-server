@@ -1014,23 +1014,27 @@ async function handleSaveConfiguration(
         await secretStorage.delete(`opengrok-password-${oldUsername}`);
     }
 
-    await config.update('baseUrl', baseUrl, vscode.ConfigurationTarget.Global);
-    await config.update('username', username, vscode.ConfigurationTarget.Global);
-    await config.update('verifySsl', verifySsl, vscode.ConfigurationTarget.Global);
-    await config.update('proxy', proxy || undefined, vscode.ConfigurationTarget.Global);
-    if (defaultProject !== undefined) await config.update('defaultProject', defaultProject || undefined, vscode.ConfigurationTarget.Global);
-    if (contextBudget) await config.update('contextBudget', contextBudget, vscode.ConfigurationTarget.Global);
-    if (responseFormatOverride !== undefined) await config.update('responseFormatOverride', responseFormatOverride || undefined, vscode.ConfigurationTarget.Global);
-    if (codeMode !== undefined) await config.update('codeMode', codeMode, vscode.ConfigurationTarget.Global);
-    if (memoryBankDir !== undefined) await config.update('memoryBankDir', memoryBankDir || undefined, vscode.ConfigurationTarget.Global);
-    if (compileDbPaths !== undefined) await config.update('compileDbPaths', compileDbPaths || undefined, vscode.ConfigurationTarget.Global);
-    if (apiVersion !== undefined) await config.update('apiVersion', apiVersion || 'v1', vscode.ConfigurationTarget.Global);
-    if (enableElicitation !== undefined) await config.update('enableElicitation', enableElicitation, vscode.ConfigurationTarget.Global);
-    if (enableFilesApi !== undefined) await config.update('enableFilesApi', enableFilesApi, vscode.ConfigurationTarget.Global);
-    if (samplingModel !== undefined) await config.update('samplingModel', samplingModel || undefined, vscode.ConfigurationTarget.Global);
-    if (samplingMaxTokens !== undefined) await config.update('samplingMaxTokens', samplingMaxTokens, vscode.ConfigurationTarget.Global);
-    if (auditLogFile !== undefined) await config.update('auditLogFile', auditLogFile || undefined, vscode.ConfigurationTarget.Global);
-    if (rateLimitRpm !== undefined) await config.update('rateLimitRpm', rateLimitRpm, vscode.ConfigurationTarget.Global);
+    const G = vscode.ConfigurationTarget.Global;
+    const updates: Thenable<void>[] = [
+        config.update('baseUrl', baseUrl, G),
+        config.update('username', username, G),
+        config.update('verifySsl', verifySsl, G),
+        config.update('proxy', proxy || undefined, G),
+    ];
+    if (defaultProject !== undefined)       updates.push(config.update('defaultProject', defaultProject || undefined, G));
+    if (contextBudget)                      updates.push(config.update('contextBudget', contextBudget, G));
+    if (responseFormatOverride !== undefined) updates.push(config.update('responseFormatOverride', responseFormatOverride || undefined, G));
+    if (codeMode !== undefined)             updates.push(config.update('codeMode', codeMode, G));
+    if (memoryBankDir !== undefined)        updates.push(config.update('memoryBankDir', memoryBankDir || undefined, G));
+    if (compileDbPaths !== undefined)       updates.push(config.update('compileDbPaths', compileDbPaths || undefined, G));
+    if (apiVersion !== undefined)           updates.push(config.update('apiVersion', apiVersion || 'v1', G));
+    if (enableElicitation !== undefined)    updates.push(config.update('enableElicitation', enableElicitation, G));
+    if (enableFilesApi !== undefined)       updates.push(config.update('enableFilesApi', enableFilesApi, G));
+    if (samplingModel !== undefined)        updates.push(config.update('samplingModel', samplingModel || undefined, G));
+    if (samplingMaxTokens !== undefined)    updates.push(config.update('samplingMaxTokens', samplingMaxTokens, G));
+    if (auditLogFile !== undefined)         updates.push(config.update('auditLogFile', auditLogFile || undefined, G));
+    if (rateLimitRpm !== undefined)         updates.push(config.update('rateLimitRpm', rateLimitRpm, G));
+    await Promise.all(updates);
 
     log(`Configuration saved for user: ${username}`);
     updateStatusBar('ready');
