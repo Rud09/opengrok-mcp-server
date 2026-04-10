@@ -322,17 +322,14 @@ describe('MemoryBank.write — graceful trim when combined content exceeds limit
 // ---------------------------------------------------------------------------
 
 describe('MemoryBank.write — writeFile error', () => {
-  it.skipIf(process.getuid?.() === 0)('throws MemoryBank error when directory is read-only', async () => {
-    const roDir = path.join(tmpDir, 'readonly-bank');
-    await fsp.mkdir(roDir, { recursive: true });
-    await fsp.chmod(roDir, 0o555); // read-only dir
-    const roBank = new MemoryBank(roDir);
-
-    try {
-      await expect(roBank.write('active-task.md', 'hello')).rejects.toThrow('Failed to write memory bank file');
-    } finally {
-      await fsp.chmod(roDir, 0o755); // restore for cleanup
-    }
+  it('throws MemoryBank error when bank dir path is unresolvable (ENOTDIR)', async () => {
+    // Place a regular FILE where the bank's parent directory would be.
+    // mkdir(..., { recursive: true }) on a path whose parent is a file
+    // throws ENOTDIR — this is an OS-level error that root cannot bypass.
+    const parentFile = path.join(tmpDir, 'notadir');
+    await fsp.writeFile(parentFile, 'i am a file');
+    const badBank = new MemoryBank(path.join(parentFile, 'subdir'));
+    await expect(badBank.write('active-task.md', 'hello')).rejects.toThrow('Failed to write memory bank file');
   });
 });
 
