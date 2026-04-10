@@ -32,6 +32,7 @@ const clackMocks = vi.hoisted(() => ({
 vi.mock('@clack/prompts', () => clackMocks);
 vi.mock('../../server/cli/keychain.js', () => ({
   storeCredentials: vi.fn(),
+  retrievePassword: vi.fn(() => null),
 }));
 
 vi.mock('child_process', () => ({
@@ -410,6 +411,7 @@ describe('runSetup wizard — verifySsl prompt', () => {
       configureVSCode: vi.fn(),
       configureCodex: vi.fn(),
       configureCopilotCli: vi.fn(),
+      readStoredEnv: vi.fn(() => ({})),
     }));
     // Default: all prompts return non-cancelled values
     clackMocks.text.mockResolvedValue('https://og.example.com/source/');
@@ -451,6 +453,7 @@ describe('runSetup wizard — verifySsl prompt', () => {
       configureClaudeCode: vi.fn(),
       configureVSCode: vi.fn(),
       configureCodex: vi.fn(),
+      readStoredEnv: vi.fn(() => ({})),
     };
     vi.doMock('../../server/cli/setup/configure.js', () => configureMocks);
     const { runSetup } = await import('../../server/cli/setup/wizard.js');

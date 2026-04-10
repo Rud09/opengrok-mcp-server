@@ -109,6 +109,10 @@ const ConfigSchema = z.object({
   // Files API cache layer — tracks investigation-log.md uploads to avoid re-sending unchanged content
   OPENGROK_ENABLE_FILES_API: z.coerce.boolean().default(false)
     .describe("Use Files API cache for investigation-log.md (when supported by SDK)"),
+  // Observation Masker — prepend compact history summaries to opengrok_execute results (off by default)
+  OPENGROK_ENABLE_OBSERVATION_MASKER: z.coerce.boolean().default(false),
+  // Number of most-recent opengrok_execute results to keep as full text before masking older ones
+  OPENGROK_OBSERVATION_MASKER_TURNS: z.coerce.number().int().min(1).default(10),
   // Per-tool rate limiting (comma-separated tool=rpm pairs, e.g. "opengrok_batch_search=5,opengrok_execute=10")
   OPENGROK_PER_TOOL_RATELIMIT: z.string().default(""),
   // OpenGrok REST API version (Task 5.7)

@@ -268,9 +268,10 @@ export const SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE = `You are connected to an O
 Run opengrok_api to get the full API spec, then use opengrok_execute to run JavaScript queries.
 
 ## MEMORY
-Update memory after investigations:
+If prior context shown above, read both files with opengrok_read_memory before any other call.
+At session end: append to investigation-log.md and overwrite active-task.md.
 - active-task.md: current task and next step (≤ 4 KB)
-- investigation-log.md: append ## YYYY-MM-DD HH:MM entries (≤ 32 KB, oldest trimmed automatically)
+- investigation-log.md: ## YYYY-MM-DD HH:MM entries (≤ 32 KB, trimmed automatically)
 
 ## CODE MODE
 Use opengrok_execute to run JavaScript with env.opengrok.* API methods.
@@ -1817,8 +1818,9 @@ function registerMemoryTools(
           }
         }
         lines.push("");
-        lines.push("Note: For general codebase context (conventions, architecture), use VS Code's");
-        lines.push("built-in memory tool (/memory command) — it auto-loads at every session.");
+        lines.push("Note: For general codebase context (conventions, architecture), use your AI");
+        lines.push("client's persistent memory (e.g. .claude.md for Claude Code, VS Code /memory,");
+        lines.push(".cursorrules for Cursor) — those auto-load each session.");
         return {
           content: [{ type: "text", text: lines.join("\n") }],
         };
@@ -1912,7 +1914,7 @@ function registerCodeModeTools(
   // Per-session counters — scoped to this server instance to prevent HTTP session bleed.
   let executeCallCount = 0;
   // Per-session masker (created once per server, tracks all turns)
-  const masker = new ObservationMasker();
+  const masker = new ObservationMasker(config.OPENGROK_OBSERVATION_MASKER_TURNS);
   let turn = 0;
 
   // Build getCompileInfoFn callback when local layer is available
@@ -2076,22 +2078,26 @@ function registerCodeModeTools(
           return { content: [{ type: "text", text: errorResult }] };
         }
 
-        // Record in masker for future turns
-        masker.record(
-          currentTurn,
-          "opengrok_execute",
-          args.code.slice(0, 80).replace(/\n/g, " "),
-          result
-        );
+        // Record in masker for future turns (only when masker is enabled)
+        if (config.OPENGROK_ENABLE_OBSERVATION_MASKER) {
+          masker.record(
+            currentTurn,
+            "opengrok_execute",
+            args.code.slice(0, 80).replace(/\n/g, " "),
+            result
+          );
+        }
 
-        const historyHeader = masker.getMaskedHistoryHeader();
+        const historyHeader = config.OPENGROK_ENABLE_OBSERVATION_MASKER
+          ? masker.getMaskedHistoryHeader()
+          : "";
         let finalResult = historyHeader
           ? `${historyHeader}\n---\n${result}`
           : result;
 
         executeCallCount++;
         if (executeCallCount % 5 === 0 && executeCallCount > 3) {
-          finalResult += "\n\n> Memory: Update active-task.md before answering.";
+          finalResult += "\n\n> Memory: Append findings to investigation-log.md and update active-task.md.";
         }
 
         return { content: [{ type: "text", text: finalResult }] };

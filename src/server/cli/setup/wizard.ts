@@ -1,15 +1,23 @@
 import * as p from '@clack/prompts';
 import { detectInstalledClients } from './detect.js';
-import { configureClaudeCode, configureCodex, configureCopilotCli } from './configure.js';
-import { storeCredentials } from '../keychain.js';
+import { configureClaudeCode, configureCodex, configureCopilotCli, readStoredEnv } from './configure.js';
+import { storeCredentials, retrievePassword } from '../keychain.js';
 
 export async function runSetup(): Promise<void> {
   p.intro('OpenGrok MCP Server Setup');
+
+  // Load previously stored config so prompts can be pre-filled
+  const stored = readStoredEnv();
+  const hasStored = Boolean(stored['OPENGROK_BASE_URL']);
+  if (hasStored) {
+    p.log.info('Existing configuration detected — prompts pre-filled with current values.');
+  }
 
   // --- CONNECTION ---
   const url = await p.text({
     message: 'OpenGrok server URL',
     placeholder: 'https://opengrok.company.com/source/',
+    initialValue: stored['OPENGROK_BASE_URL'] ?? '',
     validate: (v) => {
       if (!v) return 'Enter a valid URL';
       try {
@@ -23,24 +31,30 @@ export async function runSetup(): Promise<void> {
 
   const username = await p.text({
     message: 'Username (leave blank for anonymous)',
-    defaultValue: '',
+    defaultValue: stored['OPENGROK_USERNAME'] ?? '',
   });
   if (p.isCancel(username)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   let password = '';
   if (String(username)) {
-    const pw = await p.password({ message: 'Password' });
+    const storedPassword = retrievePassword(String(username));
+    const pwMessage = storedPassword
+      ? 'Password (press Enter to keep existing)'
+      : 'Password';
+    const pw = await p.password({ message: pwMessage });
     if (p.isCancel(pw)) { p.cancel('Setup cancelled'); process.exit(0); }
-    password = String(pw);
+    password = String(pw) || storedPassword || '';
   }
 
   const verifySsl = await p.confirm({
     message: 'Verify SSL/TLS certificates? (disable only for self-signed or internal CA certificates)',
-    initialValue: true,
+    initialValue: stored['OPENGROK_VERIFY_SSL'] !== 'false',
   });
   if (p.isCancel(verifySsl)) { p.cancel('Setup cancelled.'); process.exit(0); }
 
   // --- PREFERENCES ---
+  const validBudgets = ['minimal', 'standard', 'generous'];
+  const storedBudget = validBudgets.includes(stored['OPENGROK_CONTEXT_BUDGET'] ?? '') ? stored['OPENGROK_CONTEXT_BUDGET']! : 'standard';
   const budget = await p.select({
     message: 'Response detail level',
     options: [
@@ -48,51 +62,71 @@ export async function runSetup(): Promise<void> {
       { value: 'standard', label: 'Standard (8 KB) — balanced, recommended' },
       { value: 'generous', label: 'Detailed (16 KB) — more context, more tokens' },
     ],
-    initialValue: 'standard',
+    initialValue: storedBudget,
   });
   if (p.isCancel(budget)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   const codeMode = await p.confirm({
     message: 'Enable Code Mode? (sandboxed JS runtime — ~90% fewer tokens, recommended for large codebases)',
-    initialValue: true,
+    initialValue: stored['OPENGROK_CODE_MODE'] !== 'false',
   });
   if (p.isCancel(codeMode)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   const defaultProject = await p.text({
     message: 'Default project (leave blank to search all projects)',
-    defaultValue: '',
+    defaultValue: stored['OPENGROK_DEFAULT_PROJECT'] ?? '',
     placeholder: 'my-project',
   });
   if (p.isCancel(defaultProject)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   const enableElicitation = await p.confirm({
     message: 'Enable Interactive AI Prompts? The AI can pause to ask questions during investigations (e.g., project selection, file disambiguation). Requires Claude Code v2.1.76+ or a client that supports MCP Elicitation',
-    initialValue: false,
+    initialValue: stored['OPENGROK_ENABLE_ELICITATION'] === 'true',
   });
   if (p.isCancel(enableElicitation)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   // --- ADVANCED (optional) ---
+  const storedProxy = stored['HTTP_PROXY'] ?? stored['HTTPS_PROXY'] ?? '';
+  const storedApiVersion = stored['OPENGROK_API_VERSION'] ?? 'v1';
+  const storedResponseFormat = stored['OPENGROK_RESPONSE_FORMAT_OVERRIDE'] ?? '';
+  const storedMemoryBankDir = stored['OPENGROK_MEMORY_BANK_DIR'] ?? '';
+  const storedCompileDbPaths = stored['OPENGROK_LOCAL_COMPILE_DB_PATHS'] ?? '';
+  const storedEnableFilesApi = stored['OPENGROK_ENABLE_FILES_API'] === 'true';
+  const storedSamplingModel = stored['OPENGROK_SAMPLING_MODEL'] ?? '';
+  const storedSamplingMaxTokens = stored['OPENGROK_SAMPLING_MAX_TOKENS'] ?? '256';
+  const storedAuditLogFile = stored['OPENGROK_AUDIT_LOG_FILE'] ?? '';
+  const storedRateLimitRpm = stored['OPENGROK_RATELIMIT_RPM'] ?? '60';
+  const storedEnableObservationMasker = stored['OPENGROK_ENABLE_OBSERVATION_MASKER'] === 'true';
+  const storedObservationMaskerTurns = stored['OPENGROK_OBSERVATION_MASKER_TURNS'] ?? '10';
+
+  const hasStoredAdvanced = storedProxy || storedApiVersion !== 'v1' || storedResponseFormat ||
+    storedMemoryBankDir || storedCompileDbPaths || storedEnableFilesApi || storedSamplingModel ||
+    storedSamplingMaxTokens !== '256' || storedAuditLogFile || storedRateLimitRpm !== '60' ||
+    storedEnableObservationMasker || storedObservationMaskerTurns !== '10';
+
   const wantsAdvanced = await p.confirm({
     message: 'Configure advanced settings? (proxy, API version, response format, memory bank, audit log, rate limit)',
-    initialValue: false,
+    initialValue: Boolean(hasStoredAdvanced),
   });
   if (p.isCancel(wantsAdvanced)) { p.cancel('Setup cancelled'); process.exit(0); }
 
-  let proxy = '';
-  let apiVersion = 'v1';
-  let responseFormatOverride = '';
-  let memoryBankDir = '';
-  let compileDbPaths = '';
-  let enableFilesApi = false;
-  let samplingModel = '';
-  let samplingMaxTokens = '256';
-  let auditLogFile = '';
-  let rateLimitRpm = '60';
+  let proxy = storedProxy;
+  let apiVersion = storedApiVersion;
+  let responseFormatOverride = storedResponseFormat;
+  let memoryBankDir = storedMemoryBankDir;
+  let compileDbPaths = storedCompileDbPaths;
+  let enableFilesApi = storedEnableFilesApi;
+  let samplingModel = storedSamplingModel;
+  let samplingMaxTokens = storedSamplingMaxTokens;
+  let auditLogFile = storedAuditLogFile;
+  let rateLimitRpm = storedRateLimitRpm;
+  let enableObservationMasker = storedEnableObservationMasker;
+  let observationMaskerTurns = storedObservationMaskerTurns;
 
   if (wantsAdvanced) {
     const proxyVal = await p.text({
       message: 'HTTP proxy URL (leave blank if none)',
-      defaultValue: '',
+      defaultValue: storedProxy,
       placeholder: 'http://proxy.company.com:8080',
     });
     if (p.isCancel(proxyVal)) { p.cancel('Setup cancelled'); process.exit(0); }
@@ -104,11 +138,13 @@ export async function runSetup(): Promise<void> {
         { value: 'v1', label: 'v1 — Compatible with all OpenGrok versions (default)' },
         { value: 'v2', label: 'v2 — Required for call graph features (OpenGrok 1.12+)' },
       ],
-      initialValue: 'v1',
+      initialValue: storedApiVersion,
     });
     if (p.isCancel(apiVersionVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     apiVersion = String(apiVersionVal);
 
+    const validFormats = ['', 'markdown', 'json', 'tsv', 'toon', 'yaml', 'text'];
+    const storedFormat = validFormats.includes(storedResponseFormat) ? storedResponseFormat : '';
     const responseFormat = await p.select({
       message: 'AI response format override',
       options: [
@@ -120,42 +156,42 @@ export async function runSetup(): Promise<void> {
         { value: 'yaml',     label: 'YAML — hierarchical data' },
         { value: 'text',     label: 'Text — raw code, no framing' },
       ],
-      initialValue: '',
+      initialValue: storedFormat,
     });
     if (p.isCancel(responseFormat)) { p.cancel('Setup cancelled'); process.exit(0); }
     responseFormatOverride = String(responseFormat);
 
     const memoryBankVal = await p.text({
       message: 'Investigation notes directory (leave blank for default: ~/.config/opengrok-mcp/memory-bank/)',
-      defaultValue: '',
+      defaultValue: storedMemoryBankDir,
     });
     if (p.isCancel(memoryBankVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     memoryBankDir = String(memoryBankVal);
 
     const compileDbVal = await p.text({
       message: 'C/C++ compile commands paths (comma-separated paths to compile_commands.json, blank = auto)',
-      defaultValue: '',
+      defaultValue: storedCompileDbPaths,
     });
     if (p.isCancel(compileDbVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     compileDbPaths = String(compileDbVal);
 
     const enableFilesApiVal = await p.confirm({
       message: 'Enable Files API cache? (avoids re-uploading unchanged investigation notes to the AI)',
-      initialValue: false,
+      initialValue: storedEnableFilesApi,
     });
     if (p.isCancel(enableFilesApiVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     enableFilesApi = Boolean(enableFilesApiVal);
 
     const samplingModelVal = await p.text({
       message: 'AI sampling model (leave blank for client default)',
-      defaultValue: '',
+      defaultValue: storedSamplingModel,
     });
     if (p.isCancel(samplingModelVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     samplingModel = String(samplingModelVal);
 
     const samplingMaxTokensVal = await p.text({
       message: 'AI sampling token budget (default: 256, range: 64–4096)',
-      defaultValue: '256',
+      defaultValue: storedSamplingMaxTokens,
       validate: (v) => {
         const n = parseInt(v ?? '', 10);
         if (isNaN(n) || n < 64 || n > 4096) return 'Enter a number between 64 and 4096';
@@ -166,14 +202,14 @@ export async function runSetup(): Promise<void> {
 
     const auditLogFileVal = await p.text({
       message: 'Audit log file path (leave blank to disable)',
-      defaultValue: '',
+      defaultValue: storedAuditLogFile,
     });
     if (p.isCancel(auditLogFileVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     auditLogFile = String(auditLogFileVal);
 
     const rateLimitRpmVal = await p.text({
       message: 'Request rate limit in RPM (default: 60)',
-      defaultValue: '60',
+      defaultValue: storedRateLimitRpm,
       validate: (v) => {
         const n = parseInt(v ?? '', 10);
         if (isNaN(n) || n < 1) return 'Enter a positive integer';
@@ -181,6 +217,24 @@ export async function runSetup(): Promise<void> {
     });
     if (p.isCancel(rateLimitRpmVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     rateLimitRpm = String(rateLimitRpmVal);
+
+    const enableObservationMaskerVal = await p.confirm({
+      message: 'Enable Observation Masker? (prepend compact history summaries to results after N turns — only useful for clients that truncate context; no benefit for Claude Code or Cursor)',
+      initialValue: storedEnableObservationMasker,
+    });
+    if (p.isCancel(enableObservationMaskerVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    enableObservationMasker = Boolean(enableObservationMaskerVal);
+
+    const observationMaskerTurnsVal = await p.text({
+      message: 'Observation Masker — full-text window size (how many recent results to keep in full, default: 10)',
+      defaultValue: storedObservationMaskerTurns,
+      validate: (v) => {
+        const n = parseInt(v ?? '', 10);
+        if (isNaN(n) || n < 1) return 'Enter a positive integer';
+      },
+    });
+    if (p.isCancel(observationMaskerTurnsVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    observationMaskerTurns = String(observationMaskerTurnsVal);
   }
 
   // --- STORE CREDENTIALS ---
@@ -209,6 +263,8 @@ export async function runSetup(): Promise<void> {
     samplingMaxTokens,
     auditLogFile,
     rateLimitRpm,
+    enableObservationMasker,
+    observationMaskerTurns,
   };
 
   const spin = p.spinner();

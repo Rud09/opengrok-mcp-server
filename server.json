@@ -8,12 +8,12 @@
     "url": "https://github.com/IcyHot09/opengrok-mcp-server",
     "source": "github"
   },
-  "version": "9.2.5",
+  "version": "9.2.7",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "opengrok-mcp-server",
-      "version": "9.2.5",
+      "version": "9.2.7",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -99,6 +99,22 @@
           "isRequired": false,
           "isSecret": false,
           "default": "false"
+        },
+        {
+          "name": "OPENGROK_ENABLE_OBSERVATION_MASKER",
+          "description": "Observation Masker \u2014 prepend compact history summaries to opengrok_execute results after N turns. Disabled by default; has no benefit for clients that retain full context (Claude Code, Cursor).",
+          "format": "boolean",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "false"
+        },
+        {
+          "name": "OPENGROK_OBSERVATION_MASKER_TURNS",
+          "description": "Number of most-recent opengrok_execute results to keep as full text before masking older ones. Default: 10.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "10"
         },
         {
           "name": "OPENGROK_SAMPLING_MAX_TOKENS",

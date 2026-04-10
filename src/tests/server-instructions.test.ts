@@ -7,10 +7,10 @@ describe('SERVER_INSTRUCTIONS token budget', () => {
     expect(filled.length).toBeLessThanOrEqual(1500);
   });
 
-  it('code mode template is ≤1650 chars (≈330 tokens)', async () => {
+  it('code mode template is ≤1800 chars (≈360 tokens)', async () => {
     const { SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE } = await import('../server/server.js');
     const filled = SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE.replace('{{MEMORY_STATUS}}', '[Memory] No prior context.');
-    expect(filled.length).toBeLessThanOrEqual(1650);
+    expect(filled.length).toBeLessThanOrEqual(1800);
   });
 
   it('template contains {{MEMORY_STATUS}} placeholder', async () => {

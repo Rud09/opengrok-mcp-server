@@ -195,11 +195,12 @@ export const API_SPEC = {
       signature: "env.opengrok.readMemory(filename)",
       allowed: "'active-task.md' | 'investigation-log.md'",
       returns: "string | null — null means file is uninitialized stub",
+      note: "Call at session start for both files if prior context exists.",
     },
     writeMemory: {
       signature: "env.opengrok.writeMemory(filename, content, mode?)",
       mode: "'overwrite' | 'append' (default: 'overwrite')",
-      note: "Always call writeMemory at session end to persist findings.",
+      note: "Always call writeMemory at session end: append to investigation-log.md, overwrite active-task.md.",
     },
     elicit: {
       signature: "env.opengrok.elicit(message, schema)",

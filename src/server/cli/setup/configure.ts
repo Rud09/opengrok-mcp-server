@@ -25,6 +25,8 @@ export interface McpConfig {
   samplingMaxTokens?: string;
   auditLogFile?: string;
   rateLimitRpm?: string;
+  enableObservationMasker?: boolean;
+  observationMaskerTurns?: string;
 }
 
 /** Build the env var object for a given config — only non-default values are written. */
@@ -52,7 +54,62 @@ export function buildEnv(config: McpConfig): Record<string, string> {
   if (config.auditLogFile)                                 env['OPENGROK_AUDIT_LOG_FILE'] = config.auditLogFile;
   if (config.rateLimitRpm && config.rateLimitRpm !== '60')
                                                            env['OPENGROK_RATELIMIT_RPM'] = config.rateLimitRpm;
+  if (config.enableObservationMasker)                      env['OPENGROK_ENABLE_OBSERVATION_MASKER'] = 'true';
+  if (config.observationMaskerTurns && config.observationMaskerTurns !== '10')
+                                                           env['OPENGROK_OBSERVATION_MASKER_TURNS'] = config.observationMaskerTurns;
   return env;
+}
+
+/**
+ * Read existing opengrok-mcp env vars from the first detected MCP client config.
+ * Checks Claude Code → Copilot CLI → Codex in priority order.
+ * Returns an empty object if no config is found.
+ */
+export function readStoredEnv(): Record<string, string> {
+  // Claude Code (~/.claude.json) — projects[cwd].mcpServers['opengrok-mcp'].env
+  try {
+    const configPath = join(homedir(), '.claude.json');
+    if (existsSync(configPath)) {
+      const data = JSON.parse(readFileSync(configPath, 'utf8')) as {
+        projects?: Record<string, { mcpServers?: Record<string, { env?: Record<string, string> }> }>;
+      };
+      for (const project of Object.values(data.projects ?? {})) {
+        const env = project.mcpServers?.['opengrok-mcp']?.env;
+        if (env?.['OPENGROK_BASE_URL']) return env;
+      }
+    }
+  } catch { /* ignore */ }
+
+  // GitHub Copilot CLI (~/.copilot/mcp-config.json)
+  try {
+    const configPath = join(homedir(), '.copilot', 'mcp-config.json');
+    if (existsSync(configPath)) {
+      const data = JSON.parse(readFileSync(configPath, 'utf8')) as {
+        mcpServers?: Record<string, { env?: Record<string, string> }>;
+      };
+      const env = data.mcpServers?.['opengrok-mcp']?.env;
+      if (env?.['OPENGROK_BASE_URL']) return env;
+    }
+  } catch { /* ignore */ }
+
+  // Codex (~/.config/codex/config.toml or %APPDATA%\codex\config.toml)
+  try {
+    const configPath = process.platform === 'win32'
+      ? join(process.env['APPDATA'] ?? homedir(), 'codex', 'config.toml')
+      : join(homedir(), '.config', 'codex', 'config.toml');
+    if (existsSync(configPath)) {
+      const toml = tomlParse(readFileSync(configPath, 'utf8')) as JsonMap;
+      const servers = (toml['mcp_servers'] as AnyJson[] | undefined) ?? [];
+      for (const s of servers as Array<Record<string, AnyJson>>) {
+        if (s['name'] === 'opengrok-mcp') {
+          const env = s['env'] as Record<string, string> | undefined;
+          if (env?.['OPENGROK_BASE_URL']) return env;
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
+  return {};
 }
 
 export function configureClaudeCode(config: McpConfig): void {

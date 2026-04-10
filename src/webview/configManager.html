@@ -376,6 +376,18 @@
                     <input type="number" id="rateLimitRpm" placeholder="60" min="1">
                     <div class="hint">Maximum requests per minute sent to the OpenGrok server.</div>
                 </div>
+                <div class="checkbox-field">
+                    <input type="checkbox" id="enableObservationMasker">
+                    <div class="checkbox-content">
+                        <label for="enableObservationMasker">Observation Masker</label>
+                        <div class="checkbox-subtext">Prepend compact history summaries to opengrok_execute results after N turns. Only useful for MCP clients that truncate context (e.g. limited-window clients). No benefit for Claude Code or Cursor.</div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="observationMaskerTurns">Observation Masker — Full-Text Window</label>
+                    <input type="number" id="observationMaskerTurns" placeholder="10" min="1">
+                    <div class="hint">How many of the most-recent opengrok_execute results to keep in full. Once more than this many accumulate, older results are replaced with compact summaries. Default: 10.</div>
+                </div>
             </div>
         </div>
     </details>
@@ -504,6 +516,8 @@
             var samplingMaxTokens = parseInt(document.getElementById('samplingMaxTokens').value, 10) || 256;
             var auditLogFile = document.getElementById('auditLogFile').value.trim();
             var rateLimitRpm = parseInt(document.getElementById('rateLimitRpm').value, 10) || 60;
+            var enableObservationMasker = document.getElementById('enableObservationMasker').checked;
+            var observationMaskerTurns = parseInt(document.getElementById('observationMaskerTurns').value, 10) || 10;
 
             if (!baseUrl) { showToast('error', 'URL is required'); return; }
             if (username && !password && !currentConfig.hasPassword) { showToast('error', 'Password required for authenticated connections'); return; }
@@ -519,7 +533,7 @@
             clearStatusBar();
             vscode.postMessage({
                 type: 'saveConfiguration',
-                data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, defaultProject: defaultProject, contextBudget: contextBudget, responseFormatOverride: responseFormatOverride, apiVersion: apiVersion, codeMode: codeMode, memoryBankDir: memoryBankDir, compileDbPaths: compileDbPaths, codeModeChanged: codeModeChanged, enableElicitation: enableElicitation, enableFilesApi: enableFilesApi, samplingModel: samplingModel, samplingMaxTokens: samplingMaxTokens, auditLogFile: auditLogFile, rateLimitRpm: rateLimitRpm }
+                data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, defaultProject: defaultProject, contextBudget: contextBudget, responseFormatOverride: responseFormatOverride, apiVersion: apiVersion, codeMode: codeMode, memoryBankDir: memoryBankDir, compileDbPaths: compileDbPaths, codeModeChanged: codeModeChanged, enableElicitation: enableElicitation, enableFilesApi: enableFilesApi, samplingModel: samplingModel, samplingMaxTokens: samplingMaxTokens, auditLogFile: auditLogFile, rateLimitRpm: rateLimitRpm, enableObservationMasker: enableObservationMasker, observationMaskerTurns: observationMaskerTurns }
             });
         }
 
@@ -555,6 +569,12 @@
                     if (currentConfig.rateLimitRpm !== undefined) {
                         document.getElementById('rateLimitRpm').value = currentConfig.rateLimitRpm || 60;
                     }
+                    if (currentConfig.enableObservationMasker !== undefined) {
+                        document.getElementById('enableObservationMasker').checked = currentConfig.enableObservationMasker;
+                    }
+                    if (currentConfig.observationMaskerTurns !== undefined) {
+                        document.getElementById('observationMaskerTurns').value = currentConfig.observationMaskerTurns || 10;
+                    }
 
                     var pInput = document.getElementById('password');
                     var pHint = document.getElementById('passwordHint');
@@ -572,7 +592,9 @@
                         currentConfig.enableFilesApi || currentConfig.samplingModel ||
                         (currentConfig.samplingMaxTokens && currentConfig.samplingMaxTokens !== 256) ||
                         currentConfig.auditLogFile ||
-                        (currentConfig.rateLimitRpm && currentConfig.rateLimitRpm !== 60));
+                        (currentConfig.rateLimitRpm && currentConfig.rateLimitRpm !== 60) ||
+                        currentConfig.enableObservationMasker ||
+                        (currentConfig.observationMaskerTurns && currentConfig.observationMaskerTurns !== 10));
                     if (hasAdvanced) {
                         document.getElementById('advancedSection').open = true;
                     }

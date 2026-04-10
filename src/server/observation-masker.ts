@@ -27,11 +27,16 @@ export interface ObservationEntry {
 // ObservationMasker
 // ---------------------------------------------------------------------------
 
-/** Number of recent tool outputs to keep as full text in the header. */
-const FULL_WINDOW = 10;
+/** Default number of recent tool outputs to keep as full text in the header. */
+const DEFAULT_FULL_WINDOW = 10;
 
 export class ObservationMasker {
   private readonly entries: ObservationEntry[] = [];
+  private readonly fullWindow: number;
+
+  constructor(fullWindow: number = DEFAULT_FULL_WINDOW) {
+    this.fullWindow = fullWindow;
+  }
 
   /**
    * Record a tool execution result.
@@ -52,11 +57,11 @@ export class ObservationMasker {
    * Returns empty string if there are no observations beyond the full window.
    */
   getMaskedHistoryHeader(): string {
-    if (this.entries.length <= FULL_WINDOW) {
+    if (this.entries.length <= this.fullWindow) {
       return ""; // Everything fits in the full window — no header needed
     }
 
-    const masked = this.entries.slice(0, this.entries.length - FULL_WINDOW);
+    const masked = this.entries.slice(0, this.entries.length - this.fullWindow);
     if (!masked.length) return "";
 
     const lines: string[] = [

@@ -2,7 +2,7 @@
   "name": "opengrok-mcp-server",
   "displayName": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases",
-  "version": "9.2.5",
+  "version": "9.2.7",
   "mcpName": "io.github.IcyHot09/opengrok-mcp-server",
   "license": "PolyForm-Noncommercial-1.0.0",
   "publisher": "IcyHot09",
@@ -238,6 +238,19 @@
           "minimum": 1,
           "markdownDescription": "Maximum requests per minute sent to the OpenGrok server. Default: 60. Maps to `OPENGROK_RATELIMIT_RPM` env var.",
           "order": 17
+        },
+        "opengrok-mcp.enableObservationMasker": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Observation Masker** — Prepend compact history summaries to `opengrok_execute` results after N turns. Only useful for MCP clients that truncate context. No benefit for Claude Code or Cursor. Maps to `OPENGROK_ENABLE_OBSERVATION_MASKER` env var.",
+          "order": 18
+        },
+        "opengrok-mcp.observationMaskerTurns": {
+          "type": "integer",
+          "default": 10,
+          "minimum": 1,
+          "markdownDescription": "Number of the most-recent `opengrok_execute` results to keep as full text. Once this many results accumulate, older ones are replaced with compact summaries in future result headers. Default: 10. Maps to `OPENGROK_OBSERVATION_MASKER_TURNS` env var.",
+          "order": 19
         },
         "opengrok-mcp.enableCacheHints": {
           "type": "boolean",

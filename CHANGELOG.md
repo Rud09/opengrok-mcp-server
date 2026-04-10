@@ -63,6 +63,23 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.2.7] - 2026-04-10
+
+### 🧠 Memory + Observation Masker UX
+
+**Memory read at session start (all AI clients):**
+- `SERVER_INSTRUCTIONS_CODE_MODE_TEMPLATE` MEMORY section now explicitly instructs: "If prior context shown above, read both files with opengrok_read_memory before any other call. At session end: append to investigation-log.md and overwrite active-task.md." Previously only showed status but gave no directive to act on it.
+- Periodic nudge (every 5 `opengrok_execute` calls) updated to mention both files: `investigation-log.md` and `active-task.md`.
+- `opengrok_memory_status` tool note updated from VS Code–specific to client-agnostic phrasing (mentions `.claude.md`, VS Code `/memory`, `.cursorrules`).
+- `sandbox.ts` API spec: `readMemory` note "Call at session start for both files if prior context exists."; `writeMemory` clarifies append vs overwrite semantics.
+
+**Observation Masker defaulted off + configurable window size:**
+- `OPENGROK_ENABLE_OBSERVATION_MASKER` defaults to `false`. The masker added tokens with no benefit for clients that retain full context (Claude Code, Cursor, Copilot). Opt in by setting `OPENGROK_ENABLE_OBSERVATION_MASKER=true`.
+- New `OPENGROK_OBSERVATION_MASKER_TURNS` (default: 10): configures the full-text window size — how many of the most-recent `opengrok_execute` results are kept in full. Once more than this many results accumulate, older ones are replaced with compact summaries. `ObservationMasker` now accepts `fullWindow` as a constructor parameter.
+- Both settings exposed in VS Code extension settings, the Config Manager webview (Advanced section), and the `npx opengrok-mcp-server setup` wizard.
+
+---
+
 ## [9.2.5] - 2026-04-10
 
 ### 🧹 Cleanup — Legacy Credential File Purge
