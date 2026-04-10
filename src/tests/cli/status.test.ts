@@ -14,25 +14,43 @@ vi.mock('../../server/config.js', () => ({
     OPENGROK_USERNAME: 'admin',
     OPENGROK_VERIFY_SSL: true,
     OPENGROK_CONTEXT_BUDGET: 'standard',
+    OPENGROK_CODE_MODE: true,
   }),
+}));
+
+vi.mock('../../server/cli/keychain.js', () => ({
+  retrievePassword: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../../server/cli/setup/detect.js', () => ({
   detectInstalledClients: vi.fn().mockReturnValue({
     claudeCode: true,
-    vscode: false,
     codex: false,
+    copilotCli: false,
   }),
 }));
+
+// Prevent status.ts from reading the real ~/.claude.json during tests
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return {
+    ...actual,
+    existsSync: vi.fn().mockReturnValue(false),
+    readFileSync: vi.fn().mockReturnValue('{}'),
+  };
+});
 
 describe('runStatus', () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    // Ensure OPENGROK_BASE_URL is set so readEnvFromClaudeCode is skipped
+    process.env['OPENGROK_BASE_URL'] = 'https://og.example.com/';
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    delete process.env['OPENGROK_BASE_URL'];
     consoleSpy.mockRestore();
     vi.clearAllMocks();
   });

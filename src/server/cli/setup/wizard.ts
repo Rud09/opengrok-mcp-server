@@ -66,7 +66,7 @@ export async function runSetup(): Promise<void> {
   if (p.isCancel(defaultProject)) { p.cancel('Setup cancelled'); process.exit(0); }
 
   const enableElicitation = await p.confirm({
-    message: 'Enable Interactive AI Prompts? The AI can pause to ask questions during investigations (e.g., project selection, file disambiguation). Requires Claude Code v2.1.76+ or VS Code Copilot',
+    message: 'Enable Interactive AI Prompts? The AI can pause to ask questions during investigations (e.g., project selection, file disambiguation). Requires Claude Code v2.1.76+ or a client that supports MCP Elicitation',
     initialValue: false,
   });
   if (p.isCancel(enableElicitation)) { p.cancel('Setup cancelled'); process.exit(0); }

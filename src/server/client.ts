@@ -943,18 +943,26 @@ export class OpenGrokClient {
   }
 
   async testConnection(): Promise<boolean> {
+    // Use a single direct fetch (no pRetry) so 429/5xx don't trigger retry backoff.
+    // Any HTTP response means the server is reachable; only network/SSL/timeout
+    // errors mean we can't connect. 5xx responses indicate the service is unhealthy.
     try {
-      // Use raw fetch (not this.request) so 4xx responses don't throw — we only
-      // want to know the server is reachable, not that the request succeeded.
+      const url = buildSafeUrl(this.baseUrl, "");
       const fetchOptions: RequestInit & { dispatcher?: unknown } = {
         headers: { "User-Agent": `OpenGrok-MCP/${CLIENT_VERSION}` },
         redirect: "manual",
         signal: AbortSignal.timeout(TIMEOUTS.default),
       };
+      /* v8 ignore next -- agent set when VERIFY_SSL=false; tested in client-extended */
       if (this.agent) fetchOptions.dispatcher = this.agent;
-      const response = await fetch(this.baseUrl.toString(), fetchOptions as RequestInit);
-      return response.status < 500;
+      const response = await fetch(url.toString(), fetchOptions);
+      void response.text().catch(() => {}); // consume body to avoid undici leaks
+      // 5xx means the service is down — not healthy
+      if (response.status >= 500) return false;
+      // 2xx / 3xx / 4xx (including 401, 403, 429) — server IS reachable
+      return true;
     } catch {
+      // Network errors, SSL failures, DNS failures, timeouts
       return false;
     }
   }

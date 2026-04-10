@@ -8,12 +8,12 @@
     "url": "https://github.com/IcyHot09/opengrok-mcp-server",
     "source": "github"
   },
-  "version": "9.2.3",
+  "version": "9.2.4",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "opengrok-mcp-server",
-      "version": "9.2.3",
+      "version": "9.2.4",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -79,7 +79,7 @@
         },
         {
           "name": "OPENGROK_ENABLE_ELICITATION",
-          "description": "Interactive AI Prompts \u2014 the AI pauses to ask questions during investigations (project selection, file disambiguation). Requires Claude Code v2.1.76+ or VS Code Copilot.",
+          "description": "Interactive AI Prompts \u2014 the AI pauses to ask questions during investigations (project selection, file disambiguation). Requires Claude Code v2.1.76+ or a client that supports MCP Elicitation.",
           "format": "boolean",
           "isRequired": false,
           "isSecret": false,

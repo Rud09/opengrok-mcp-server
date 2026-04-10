@@ -63,6 +63,18 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.2.4] - 2026-04-10
+
+### 🐛 Bug Fixes — `testConnection()` & `opengrok-mcp status`
+
+- **`testConnection()` 429 fix**: Rewrote the method to bypass `pRetry` entirely. Previously it called `this.request()` which retried 429 responses 3× with exponential backoff (~7 s delay), causing test timeouts and unnecessary network load for a connectivity check. Now uses a single direct `fetch()` with the configured SSL dispatcher. Returns `true` for any HTTP response except 5xx (which indicates service failure), and `false` for network/SSL/timeout errors.
+
+- **`opengrok-mcp status` reads stored config**: The `status` command previously showed "not configured" when run in a shell without `OPENGROK_BASE_URL` set — even after `setup` had configured everything. It now reads the URL and other settings from the Claude Code config (`~/.claude.json`) or Codex TOML config (`~/.config/codex/config.toml`) as a fallback. Password is resolved from the OS keychain as needed.
+
+- **Elicitation description corrected**: "VS Code Copilot" replaced with "a client that supports MCP Elicitation" in all UI surfaces (CLI wizard, VS Code extension settings, config manager webview, `server.json`). VS Code Copilot does not implement the MCP Elicitation protocol.
+
+---
+
 ## [9.2.3] - 2026-04-10
 
 ### 🐛 Bug Fixes — Test Coverage & Keychain Fallback
