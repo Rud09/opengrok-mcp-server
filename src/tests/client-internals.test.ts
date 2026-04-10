@@ -354,8 +354,8 @@ describe('OpenGrokClient search branches', () => {
     expect(url.searchParams.get('type')).toBe('cxx');
   });
 
-  it('search with defs type calls searchWeb', async () => {
-    // searchWeb fetches HTML from /search endpoint
+  it('search with defs type tries REST then falls back to searchWeb', async () => {
+    // All fetch calls return HTML — REST path will throw on JSON.parse, then web UI path succeeds
     fetchSpy.mockImplementation(() =>
       Promise.resolve(new Response('<html><body></body></html>', {
         status: 200,
@@ -363,10 +363,12 @@ describe('OpenGrokClient search branches', () => {
       }))
     );
     const result = await client.search('MyFunc', 'defs', ['proj'], 10, 0, 'cxx');
-    const url = new URL(fetchSpy.mock.calls[0][0] as string);
-    expect(url.pathname).toContain('/search');
-    expect(url.searchParams.get('defs')).toBe('MyFunc');
-    expect(url.searchParams.get('type')).toBe('cxx');
+    // call[0] = REST attempt (/api/v1/search?defs=MyFunc), call[1] = web UI (/search?defs=MyFunc)
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const webUrl = new URL(fetchSpy.mock.calls[1][0] as string);
+    expect(webUrl.pathname).toContain('/search');
+    expect(webUrl.searchParams.get('defs')).toBe('MyFunc');
+    expect(webUrl.searchParams.get('type')).toBe('cxx');
     expect(result.searchType).toBe('defs');
   });
 
@@ -375,8 +377,10 @@ describe('OpenGrokClient search branches', () => {
       Promise.resolve(new Response('<html></html>', { status: 200 }))
     );
     await client.search('X', 'refs', ['a', 'b']);
-    const url = new URL(fetchSpy.mock.calls[0][0] as string);
-    expect(url.searchParams.getAll('project')).toEqual(['a', 'b']);
+    // call[0] = REST attempt, call[1] = web UI (which uses per-project params)
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const webUrl = new URL(fetchSpy.mock.calls[1][0] as string);
+    expect(webUrl.searchParams.getAll('project')).toEqual(['a', 'b']);
   });
 });
 

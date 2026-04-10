@@ -362,20 +362,64 @@ describe('OpenGrokClient methods', () => {
   });
 
   describe('search (web fallback for defs/refs)', () => {
-    it('uses web search for defs search type', async () => {
+    it('uses web search for defs when REST returns 400', async () => {
+      // REST API attempt: older OpenGrok returns 400 for defs → AbortError → fallback
+      mockFetchJSON({ message: 'Bad Request' }, 400);
+      // Web UI attempt: returns HTML with results
       mockFetchText('<div id="results"><p class="pagetitle">Results 1 – 1 of 1</p></div>');
       const result = await client.search('MyClass', 'defs', ['release-2.x']);
       expect(result.searchType).toBe('defs');
-      expect(fetchSpy).toHaveBeenCalledOnce();
-      const calledUrl = fetchSpy.mock.calls[0][0] as string;
-      expect(calledUrl).toContain('search');
-      expect(calledUrl).toContain('defs=MyClass');
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const webUrl = fetchSpy.mock.calls[1][0] as string;
+      expect(webUrl).toContain('search');
+      expect(webUrl).toContain('defs=MyClass');
     });
 
-    it('uses web search for refs search type', async () => {
+    it('uses web search for refs when REST returns 400', async () => {
+      mockFetchJSON({ message: 'Bad Request' }, 400);
       mockFetchText('<div id="results"><p class="pagetitle">Results 1 – 0 of 0</p></div>');
       const result = await client.search('foo', 'refs');
       expect(result.searchType).toBe('refs');
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns results directly when REST supports defs (newer OpenGrok)', async () => {
+      mockFetchJSON({ resultCount: 2, startDocument: 0, endDocument: 1, time: 5, results: {
+        '/proj/path/Foo.cpp': [{ line: 'class <b>MyClass</b>', lineNumber: '10' }],
+      }});
+      const result = await client.search('MyClass', 'defs', ['release-2.x']);
+      expect(result.searchType).toBe('defs');
+      expect(result.totalCount).toBe(2);
+      expect(fetchSpy).toHaveBeenCalledOnce();
+    });
+
+    it('throws when both REST and web UI fail (error propagates to LLM)', async () => {
+      // REST returns 400 (1 call); web UI returns 500 — error should propagate
+      mockFetchJSON({ message: 'Bad Request' }, 400);
+      mockFetchText('<html><body>Internal Server Error</body></html>', 500);
+      await expect(client.search('MyClass', 'defs', ['release-2.x']))
+        .rejects.toThrow(/HTTP 500/);
+    });
+
+    it('throws with descriptive message when no project provided and no default set', async () => {
+      const cfg = { ...makeConfig(), OPENGROK_DEFAULT_PROJECT: '' };
+      const clientNoDefault = new OpenGrokClient(cfg);
+      // REST returns 400 — falls through to searchWeb which throws before any HTTP call
+      mockFetchJSON({ message: 'Bad Request' }, 400);
+      await expect(clientNoDefault.search('MyClass', 'defs'))
+        .rejects.toThrow(/requires a project/);
+      // Only 1 fetch call (REST attempt); searchWeb throws before making its request
+      expect(fetchSpy).toHaveBeenCalledOnce();
+    });
+
+    it('uses OPENGROK_DEFAULT_PROJECT when no projects given (web UI requires project)', async () => {
+      const cfg = { ...makeConfig(), OPENGROK_DEFAULT_PROJECT: 'my-default-proj' };
+      const clientWithDefault = new OpenGrokClient(cfg);
+      mockFetchJSON({ message: 'Bad Request' }, 400);
+      mockFetchText('<div id="results"><p class="pagetitle">Results 1 – 1 of 1</p></div>');
+      await clientWithDefault.search('MyClass', 'defs'); // no projects arg
+      const webUrl = fetchSpy.mock.calls[1][0] as string;
+      expect(webUrl).toContain('project=my-default-proj');
     });
   });
 

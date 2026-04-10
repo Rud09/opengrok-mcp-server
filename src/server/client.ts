@@ -523,7 +523,8 @@ export class OpenGrokClient {
   private async request(
     urlOrPath: URL | string,
     timeoutMs: number = TIMEOUTS.default,
-    accept: string = "application/json, text/html, */*"
+    accept: string = "application/json, text/html, */*",
+    retries: number = 3
   ): Promise<Response> {
     if (this.rateLimiter) await this.rateLimiter.acquire();
 
@@ -600,7 +601,7 @@ export class OpenGrokClient {
     };
 
     return pRetry(run, {
-      retries: 3,
+      retries,
       minTimeout: 1000,
       maxTimeout: 10_000,
       factor: 2,
@@ -629,9 +630,27 @@ export class OpenGrokClient {
     const cacheKey = `${searchType}:${query}:${sortedProjects ? sortedProjects.join(",") : ""}:${maxResults}:${start}:${fileType ?? ""}`;    const cached = this.searchCache?.get(cacheKey);
     if (cached) return cached;
 
-    // For defs/refs, OpenGrok 1.7.x REST API returns 400. Fall back to web
+    // For defs/refs, OpenGrok 1.7.x REST API returns 400 — fall back to web
     // search HTML parsing which supports all search fields.
     if (searchType === "defs" || searchType === "refs") {
+      // Try REST API first (supported on newer OpenGrok deployments)
+      try {
+        const restUrl = buildSafeUrl(this.baseUrl, `${this.apiPath}/search`);
+        restUrl.searchParams.set(searchType, query);
+        restUrl.searchParams.set("maxresults", String(maxResults));
+        if (projects?.length) restUrl.searchParams.set("projects", sortedProjects?.join(",") ?? "");
+        if (start > 0) restUrl.searchParams.set("start", String(start));
+        if (fileType) restUrl.searchParams.set("type", fileType);
+        const response = await this.request(restUrl, TIMEOUTS.search, "application/json");
+        const data = (await response.json()) as Record<string, unknown>;
+        const results = parseSearchResponse(data, searchType, query);
+        this.searchCache?.set(cacheKey, results, estimateBytes(results));
+        return results;
+      } catch {
+        // REST API doesn't support defs/refs (older OpenGrok returns 400) — try web UI
+      }
+      // Web UI fallback — errors propagate to the caller so the LLM can act on them
+      // (e.g. "You must select a project" → LLM adds projects: ['name'] to the call)
       const results = await this.searchWeb(query, searchType, projects, maxResults, fileType);
       this.searchCache?.set(cacheKey, results, estimateBytes(results));
       return results;
@@ -670,19 +689,32 @@ export class OpenGrokClient {
     maxResults: number = 25,
     fileType?: string
   ): Promise<SearchResults> {
+    // Web UI requires at least one project — use explicit list, or fall back to
+    // OPENGROK_DEFAULT_PROJECT, or throw so the LLM knows to add projects:[].
+    const effectiveProjects = projects?.length
+      ? projects
+      : this.config.OPENGROK_DEFAULT_PROJECT
+        ? [this.config.OPENGROK_DEFAULT_PROJECT]
+        : [];
+    if (!effectiveProjects.length) {
+      throw new Error(
+        `${searchType} search requires a project — the web search UI will not accept a query without one. ` +
+        `Pass projects: ['<projectname>'] in your search call, or configure OPENGROK_DEFAULT_PROJECT.`
+      );
+    }
+
     const url = buildSafeUrl(this.baseUrl, "search");
     url.searchParams.set(searchType, query);
     url.searchParams.set("n", String(maxResults));
-    if (projects?.length) {
-      for (const p of projects) {
-        url.searchParams.append("project", p);
-      }
+    for (const p of effectiveProjects) {
+      url.searchParams.append("project", p);
     }
     if (fileType) {
       url.searchParams.set("type", fileType);
     }
 
-    const response = await this.request(url, TIMEOUTS.search, "text/html, */*");
+    // retries=0: web UI 500s are permanent on broken deployments — fail fast
+    const response = await this.request(url, TIMEOUTS.search, "text/html, */*", 0);
     const html = await response.text();
     return parseWebSearchResults(html, searchType, query);
   }

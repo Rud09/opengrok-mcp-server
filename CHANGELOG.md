@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 🛡️ **v9.2** — Security Hardening, SDK 1.29.0, Enterprise Reliability & Memory UX
 
-MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. **1,113 tests, ≥89% coverage.**
+MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. v9.2.8: defs/refs search reliability — REST-first with project fallback, descriptive errors, fail-fast web UI retry, `batchSearch` per-query resilience. **1,120 tests, ≥89% coverage.**
 
 - 🎨 **v9.1** — Five env-only settings surfaced in all UI surfaces (WebView, CLI wizard, VS Code Settings): Files API Cache, AI Sampling Model, AI Sampling Token Budget, Audit Log File, Request Rate Limit. Context budget default corrected (`minimal`→`standard`). Quick Configure command removed. `opengrok_api` and `opengrok_read_memory` no longer budget-capped (static/managed content must not be truncated). **1,078 tests.**
 
@@ -60,6 +60,33 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [9.2.8] - 2026-04-10
+
+### 🐛 Bug Fixes — `defs`/`refs` Search Reliability & `batchSearch` Resilience
+
+**Root cause (cross-verified with live server):** `defs` and `refs` searches use the OpenGrok web search UI (`/search?defs=...`) because the REST API returns HTTP 400 for these fields on OpenGrok 1.7.x. The web UI requires a `project=` parameter — without it the server returns HTTP 500 `"You must select a project!"`. Previously the error was silently swallowed and returned as empty results, hiding the real cause from the AI.
+
+**`client.ts` — `search()` defs/refs path:**
+- Tries the REST API first (works on newer OpenGrok deployments that support `defs`/`refs` via REST).
+- Falls back to the web UI on HTTP 400. Web UI errors now propagate to the caller instead of being swallowed — the AI sees the real error message (e.g. "requires a project") and can fix the call.
+- `request()` accepts a new `retries` parameter; `searchWeb()` passes `retries=0` so a server-side 500 fails immediately rather than burning 7 s of exponential backoff.
+
+**`client.ts` — `searchWeb()`:**
+- Resolves effective project list from the explicit `projects` argument first, then `OPENGROK_DEFAULT_PROJECT`, then throws early (before any HTTP call) with a descriptive message: `"defs search requires a project — the web search UI will not accept a query without one."` This surfaces as an actionable error to the AI rather than a silent empty result.
+
+**`sandbox.ts` — `batchSearch()`:**
+- Changed `Promise.all` → `Promise.allSettled`. A failed query (e.g. defs without a project) no longer aborts the whole batch. Each failed entry is returned as `{ totalCount: 0, results: [], _error: "..." }` so the AI can diagnose per-query failures independently.
+
+**`sandbox.ts` — API spec corrections:**
+- `search`: added note — defs/refs require a project; omitting projects throws an error.
+- `getSymbolContext`: added note — internally uses defs/refs, same project requirement applies.
+- `getSymbolContext` return shape corrected: `references` is `{ totalFound, samples: [{path, project, lineNumber, content}] }`, not a flat array.
+- `traceCallChain`: clarified that `caller.symbol` is the enclosing function name when resolvable, otherwise `path:line`.
+
+**Tests:** 7 new / updated tests covering REST-first success, REST→web fallback, empty-result graceful degradation, default-project injection, and per-query batchSearch errors. **1,120 tests, ≥89% coverage.**
 
 ---
 

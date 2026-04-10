@@ -111,6 +111,7 @@ export const API_SPEC = {
       signature: "env.opengrok.search(query, opts?)",
       opts: "{ searchType?: 'full'|'defs'|'refs'|'path'|'hist', projects?: string[], maxResults?: number, startIndex?: number, fileType?: string }",
       returns: "SearchAPIResult: { query, searchType, totalCount, results: [{project,path,matches:[{lineNumber,lineContent}]}] }",
+      note: "defs and refs use the web search UI which requires a project. Always pass projects when using these types — omitting it throws an error.",
     },
     batchSearch: {
       signature: "env.opengrok.batchSearch(queries, opts?)",
@@ -128,7 +129,8 @@ export const API_SPEC = {
     getSymbolContext: {
       signature: "env.opengrok.getSymbolContext(symbol, opts?)",
       opts: "{ projects?: string[], contextLines?: number, maxRefs?: number, includeHeader?: boolean, fileType?: string }",
-      returns: "SymbolContextAPIResult: { found, symbol, kind, definition, header, references, fileSymbols }",
+      returns: "SymbolContextAPIResult: { found, symbol, kind, definition: {project,path,line,context,lang}, header: {context,lang}, references: {totalFound, samples: [{path,project,lineNumber,content}]}, fileSymbols }",
+      note: "Internally uses defs and refs search — projects must be specified for the same reason as search().",
     },
     getFileSymbols: {
       signature: "env.opengrok.getFileSymbols(project, path)",
@@ -163,7 +165,7 @@ export const API_SPEC = {
       opts: "{ direction?: 'callers'|'callees'|'both', depth?: number, project?: string }",
       returns:
         "CallChainAPIResult: { symbol, direction, callers: [{symbol,path,project,line,depth}], callees: [] }",
-      note: "callers direction supported. callees always returns empty (requires AST, not yet implemented).",
+      note: "callers direction supported. callees always returns empty (requires AST, not yet implemented). caller.symbol is the enclosing function name when resolvable, otherwise 'path:line'.",
     },
     searchSuggest: {
       signature: "env.opengrok.searchSuggest(query, opts?)",
@@ -386,9 +388,24 @@ export function createSandboxAPI(
 
     async batchSearch(queries, opts = {}) {
       const { projects, fileType } = opts;
-      return Promise.all(queries.map((q) =>
+      const settled = await Promise.allSettled(queries.map((q) =>
         client.search(q.query, (q.searchType ?? "full") as "full" | "defs" | "refs" | "path" | "hist", projects, q.maxResults ?? 5, 0, fileType)
       ));
+      return settled.map((r, i) => {
+        if (r.status === "fulfilled") return r.value;
+        // Propagate per-query errors so the LLM can diagnose and fix them
+        const q = queries[i];
+        return {
+          query: q.query,
+          searchType: q.searchType ?? "full",
+          totalCount: 0,
+          timeMs: 0,
+          results: [],
+          startIndex: 0,
+          endIndex: -1,
+          _error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+        };
+      });
     },
 
     async getFileContent(project, path, opts = {}) {
