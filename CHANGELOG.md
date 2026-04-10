@@ -63,6 +63,20 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.2.5] - 2026-04-10
+
+### 🧹 Cleanup — Legacy Credential File Purge
+
+`storeCredentials()` now removes old credential artifacts left by versions prior to v8.0 on first call (e.g. after `opengrok-mcp setup`):
+- `cred-{username}.key` — old separate key file (v8.x wrote key + enc separately)
+- `credentials.enc` — pre-`cred-{username}.enc` naming from very old setup wizard
+- `.salt` — AES-CBC salt file from pre-GCM encryption
+- `config` — plaintext config written by the old `opengrok-mcp-wrapper.sh --setup` (removed in v8.0)
+
+`deleteCredentials()` also removes these same legacy files in addition to the current `cred-{username}.enc`.
+
+---
+
 ## [9.2.4] - 2026-04-10
 
 ### 🐛 Bug Fixes — `testConnection()` & `opengrok-mcp status`

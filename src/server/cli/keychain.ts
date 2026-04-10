@@ -21,6 +21,7 @@ export function storeCredentials(
   username: string,
   password: string
 ): void {
+  purgeLegacyFiles(username);
   const entry = getKeyringEntry(username);
   if (entry) {
     try {
@@ -31,6 +32,17 @@ export function storeCredentials(
   }
   storeInEncryptedFile(username, password);
   updateCredentialRotationTimestamp(getConfigDirectory());
+}
+
+/** Remove credential artifacts left by older versions of the setup wizard. */
+function purgeLegacyFiles(username: string): void {
+  const dir = getConfigDirectory();
+  for (const name of [`cred-${username}.key`, 'credentials.enc', '.salt', 'config']) {
+    const p = join(dir, name);
+    if (existsSync(p)) {
+      try { unlinkSync(p); } catch { /* ignore */ }
+    }
+  }
 }
 
 export function retrievePassword(username: string): string | null {
@@ -50,11 +62,13 @@ export function deleteCredentials(username: string): void {
   if (entry) {
     try { entry.deletePassword(); } catch { /* not stored in keyring */ }
   }
-  // Also clear encrypted files
+  // Clear current and legacy credential files
   const dir = getConfigDirectory();
-  const encPath = join(dir, `cred-${username}.enc`);
-  if (existsSync(encPath)) {
-    try { unlinkSync(encPath); } catch { /* ignore */ }
+  for (const name of [`cred-${username}.enc`, `cred-${username}.key`, 'credentials.enc', '.salt']) {
+    const p = join(dir, name);
+    if (existsSync(p)) {
+      try { unlinkSync(p); } catch { /* ignore */ }
+    }
   }
 }
 
