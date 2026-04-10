@@ -63,6 +63,15 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.2.3] - 2026-04-10
+
+### 🐛 Bug Fixes — Test Coverage & Keychain Fallback
+
+- **Keychain fallback**: `retrievePassword()` now falls through to the encrypted file fallback when `getPassword()` returns `null` (OS keychain accessible but no entry found). Previously only exceptions triggered the fallback, so credentials stored in the file were silently missed on Linux systems where the keyring returns null instead of throwing.
+- **Test coverage**: Updated `testConnection()` expectations — 403/404/429 responses now correctly report `connected: true` (server is reachable and responding). Updated robustness tests to reflect this.
+
+---
+
 ## [9.2.2] - 2026-04-09
 
 ### 🐛 Bug Fix — `opengrok_index_health` always reports `connected: false`
