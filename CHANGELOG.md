@@ -63,6 +63,17 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.2.9] - 2026-04-10
+
+### 🐛 Bug Fix — Server Sourcemaps Excluded from npm Package
+
+Dev-build sourcemaps (`out/server/main.js.map`, `out/server/sandbox-worker.js.map`) were inadvertently included in published npm packages when a developer ran `npm run compile` (dev build) before `npm publish`. The `files` field in `package.json` includes `out/server/` wholesale, and `.npmignore` only excluded `out/extension.js.map`.
+
+- **`.npmignore`**: Added `out/server/*.map` to explicitly block server sourcemaps from the npm tarball.
+- **`package.json`**: Added `prepublishOnly: "npm run package"` so `npm publish` always runs the production build first (`sourcemap: false`), preventing `.map` files from ever landing in `out/server/` before upload.
+
+---
+
 ## [9.2.8] - 2026-04-10
 
 ### 🐛 Bug Fixes — `defs`/`refs` Search Reliability & `batchSearch` Resilience
