@@ -37,8 +37,10 @@ export function retrievePassword(username: string): string | null {
   const entry = getKeyringEntry(username);
   if (entry) {
     try {
-      return entry.getPassword();
-    } catch { /* fall through to file fallback */ }
+      const pw = entry.getPassword();
+      if (pw !== null) return pw;
+      // null means keyring accessible but no entry — fall through to file
+    } catch { /* keyring unavailable — fall through to file fallback */ }
   }
   return retrieveFromEncryptedFile(username);
 }

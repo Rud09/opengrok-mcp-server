@@ -67,16 +67,18 @@ afterEach(() => {
 // -----------------------------------------------------------------------
 
 describe('HTTP error codes', () => {
-  it('403 Forbidden — non-retryable, throws AbortError', async () => {
+  it('403 Forbidden — server is reachable (access denied)', async () => {
     fetchSpy.mockResolvedValue(mockResponse(403, '{}'));
     const client = new OpenGrokClient(makeConfig());
-    await expect(client.testConnection()).resolves.toBe(false);
+    // 403 means the server is up and responding — connected=true
+    await expect(client.testConnection()).resolves.toBe(true);
   });
 
-  it('404 Not Found — non-retryable', async () => {
+  it('404 Not Found — server is reachable (wrong path)', async () => {
     fetchSpy.mockResolvedValue(mockResponse(404, '{}'));
     const client = new OpenGrokClient(makeConfig());
-    await expect(client.testConnection()).resolves.toBe(false);
+    // 404 means the server is up and responding — connected=true
+    await expect(client.testConnection()).resolves.toBe(true);
   });
 
   it('500 Internal Server Error — retried then fails', { timeout: 30_000 }, async () => {
@@ -97,10 +99,11 @@ describe('HTTP error codes', () => {
     await expect(client.testConnection()).resolves.toBe(false);
   });
 
-  it('429 Too Many Requests — retried then fails', { timeout: 30_000 }, async () => {
+  it('429 Too Many Requests — server is reachable (rate limited)', async () => {
     fetchSpy.mockResolvedValue(mockResponse(429, '{}'));
     const client = new OpenGrokClient(makeConfig());
-    await expect(client.testConnection()).resolves.toBe(false);
+    // 429 means the server is up and responding — connected=true
+    await expect(client.testConnection()).resolves.toBe(true);
   });
 
   it('401 on search throws with actionable message', async () => {
