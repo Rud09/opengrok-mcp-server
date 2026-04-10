@@ -53,6 +53,8 @@ Check installation health at any time:
 opengrok-mcp status
 ```
 
+> **Note:** `status` reads your stored config automatically — it checks `~/.claude.json` (Claude Code), `~/.copilot/mcp-config.json` (GitHub Copilot CLI), and `~/.config/codex/config.toml` (Codex) in that order. No need to set `OPENGROK_BASE_URL` in your shell; it works right after `setup`.
+
 ---
 
 ## Client Configurations

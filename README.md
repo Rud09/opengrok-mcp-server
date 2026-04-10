@@ -82,7 +82,7 @@ The wizard stores credentials securely in the OS keychain (macOS Keychain, Windo
 | Command | Description |
 | :------ | :---------- |
 | `npx opengrok-mcp-server setup` | Interactive wizard: configures your MCP client and stores credentials securely |
-| `opengrok-mcp status` | Health check: validates connectivity and detects installed MCP clients |
+| `opengrok-mcp status` | Health check: validates connectivity and detects installed MCP clients. Reads config from `~/.claude.json`, `~/.copilot/mcp-config.json`, or Codex TOML when `OPENGROK_BASE_URL` is not in env |
 | `opengrok-mcp --version` | Print version and exit |
 
 `setup` supports **Claude Code CLI**, **GitHub Copilot CLI**, and **Codex CLI**. VS Code is configured automatically by the extension — no CLI step needed. Credentials are stored in the OS keychain with an AES-256-GCM encrypted file fallback for headless/CI environments.
@@ -220,7 +220,6 @@ When `OPENGROK_ENABLE_ELICITATION=true`, the server uses MCP Elicitation in two 
 Requires a client that supports MCP Elicitation:
 
 - **Claude Code** v2.1.76+ ✓
-- **VS Code Copilot** ✓
 
 Enable in the VS Code configuration panel, or set `OPENGROK_ENABLE_ELICITATION=true` in your MCP client environment config. The server degrades gracefully to `{ action: "cancel" }` on unsupported clients — no errors.
 
