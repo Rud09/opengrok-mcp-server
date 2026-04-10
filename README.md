@@ -285,7 +285,7 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | Variable | Values | Description |
 | :--- | :--- | :--- |
 | `OPENGROK_CODE_MODE` | `true` (default) / `false` | Switch to 5-tool Code Mode (opengrok_api + opengrok_execute + 3 memory tools) |
-| `OPENGROK_CONTEXT_BUDGET` | `minimal` (default) / `standard` / `generous` | Response size tier: 4 KB / 8 KB / 16 KB |
+| `OPENGROK_CONTEXT_BUDGET` | `standard` (default) / `minimal` / `generous` | Response size tier: 8 KB / 4 KB / 16 KB |
 | `OPENGROK_RESPONSE_FORMAT_OVERRIDE` | `tsv` / `toon` / `yaml` / `text` / `markdown` | Force a response format globally for all tools |
 | `OPENGROK_DEFAULT_PROJECT` | string | Default project name to scope all searches |
 | `OPENGROK_DEFAULT_MAX_RESULTS` | integer (default: `25`) | Default search result limit |
@@ -297,6 +297,8 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | Variable | Values | Description |
 | :--- | :--- | :--- |
 | `OPENGROK_MEMORY_BANK_DIR` | path | Override directory for `active-task.md` + `investigation-log.md` files |
+| `OPENGROK_ENABLE_OBSERVATION_MASKER` | `true` / `false` (default: `false`) | Prepend compact history summaries to `opengrok_execute` results after the full-text window fills. Only useful for clients that truncate context (not Claude Code or Cursor). |
+| `OPENGROK_OBSERVATION_MASKER_TURNS` | integer (default: `10`) | Full-text window size: how many of the most-recent `opengrok_execute` results to keep in full before older ones are replaced with compact summaries. |
 
 #### Rate Limiting
 
@@ -359,7 +361,7 @@ For the standalone server (`npx opengrok-mcp-server` or Claude Code), set these 
 | :--- | :--- | :--- |
 | `OPENGROK_LOG_LEVEL` | `debug` / `info` (default) | Verbose structured logging to stderr |
 
-VS Code users can set `opengrok-mcp.codeMode`, `opengrok-mcp.contextBudget`, `opengrok-mcp.memoryBankDir`, `opengrok-mcp.defaultProject`, `opengrok-mcp.responseFormatOverride`, and `opengrok-mcp.compileDbPaths` in VS Code settings instead.
+VS Code users can set `opengrok-mcp.codeMode`, `opengrok-mcp.contextBudget`, `opengrok-mcp.memoryBankDir`, `opengrok-mcp.defaultProject`, `opengrok-mcp.responseFormatOverride`, `opengrok-mcp.compileDbPaths`, `opengrok-mcp.enableObservationMasker`, and `opengrok-mcp.observationMaskerTurns` in VS Code settings instead.
 
 > **MCP SDK Note:** This version uses `@modelcontextprotocol/sdk` v1.29.0.
 > MCP SDK v2 is in pre-alpha; we will migrate when stable (expected Q3-Q4 2026).
@@ -467,7 +469,7 @@ npm install
 
 # Code Quality & Tests
 npm run lint           # Strict TypeScript & ESLint validation
-npm test               # Execute the Vitest test suite (1079 tests)
+npm test               # Execute the Vitest test suite (1113 tests)
 npm run test:sandbox   # Sandbox integration tests (requires compile first)
 npm run test:coverage  # Coverage report (≥89% threshold)
 
