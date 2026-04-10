@@ -322,7 +322,7 @@ describe('MemoryBank.write — graceful trim when combined content exceeds limit
 // ---------------------------------------------------------------------------
 
 describe('MemoryBank.write — writeFile error', () => {
-  it('throws MemoryBank error when directory is read-only', async () => {
+  it.skipIf(process.getuid?.() === 0)('throws MemoryBank error when directory is read-only', async () => {
     const roDir = path.join(tmpDir, 'readonly-bank');
     await fsp.mkdir(roDir, { recursive: true });
     await fsp.chmod(roDir, 0o555); // read-only dir
