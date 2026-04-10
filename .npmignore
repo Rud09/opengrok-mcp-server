@@ -26,6 +26,9 @@ out/webview/
 out/extension.js
 out/extension.js.map
 
+# Dev build sourcemaps — never publish to npm
+out/server/*.map
+
 # Evaluation / skills / local docs
 evaluation.xml
 skills/
