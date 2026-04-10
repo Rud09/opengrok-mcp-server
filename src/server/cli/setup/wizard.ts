@@ -54,7 +54,7 @@ export async function runSetup(): Promise<void> {
 
   // --- PREFERENCES ---
   const validBudgets = ['minimal', 'standard', 'generous'];
-  const storedBudget = validBudgets.includes(stored['OPENGROK_CONTEXT_BUDGET'] ?? '') ? stored['OPENGROK_CONTEXT_BUDGET']! : 'standard';
+  const storedBudget = validBudgets.includes(stored['OPENGROK_CONTEXT_BUDGET'] ?? '') ? stored['OPENGROK_CONTEXT_BUDGET'] ?? 'standard' : 'standard';
   const budget = await p.select({
     message: 'Response detail level',
     options: [
