@@ -315,6 +315,16 @@ describe('MemoryBank.write — graceful trim when combined content exceeds limit
     // New entry must be present
     expect(result).toContain('## Entry 2');
   });
+
+  it('truncates existing non-log content when append would exceed limit', async () => {
+    // active-task.md limit is 4096 bytes
+    // existing 3000 + new 2000 = 5000 > 4096 → truncateUtf8 else-branch (non-log path)
+    await bank.write('active-task.md', 'x'.repeat(3000));
+    await bank.write('active-task.md', 'y'.repeat(2000), 'append');
+    const result = await bank.read('active-task.md') ?? '';
+    expect(Buffer.byteLength(result, 'utf8')).toBeLessThanOrEqual(4096 + 50);
+    expect(result).toContain('y');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -370,25 +380,14 @@ describe('MemoryBank.getStatusLine — age and error paths', () => {
     expect(status).toMatch(/\d+h ago/);
   });
 
-  it('handles unreadable file in getStatusLine without throwing', async () => {
-    // Write a real file first so it appears in the loop
+  it('silently skips entry in getStatusLine when path is a directory (EISDIR)', async () => {
+    // Replace the file path with a directory — fsp.readFile on a directory throws
+    // EISDIR regardless of user privileges (OS-level structural error, not permissions).
     const filePath = path.join(tmpDir, 'active-task.md');
-    await fsp.writeFile(filePath, 'task: something');
-    // Remove read permissions to trigger the catch block
-    await fsp.chmod(filePath, 0o000);
-
-    let status: string;
-    try {
-      status = await bank.getStatusLine();
-      // If we can run as root, the chmod may not prevent reads; just verify no throw
-      expect(typeof status).toBe('string');
-    } catch (e) {
-      // Should never throw even with unreadable files
-      expect(e).toBeUndefined();
-    } finally {
-      // Restore permissions for cleanup
-      await fsp.chmod(filePath, 0o644);
-    }
+    await fsp.mkdir(filePath, { recursive: true });
+    const status = await bank.getStatusLine();
+    // Both files skipped → no prior context
+    expect(status).toBe('[Memory] No prior context.');
   });
 });
 
