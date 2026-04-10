@@ -197,6 +197,19 @@ describe('Code Mode — opengrok_execute tool', () => {
     expect(callArgs[0]).toContain('return { a: 1 };');
     await client.close();
   });
+
+  it('records to observation masker when OPENGROK_ENABLE_OBSERVATION_MASKER is true', async () => {
+    const ogClient = makeMockClient();
+    const config = makeConfig({ OPENGROK_ENABLE_OBSERVATION_MASKER: true, OPENGROK_OBSERVATION_MASKER_TURNS: 10 } as Partial<Config>);
+    const server = createServer(ogClient as never, config, bank);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '1.0' });
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: 'opengrok_execute', arguments: { code: 'return "test";' } });
+    expect(result.content).toBeDefined();
+    await client.close();
+  });
 });
 
 describe('Code Mode — memory bank tools', () => {

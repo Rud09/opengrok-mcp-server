@@ -116,4 +116,17 @@ describe('ObservationMasker', () => {
     const header = masker.getMaskedHistoryHeader();
     expect(header).toContain('no key entities extracted');
   });
+
+  it('custom fullWindow: no masking when entries equal window', () => {
+    const m = new ObservationMasker(3);
+    for (let i = 1; i <= 3; i++) m.record(i, 'opengrok_execute', `q${i}`, `r${i}`);
+    expect(m.getMaskedHistoryHeader()).toBe('');
+  });
+
+  it('custom fullWindow: masking triggers when entries exceed window', () => {
+    const m = new ObservationMasker(3);
+    for (let i = 1; i <= 4; i++) m.record(i, 'opengrok_execute', `q${i}`, `r${i}`);
+    const header = m.getMaskedHistoryHeader();
+    expect(header).toContain('1 earlier tool calls summarized');
+  });
 });
