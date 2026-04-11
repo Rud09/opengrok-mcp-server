@@ -2,7 +2,7 @@
   "name": "opengrok-mcp-server",
   "displayName": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases",
-  "version": "9.2.9",
+  "version": "9.2.10",
   "mcpName": "io.github.IcyHot09/opengrok-mcp-server",
   "license": "PolyForm-Noncommercial-1.0.0",
   "publisher": "IcyHot09",
@@ -212,11 +212,17 @@
           "markdownDescription": "**Files API Cache** — Avoids re-uploading unchanged investigation notes to the AI. Requires Files API support in your MCP client. Maps to `OPENGROK_ENABLE_FILES_API` env var.",
           "order": 13
         },
+        "opengrok-mcp.enableSampling": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**AI Sampling** — Allow the server to request LLM completions for error explanations and summaries. Off by default to avoid consuming premium requests (e.g. GitHub Copilot). Maps to `OPENGROK_ENABLE_SAMPLING` env var.",
+          "order": 14
+        },
         "opengrok-mcp.samplingModel": {
           "type": "string",
           "default": "",
           "markdownDescription": "Preferred model for AI sampling (error explanations, query reformulation). Leave blank for the client default. Maps to `OPENGROK_SAMPLING_MODEL` env var.",
-          "order": 14
+          "order": 15
         },
         "opengrok-mcp.samplingMaxTokens": {
           "type": "integer",
@@ -224,40 +230,40 @@
           "minimum": 64,
           "maximum": 4096,
           "markdownDescription": "Maximum tokens for AI sampling responses. Range: 64–4096. Maps to `OPENGROK_SAMPLING_MAX_TOKENS` env var.",
-          "order": 15
+          "order": 16
         },
         "opengrok-mcp.auditLogFile": {
           "type": "string",
           "default": "",
           "markdownDescription": "Path to write structured audit events (tool invocations, elicitation, errors). Appends CSV/JSON. Leave blank to disable. Maps to `OPENGROK_AUDIT_LOG_FILE` env var.",
-          "order": 16
+          "order": 17
         },
         "opengrok-mcp.rateLimitRpm": {
           "type": "integer",
           "default": 60,
           "minimum": 1,
           "markdownDescription": "Maximum requests per minute sent to the OpenGrok server. Default: 60. Maps to `OPENGROK_RATELIMIT_RPM` env var.",
-          "order": 17
+          "order": 18
         },
         "opengrok-mcp.enableObservationMasker": {
           "type": "boolean",
           "default": false,
           "markdownDescription": "**Observation Masker** — Prepend compact history summaries to `opengrok_execute` results after N turns. Only useful for MCP clients that truncate context. No benefit for Claude Code or Cursor. Maps to `OPENGROK_ENABLE_OBSERVATION_MASKER` env var.",
-          "order": 18
+          "order": 19
         },
         "opengrok-mcp.observationMaskerTurns": {
           "type": "integer",
           "default": 10,
           "minimum": 1,
           "markdownDescription": "Number of the most-recent `opengrok_execute` results to keep as full text. Once this many results accumulate, older ones are replaced with compact summaries in future result headers. Default: 10. Maps to `OPENGROK_OBSERVATION_MASKER_TURNS` env var.",
-          "order": 19
+          "order": 20
         },
         "opengrok-mcp.enableCacheHints": {
           "type": "boolean",
           "default": false,
           "markdownDeprecationMessage": "This setting is a no-op. The MCP SDK does not yet expose cache_control breakpoints. It will be removed in a future release.",
           "markdownDescription": "**Deprecated — no-op.** The SDK does not yet support explicit cache_control headers. This setting has no effect.",
-          "order": 18
+          "order": 21
         }
       }
     }

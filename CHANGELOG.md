@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 🛡️ **v9.2** — Security Hardening, SDK 1.29.0, Enterprise Reliability & Memory UX
 
-MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. v9.2.8: defs/refs search reliability — REST-first with project fallback, descriptive errors, fail-fast web UI retry, `batchSearch` per-query resilience. **1,120 tests, ≥89% coverage.**
+MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. v9.2.8: defs/refs search reliability — REST-first with project fallback, descriptive errors, fail-fast web UI retry, `batchSearch` per-query resilience. v9.2.10: `OPENGROK_ENABLE_SAMPLING` kill switch — sampling now off by default to prevent consuming premium requests in GitHub Copilot; surfaced in VS Code settings, config panel, and CLI wizard; wizard `defaultValue`→`initialValue` bug fix for validated fields. **1,121 tests, ≥89% coverage.**
 
 - 🎨 **v9.1** — Five env-only settings surfaced in all UI surfaces (WebView, CLI wizard, VS Code Settings): Files API Cache, AI Sampling Model, AI Sampling Token Budget, Audit Log File, Request Rate Limit. Context budget default corrected (`minimal`→`standard`). Quick Configure command removed. `opengrok_api` and `opengrok_read_memory` no longer budget-capped (static/managed content must not be truncated). **1,078 tests.**
 
@@ -60,6 +60,20 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [9.2.10] - 2026-04-11
+
+### ✨ Feature — `OPENGROK_ENABLE_SAMPLING` Kill Switch (off by default)
+
+MCP Sampling was consuming premium requests in clients such as GitHub Copilot even though the server was initiating it transparently. Sampling is now **disabled by default** and must be explicitly opted in.
+
+- **`OPENGROK_ENABLE_SAMPLING`**: New env var (`false` by default). Set to `true` to re-enable error explanations and dependency-graph summaries via MCP Sampling.
+- All four sampling call sites guarded: `opengrok_execute` error explanations, dependency map summaries, zero-result `_suggestions` injection in the sandbox `search()` API, and the `env.opengrok.sample()` sandbox method.
+- **CLI wizard** (`npx opengrok-mcp-server setup`): New `p.confirm` prompt in the advanced section — pre-filled from stored config, advanced section auto-opens if sampling was previously enabled.
+- **VS Code settings**: `opengrok-mcp.enableSampling` boolean (default `false`) with description calling out the Copilot premium-request concern. Surfaced in the config panel webview and persisted via `handleSaveConfiguration`.
+- **Bug fix** (wizard): Three validated `p.text` fields (`samplingMaxTokens`, `rateLimitRpm`, `observationMaskerTurns`) were using `defaultValue` instead of `initialValue`, causing the validator to receive `''` on Enter and reject valid defaults. Changed to `initialValue` so the field is pre-filled and validation sees the actual value.
 
 ---
 
