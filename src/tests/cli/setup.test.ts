@@ -144,7 +144,7 @@ describe('configureClaudeCode', () => {
     const cp = await import('child_process');
     const { configureClaudeCode } = await import('../../server/cli/setup/configure.js');
     configureClaudeCode({ url: 'https://og.example.com', username: 'alice' });
-    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
+    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[1]?.[1] as string[];
     const nameIdx = callArgs.indexOf('opengrok-mcp');
     const firstEnvIdx = callArgs.indexOf('-e');
     expect(nameIdx).toBeGreaterThan(-1);
@@ -169,7 +169,7 @@ describe('configureClaudeCode', () => {
     const cp = await import('child_process');
     const { configureClaudeCode } = await import('../../server/cli/setup/configure.js');
     configureClaudeCode({ url: 'https://og.example.com' });
-    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
+    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[1]?.[1] as string[];
     const usernameIndex = callArgs.findIndex((a) => a.startsWith('OPENGROK_USERNAME'));
     expect(usernameIndex).toBe(-1);
   });
@@ -361,7 +361,7 @@ describe('configureCopilotCli', () => {
     const cp = await import('child_process');
     const { configureCopilotCli } = await import('../../server/cli/setup/configure.js');
     configureCopilotCli({ url: 'https://og.example.com' });
-    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string[];
+    const callArgs = (cp.spawnSync as ReturnType<typeof vi.fn>).mock.calls[1]?.[1] as string[];
     const sepIdx = callArgs.indexOf('--');
     expect(sepIdx).toBeGreaterThan(-1);
     expect(callArgs.slice(sepIdx)).toEqual(['--', 'npx', '-y', 'opengrok-mcp-server']);

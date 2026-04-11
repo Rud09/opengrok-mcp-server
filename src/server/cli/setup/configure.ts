@@ -122,6 +122,8 @@ export function readStoredEnv(): Record<string, string> {
 export function configureClaudeCode(config: McpConfig): void {
   const scope = config.scope ?? 'local';
   const env = buildEnv(config);
+  // Remove existing entry first so re-running setup is idempotent.
+  spawnSync('claude', ['mcp', 'remove', '--scope', scope, 'opengrok-mcp'], { stdio: 'pipe', shell: false });
   // Server name must come before -e flags: -e is variadic (<env...>) and
   // will otherwise consume the server name as an env var value.
   const args: string[] = ['mcp', 'add', '--transport', 'stdio', '--scope', scope, 'opengrok-mcp'];
@@ -185,6 +187,8 @@ export function configureVSCode(config: McpConfig): string {
  */
 export function configureCopilotCli(config: McpConfig): void {
   const env = buildEnv(config);
+  // Remove existing entry first so re-running setup is idempotent.
+  spawnSync('copilot', ['mcp', 'remove', 'opengrok-mcp'], { stdio: 'pipe', shell: false });
   // `copilot mcp add <name> --env K=V ... -- command args`
   const args: string[] = ['mcp', 'add', 'opengrok-mcp'];
   for (const [k, v] of Object.entries(env)) {
