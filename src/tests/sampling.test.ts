@@ -62,6 +62,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     OPENGROK_PER_TOOL_RATELIMIT: '',
     OPENGROK_ALLOWED_CLIENT_IDS: '',
     OPENGROK_PROXY: '',
+    OPENGROK_ENABLE_SAMPLING: true,
     OPENGROK_SAMPLING_MAX_TOKENS: 256,
     OPENGROK_SAMPLING_MODEL: '',
     ...overrides,

@@ -172,6 +172,7 @@ describe('createSandboxAPI — sample()', () => {
     vi.mocked(sampleOrNull).mockResolvedValueOnce('handleCrash, crash_handler, onCrash');
     const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {
       mcpServer: mockMcpServer,
+      samplingEnabled: true,
     });
     const result = await api.sample('suggest alternatives for handleCrash');
     expect(sampleOrNull).toHaveBeenCalledWith(
@@ -187,6 +188,7 @@ describe('createSandboxAPI — sample()', () => {
     vi.mocked(sampleOrNull).mockResolvedValueOnce('foo');
     const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {
       mcpServer: mockMcpServer,
+      samplingEnabled: true,
     });
     await api.sample('prompt', { maxTokens: 100, systemPrompt: 'Be terse.' });
     expect(sampleOrNull).toHaveBeenCalledWith(
@@ -201,6 +203,7 @@ describe('createSandboxAPI — sample()', () => {
     vi.mocked(sampleOrNull).mockResolvedValueOnce(null);
     const api = createSandboxAPI(makeMinimalClient(), makeMinimalMemoryBank(), {
       mcpServer: mockMcpServer,
+      samplingEnabled: true,
     });
     const result = await api.sample('suggest something');
     expect(result).toBeNull();
@@ -225,7 +228,7 @@ describe('createSandboxAPI — search() zero-result _suggestions', () => {
     });
     vi.mocked(sampleOrNull).mockResolvedValueOnce('handleCrash, crash_handler, onCrash');
 
-    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer, samplingEnabled: true });
     const result = await api.search('handelCrash', { searchType: 'defs' }) as Record<string, unknown>;
 
     expect(result.totalCount).toBe(0);
@@ -271,7 +274,7 @@ describe('createSandboxAPI — search() zero-result _suggestions', () => {
     });
     vi.mocked(sampleOrNull).mockResolvedValueOnce(null);
 
-    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer, samplingEnabled: true });
     const result = await api.search('foo') as Record<string, unknown>;
 
     expect(result._suggestions).toBeUndefined();
@@ -286,7 +289,7 @@ describe('createSandboxAPI — search() zero-result _suggestions', () => {
     });
     vi.mocked(sampleOrNull).mockResolvedValueOnce(' foo , bar , baz , qux ');
 
-    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { mcpServer: mockMcpServer, samplingEnabled: true });
     const result = await api.search('x') as Record<string, unknown>;
 
     expect(result._suggestions).toEqual(['foo', 'bar', 'baz']); // capped at 3

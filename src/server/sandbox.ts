@@ -342,6 +342,7 @@ export interface SandboxOpts {
   getCompileInfoFn?: (path: string) => Promise<unknown>;
   mcpServer?: McpServer;
   elicitEnabled?: boolean;
+  samplingEnabled?: boolean;
 }
 
 const MAX_SANDBOX_WRITES_PER_EXECUTION = 5;
@@ -351,7 +352,7 @@ export function createSandboxAPI(
   memoryBank: MemoryBank,
   sandboxOpts: SandboxOpts = {}
 ): SandboxAPI {
-  const { getCompileInfoFn, mcpServer, elicitEnabled } = sandboxOpts;
+  const { getCompileInfoFn, mcpServer, elicitEnabled, samplingEnabled = false } = sandboxOpts;
   let writeCallCount = 0;
   return {
     async search(query, opts = {}) {
@@ -363,7 +364,7 @@ export function createSandboxAPI(
       );
       // Shallow-clone before any mutation so the TTLCache entry is not modified.
       const result = { ...cached };
-      if (result.totalCount === 0 && mcpServer) {
+      if (result.totalCount === 0 && mcpServer && samplingEnabled) {
         const raw = await sampleOrNull(mcpServer, [
           {
             role: "user",
@@ -549,7 +550,7 @@ export function createSandboxAPI(
     },
 
     async sample(prompt, sampleCallOpts = {}) {
-      if (!mcpServer) return null;
+      if (!mcpServer || !samplingEnabled) return null;
       return sampleOrNull(mcpServer, [
         { role: "user", content: { type: "text", text: prompt } },
       ], {

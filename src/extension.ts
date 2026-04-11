@@ -592,6 +592,7 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         const responseFormatOverride = config.get<string>('responseFormatOverride') ?? '';
         const compileDbPaths = (config.get<string>('compileDbPaths') ?? '').trim();
         const enableFilesApi = config.get<boolean>('enableFilesApi') ?? false;
+        const enableSampling = config.get<boolean>('enableSampling') ?? false;
         const samplingModel = config.get<string>('samplingModel') ?? '';
         const samplingMaxTokens = config.get<number>('samplingMaxTokens') ?? 256;
         const auditLogFile = config.get<string>('auditLogFile') ?? '';
@@ -601,6 +602,7 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         if (defaultProject) env.OPENGROK_DEFAULT_PROJECT = defaultProject;
         if (responseFormatOverride) env.OPENGROK_RESPONSE_FORMAT_OVERRIDE = responseFormatOverride;
         if (enableFilesApi) env.OPENGROK_ENABLE_FILES_API = 'true';
+        if (enableSampling) env.OPENGROK_ENABLE_SAMPLING = 'true';
         if (samplingModel) env.OPENGROK_SAMPLING_MODEL = samplingModel;
         if (samplingMaxTokens !== 256) env.OPENGROK_SAMPLING_MAX_TOKENS = String(samplingMaxTokens);
         if (auditLogFile) env.OPENGROK_AUDIT_LOG_FILE = auditLogFile;
@@ -766,6 +768,7 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
     const apiVersion = config.get<string>('apiVersion') || 'v1';
     const enableElicitation = config.get<boolean>('enableElicitation') ?? false;
     const enableFilesApi = config.get<boolean>('enableFilesApi') ?? false;
+    const enableSampling = config.get<boolean>('enableSampling') ?? false;
     const samplingModel = config.get<string>('samplingModel') ?? '';
     const samplingMaxTokens = config.get<number>('samplingMaxTokens') ?? 256;
     const auditLogFile = config.get<string>('auditLogFile') ?? '';
@@ -781,7 +784,7 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
 
     webview.postMessage({
         type: 'loadConfig',
-        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, apiVersion, enableElicitation, enableFilesApi, samplingModel, samplingMaxTokens, auditLogFile, rateLimitRpm, enableObservationMasker, observationMaskerTurns }
+        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, apiVersion, enableElicitation, enableFilesApi, enableSampling, samplingModel, samplingMaxTokens, auditLogFile, rateLimitRpm, enableObservationMasker, observationMaskerTurns }
     });
 }
 
@@ -823,6 +826,7 @@ async function _handleSaveConfiguration(webview: vscode.Webview, data: {
     apiVersion?: string;
     enableElicitation?: boolean;
     enableFilesApi?: boolean;
+    enableSampling?: boolean;
     samplingModel?: string;
     samplingMaxTokens?: number;
     auditLogFile?: string;
@@ -892,6 +896,7 @@ async function handleSaveConfiguration(
         apiVersion?: string;
         enableElicitation?: boolean;
         enableFilesApi?: boolean;
+        enableSampling?: boolean;
         samplingModel?: string;
         samplingMaxTokens?: number;
         auditLogFile?: string;
@@ -901,7 +906,7 @@ async function handleSaveConfiguration(
     }
 ): Promise<void> {
     const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged, apiVersion, enableElicitation,
-            enableFilesApi, samplingModel, samplingMaxTokens, auditLogFile, rateLimitRpm,
+            enableFilesApi, enableSampling, samplingModel, samplingMaxTokens, auditLogFile, rateLimitRpm,
             enableObservationMasker, observationMaskerTurns } = data;
 
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
@@ -955,6 +960,7 @@ async function handleSaveConfiguration(
     if (apiVersion !== undefined)           updates.push(config.update('apiVersion', apiVersion || 'v1', G));
     if (enableElicitation !== undefined)    updates.push(config.update('enableElicitation', enableElicitation, G));
     if (enableFilesApi !== undefined)       updates.push(config.update('enableFilesApi', enableFilesApi, G));
+    if (enableSampling !== undefined)       updates.push(config.update('enableSampling', enableSampling, G));
     if (samplingModel !== undefined)        updates.push(config.update('samplingModel', samplingModel || undefined, G));
     if (samplingMaxTokens !== undefined)    updates.push(config.update('samplingMaxTokens', samplingMaxTokens, G));
     if (auditLogFile !== undefined)              updates.push(config.update('auditLogFile', auditLogFile || undefined, G));

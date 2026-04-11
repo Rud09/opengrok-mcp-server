@@ -356,6 +356,13 @@
                         <div class="checkbox-subtext">Avoids re-uploading unchanged investigation notes to the AI. Requires Files API support in your MCP client.</div>
                     </div>
                 </div>
+                <div class="checkbox-field">
+                    <input type="checkbox" id="enableSampling">
+                    <div class="checkbox-content">
+                        <label for="enableSampling">AI Sampling</label>
+                        <div class="checkbox-subtext">Allow the server to request LLM completions for error explanations and summaries. Disable to avoid consuming premium requests (e.g. GitHub Copilot).</div>
+                    </div>
+                </div>
                 <div class="field">
                     <label for="samplingModel">AI Sampling Model</label>
                     <input type="text" id="samplingModel" placeholder="Leave blank for client default">
@@ -512,6 +519,7 @@
             var compileDbPaths = document.getElementById('compileDbPaths').value.trim();
             var enableElicitation = document.getElementById('enableElicitation').checked;
             var enableFilesApi = document.getElementById('enableFilesApi').checked;
+            var enableSampling = document.getElementById('enableSampling').checked;
             var samplingModel = document.getElementById('samplingModel').value.trim();
             var samplingMaxTokens = parseInt(document.getElementById('samplingMaxTokens').value, 10) || 256;
             var auditLogFile = document.getElementById('auditLogFile').value.trim();
@@ -533,7 +541,7 @@
             clearStatusBar();
             vscode.postMessage({
                 type: 'saveConfiguration',
-                data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, defaultProject: defaultProject, contextBudget: contextBudget, responseFormatOverride: responseFormatOverride, apiVersion: apiVersion, codeMode: codeMode, memoryBankDir: memoryBankDir, compileDbPaths: compileDbPaths, codeModeChanged: codeModeChanged, enableElicitation: enableElicitation, enableFilesApi: enableFilesApi, samplingModel: samplingModel, samplingMaxTokens: samplingMaxTokens, auditLogFile: auditLogFile, rateLimitRpm: rateLimitRpm, enableObservationMasker: enableObservationMasker, observationMaskerTurns: observationMaskerTurns }
+                data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, defaultProject: defaultProject, contextBudget: contextBudget, responseFormatOverride: responseFormatOverride, apiVersion: apiVersion, codeMode: codeMode, memoryBankDir: memoryBankDir, compileDbPaths: compileDbPaths, codeModeChanged: codeModeChanged, enableElicitation: enableElicitation, enableFilesApi: enableFilesApi, enableSampling: enableSampling, samplingModel: samplingModel, samplingMaxTokens: samplingMaxTokens, auditLogFile: auditLogFile, rateLimitRpm: rateLimitRpm, enableObservationMasker: enableObservationMasker, observationMaskerTurns: observationMaskerTurns }
             });
         }
 
@@ -561,6 +569,7 @@
                     if (currentConfig.enableFilesApi !== undefined) {
                         document.getElementById('enableFilesApi').checked = currentConfig.enableFilesApi;
                     }
+                    document.getElementById('enableSampling').checked = currentConfig.enableSampling === true;
                     document.getElementById('samplingModel').value = currentConfig.samplingModel || '';
                     if (currentConfig.samplingMaxTokens !== undefined) {
                         document.getElementById('samplingMaxTokens').value = currentConfig.samplingMaxTokens || 256;
@@ -589,7 +598,8 @@
                     var hasAdvanced = (currentConfig.proxy || currentConfig.responseFormatOverride ||
                         (currentConfig.apiVersion && currentConfig.apiVersion !== 'v1') ||
                         currentConfig.memoryBankDir || currentConfig.compileDbPaths ||
-                        currentConfig.enableFilesApi || currentConfig.samplingModel ||
+                        currentConfig.enableFilesApi || currentConfig.enableSampling === true ||
+                        currentConfig.samplingModel ||
                         (currentConfig.samplingMaxTokens && currentConfig.samplingMaxTokens !== 256) ||
                         currentConfig.auditLogFile ||
                         (currentConfig.rateLimitRpm && currentConfig.rateLimitRpm !== 60) ||

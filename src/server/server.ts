@@ -2048,6 +2048,7 @@ function registerCodeModeTools(
           getCompileInfoFn,
           mcpServer: server,
           elicitEnabled: config.OPENGROK_ENABLE_ELICITATION,
+          samplingEnabled: config.OPENGROK_ENABLE_SAMPLING,
         });
         const workerHandle = workerPool.acquire();
         let result: string;
@@ -2064,7 +2065,7 @@ function registerCodeModeTools(
         }
 
         // When execution fails, use MCP Sampling to get an LLM-generated explanation
-        if (result.startsWith("Error:")) {
+        if (result.startsWith("Error:") && config.OPENGROK_ENABLE_SAMPLING) {
           const suggestion = await sampleOrNull(server, [
             {
               role: "user",
@@ -2830,7 +2831,7 @@ function registerLegacyTools(
 
         // For large graphs, use MCP Sampling to generate an intelligent summary
         let summarySection = "";
-        if (nodes.length > 10) {
+        if (nodes.length > 10 && config.OPENGROK_ENABLE_SAMPLING) {
           const nodeList = nodes.slice(0, 30).map((n) => `  ${n.direction} ${n.path} (level ${n.level})`).join("\n");
           const summary = await sampleOrNull(server, [
             {

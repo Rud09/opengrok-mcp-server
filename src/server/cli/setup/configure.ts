@@ -21,6 +21,7 @@ export interface McpConfig {
   memoryBankDir?: string;
   compileDbPaths?: string;
   enableFilesApi?: boolean;
+  enableSampling?: boolean;
   samplingModel?: string;
   samplingMaxTokens?: string;
   auditLogFile?: string;
@@ -48,6 +49,7 @@ export function buildEnv(config: McpConfig): Record<string, string> {
   if (config.memoryBankDir)                                env['OPENGROK_MEMORY_BANK_DIR'] = config.memoryBankDir;
   if (config.compileDbPaths)                               env['OPENGROK_LOCAL_COMPILE_DB_PATHS'] = config.compileDbPaths;
   if (config.enableFilesApi)                               env['OPENGROK_ENABLE_FILES_API'] = 'true';
+  if (config.enableSampling)                               env['OPENGROK_ENABLE_SAMPLING'] = 'true';
   if (config.samplingModel)                                env['OPENGROK_SAMPLING_MODEL'] = config.samplingModel;
   if (config.samplingMaxTokens && config.samplingMaxTokens !== '256')
                                                            env['OPENGROK_SAMPLING_MAX_TOKENS'] = config.samplingMaxTokens;

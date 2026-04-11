@@ -92,6 +92,7 @@ export async function runSetup(): Promise<void> {
   const storedMemoryBankDir = stored['OPENGROK_MEMORY_BANK_DIR'] ?? '';
   const storedCompileDbPaths = stored['OPENGROK_LOCAL_COMPILE_DB_PATHS'] ?? '';
   const storedEnableFilesApi = stored['OPENGROK_ENABLE_FILES_API'] === 'true';
+  const storedEnableSampling = stored['OPENGROK_ENABLE_SAMPLING'] === 'true';
   const storedSamplingModel = stored['OPENGROK_SAMPLING_MODEL'] ?? '';
   const storedSamplingMaxTokens = stored['OPENGROK_SAMPLING_MAX_TOKENS'] ?? '256';
   const storedAuditLogFile = stored['OPENGROK_AUDIT_LOG_FILE'] ?? '';
@@ -100,9 +101,9 @@ export async function runSetup(): Promise<void> {
   const storedObservationMaskerTurns = stored['OPENGROK_OBSERVATION_MASKER_TURNS'] ?? '10';
 
   const hasStoredAdvanced = storedProxy || storedApiVersion !== 'v1' || storedResponseFormat ||
-    storedMemoryBankDir || storedCompileDbPaths || storedEnableFilesApi || storedSamplingModel ||
-    storedSamplingMaxTokens !== '256' || storedAuditLogFile || storedRateLimitRpm !== '60' ||
-    storedEnableObservationMasker || storedObservationMaskerTurns !== '10';
+    storedMemoryBankDir || storedCompileDbPaths || storedEnableFilesApi || storedEnableSampling ||
+    storedSamplingModel || storedSamplingMaxTokens !== '256' || storedAuditLogFile ||
+    storedRateLimitRpm !== '60' || storedEnableObservationMasker || storedObservationMaskerTurns !== '10';
 
   const wantsAdvanced = await p.confirm({
     message: 'Configure advanced settings? (proxy, API version, response format, memory bank, audit log, rate limit)',
@@ -116,6 +117,7 @@ export async function runSetup(): Promise<void> {
   let memoryBankDir = storedMemoryBankDir;
   let compileDbPaths = storedCompileDbPaths;
   let enableFilesApi = storedEnableFilesApi;
+  let enableSampling = storedEnableSampling;
   let samplingModel = storedSamplingModel;
   let samplingMaxTokens = storedSamplingMaxTokens;
   let auditLogFile = storedAuditLogFile;
@@ -182,6 +184,13 @@ export async function runSetup(): Promise<void> {
     if (p.isCancel(enableFilesApiVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     enableFilesApi = Boolean(enableFilesApiVal);
 
+    const enableSamplingVal = await p.confirm({
+      message: 'Enable AI Sampling? (server requests LLM completions for error explanations and summaries — disable to avoid consuming premium requests in GitHub Copilot)',
+      initialValue: storedEnableSampling,
+    });
+    if (p.isCancel(enableSamplingVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    enableSampling = Boolean(enableSamplingVal);
+
     const samplingModelVal = await p.text({
       message: 'AI sampling model (leave blank for client default)',
       defaultValue: storedSamplingModel,
@@ -191,7 +200,7 @@ export async function runSetup(): Promise<void> {
 
     const samplingMaxTokensVal = await p.text({
       message: 'AI sampling token budget (default: 256, range: 64–4096)',
-      defaultValue: storedSamplingMaxTokens,
+      initialValue: storedSamplingMaxTokens,
       validate: (v) => {
         const n = parseInt(v ?? '', 10);
         if (isNaN(n) || n < 64 || n > 4096) return 'Enter a number between 64 and 4096';
@@ -209,7 +218,7 @@ export async function runSetup(): Promise<void> {
 
     const rateLimitRpmVal = await p.text({
       message: 'Request rate limit in RPM (default: 60)',
-      defaultValue: storedRateLimitRpm,
+      initialValue: storedRateLimitRpm,
       validate: (v) => {
         const n = parseInt(v ?? '', 10);
         if (isNaN(n) || n < 1) return 'Enter a positive integer';
@@ -227,7 +236,7 @@ export async function runSetup(): Promise<void> {
 
     const observationMaskerTurnsVal = await p.text({
       message: 'Observation Masker — full-text window size (how many recent results to keep in full, default: 10)',
-      defaultValue: storedObservationMaskerTurns,
+      initialValue: storedObservationMaskerTurns,
       validate: (v) => {
         const n = parseInt(v ?? '', 10);
         if (isNaN(n) || n < 1) return 'Enter a positive integer';
@@ -259,6 +268,7 @@ export async function runSetup(): Promise<void> {
     memoryBankDir,
     compileDbPaths,
     enableFilesApi,
+    enableSampling,
     samplingModel,
     samplingMaxTokens,
     auditLogFile,

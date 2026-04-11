@@ -119,6 +119,7 @@ const ConfigSchema = z.object({
   OPENGROK_API_VERSION: z.enum(["v1", "v2"]).default("v1")
     .describe("OpenGrok REST API version (v1 or v2, default: v1)"),
   // Sampling — token budget and model preference (Task 5.5)
+  OPENGROK_ENABLE_SAMPLING: z.enum(["true", "false"]).default("false").transform(v => v === "true"),
   OPENGROK_SAMPLING_MAX_TOKENS: z.coerce.number().int().min(64).max(4096).default(256),
   OPENGROK_SAMPLING_MODEL: z.string().default(""),
   // HTTP transport OAuth 2.1 (Task 5.3)

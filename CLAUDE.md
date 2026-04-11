@@ -111,6 +111,7 @@ Manages credentials (VS Code SecretStorage + encrypted temp files), registers th
 | `OPENGROK_STRICT_OAUTH` | `true` — reject requests without valid JWT (no anonymous fallback) |
 | `OPENGROK_ALLOWED_ORIGINS` | Comma-separated CORS allowlist (replaces wildcard CORS) |
 | `OPENGROK_RBAC_TOKENS` | `token:role` pairs for RBAC (admin/developer/readonly) |
+| `OPENGROK_ENABLE_SAMPLING` | `false` (default) / `true` — enable MCP Sampling (error explanations, summaries) |
 | `OPENGROK_SAMPLING_MODEL` / `OPENGROK_SAMPLING_MAX_TOKENS` | MCP Sampling model preference and budget |
 | `OPENGROK_ENABLE_ELICITATION` | `true`/`false` — enable Interactive AI Prompts (project selection, file disambiguation, sandbox `elicit()`) |
 | `OPENGROK_ENABLE_FILES_API` | `true`/`false` — enable FileReferenceCache for memory bank |
