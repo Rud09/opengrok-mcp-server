@@ -8,12 +8,12 @@
     "url": "https://github.com/IcyHot09/opengrok-mcp-server",
     "source": "github"
   },
-  "version": "9.2.8",
+  "version": "9.2.10",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "opengrok-mcp-server",
-      "version": "9.2.8",
+      "version": "9.2.10",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -79,7 +79,15 @@
         },
         {
           "name": "OPENGROK_ENABLE_ELICITATION",
-          "description": "Interactive AI Prompts \u2014 the AI pauses to ask questions during investigations (project selection, file disambiguation). Requires Claude Code v2.1.76+ or a client that supports MCP Elicitation.",
+          "description": "Interactive AI Prompts — the AI pauses to ask questions during investigations (project selection, file disambiguation). Requires Claude Code v2.1.76+ or a client that supports MCP Elicitation.",
+          "format": "boolean",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "false"
+        },
+        {
+          "name": "OPENGROK_ENABLE_SAMPLING",
+          "description": "AI Sampling — allow the server to request LLM completions for error explanations and summaries. Off by default to avoid consuming premium requests (e.g. GitHub Copilot).",
           "format": "boolean",
           "isRequired": false,
           "isSecret": false,
@@ -94,7 +102,7 @@
         },
         {
           "name": "OPENGROK_ENABLE_FILES_API",
-          "description": "Files API Cache \u2014 avoids re-uploading unchanged investigation notes. Requires Files API support in the MCP client.",
+          "description": "Files API Cache — avoids re-uploading unchanged investigation notes. Requires Files API support in the MCP client.",
           "format": "boolean",
           "isRequired": false,
           "isSecret": false,
@@ -102,7 +110,7 @@
         },
         {
           "name": "OPENGROK_ENABLE_OBSERVATION_MASKER",
-          "description": "Observation Masker \u2014 prepend compact history summaries to opengrok_execute results after N turns. Disabled by default; has no benefit for clients that retain full context (Claude Code, Cursor).",
+          "description": "Observation Masker — prepend compact history summaries to opengrok_execute results after N turns. Disabled by default; has no benefit for clients that retain full context (Claude Code, Cursor).",
           "format": "boolean",
           "isRequired": false,
           "isSecret": false,
@@ -118,7 +126,7 @@
         },
         {
           "name": "OPENGROK_SAMPLING_MAX_TOKENS",
-          "description": "Maximum tokens for AI sampling responses (error explanation, query reformulation). Range: 64\u20134096.",
+          "description": "Maximum tokens for AI sampling responses (error explanation, query reformulation). Range: 64–4096.",
           "format": "string",
           "isRequired": false,
           "isSecret": false,
