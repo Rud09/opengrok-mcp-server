@@ -95,14 +95,14 @@ export const API_SPEC = {
     "env.opengrok.traceCallChain() callees direction returns empty (requires AST, not yet supported).",
     "env.opengrok.readMemory() returns null for uninitialized files — handle gracefully.",
     "When findFile() or search() returns multiple path matches and you cannot determine the correct file, call env.opengrok.elicit() with an enum of the top paths (≤10) before fetching content.",
-    "When search() returns 0 results, check result._suggestions first — reformulation candidates may already be present. Call env.opengrok.sample() only if _suggestions is absent or unhelpful.",
+    "When search() returns 0 results, check result._suggestions first — auto-populated with reformulation candidates when OPENGROK_ENABLE_SAMPLING is on. If absent (sampling off or no suggestions), call env.opengrok.sample() manually.",
     "When elicit() returns action !== 'accept', return a clear cancellation message — do not proceed with a default or guessed value.",
     "env.opengrok.sample() returns null on unsupported clients — always null-guard the return value.",
   ],
 
   return_rules: [
     "Never return raw API result objects — always map to the minimum string representation the caller needs.",
-    "Always set maxResults to the minimum you need — the default is too high and wastes tokens.",
+    "maxResults defaults to 5 — only raise it when you genuinely need more results, to avoid wasting tokens.",
     "Return early with a short string when results are empty instead of returning an empty structure.",
     "For getFileContent/getFileHistory/getFileSymbols: always derive project and path from prior search results — never guess or hardcode them.",
   ],
@@ -110,21 +110,22 @@ export const API_SPEC = {
   methods: {
     search: {
       signature: "env.opengrok.search(query, opts?)",
-      opts: "{ searchType?: 'full'|'defs'|'refs'|'path'|'hist', projects?: string[], maxResults?: number, startIndex?: number, fileType?: string }",
-      fileType_note: "fileType is a lowercase file extension without the dot: 'java', 'cpp', 'c', 'h', 'py', 'go', 'ts', 'js', 'cs', 'xml', etc.",
-      returns: "SearchAPIResult: { query, searchType, totalCount, startIndex, endIndex, results: [{project,path,matches:[{lineNumber,lineContent}]}] }",
+      opts: "{ searchType?: 'full'(default)|'defs'|'refs'|'path'|'hist', projects?: string[], maxResults?: number (default:5), startIndex?: number (default:0), fileType?: string }",
+      fileType_note: "fileType is the lowercased analyzer class name with 'analyzer' suffix removed (e.g. CxxAnalyzer → 'cxx'). Common values: 'cxx' (C++), 'c' (C/C headers), 'java', 'javascript', 'typescript', 'csharp' (C#), 'python', 'sh' (shell), 'powershell', 'golang' (Go), 'rust', 'kotlin', 'scala', 'sql', 'plsql', 'perl', 'ruby', 'swift', 'php', 'xml', 'json', 'yaml', 'hcl', 'terraform', 'lua', 'ada', 'fortran', 'r', 'haskell', 'clojure', 'erlang', 'lisp', 'ocaml', 'tcl', 'pascal', 'eiffel', 'asm', 'vb' (Visual Basic), 'verilog', 'plain'. NOT display names — use 'cxx' not 'cpp' or 'C++', 'golang' not 'go', 'sh' not 'bash', 'csharp' not 'cs' or 'C#'.",
+      returns: "SearchAPIResult: { query, searchType, totalCount, startIndex, endIndex, results: [{project,path,matches:[{lineNumber,lineContent}]}], _suggestions?: string[] }",
       pagination_note: "To fetch the next page: set startIndex to the previous result's endIndex. Compare endIndex < totalCount to check if more results exist.",
-      project_note: "Always use result.project and result.path from these results for getFileContent/getFileHistory/getFileSymbols calls — never hardcode project names.",
-      defs_refs_note: "defs and refs require a project. OPENGROK_DEFAULT_PROJECT is auto-injected when configured. Otherwise pass projects explicitly — omitting throws an error.",
+      project_note: "OPENGROK_DEFAULT_PROJECT is auto-injected into projects for ALL search types when configured. Always use result.project and result.path from results for follow-up calls — never hardcode.",
+      defs_refs_note: "defs and refs require a project to be scoped (pass projects or rely on auto-inject). Without a project they may return too many cross-project hits.",
     },
     batchSearch: {
       signature: "env.opengrok.batchSearch(queries, opts?)",
-      queries: "Array<{ query: string, searchType?: string, maxResults?: number }>",
+      queries: "Array<{ query: string, searchType?: string, maxResults?: number (default:5) }>",
       opts: "{ projects?: string[], fileType?: string }",
       returns:
         "SearchAPIResult[] — one result-set per query (same order as input). " +
         "Failed queries return { totalCount:0, results:[], _error: string } instead of throwing. " +
         "Access: const results = env.opengrok.batchSearch([...]); results[0].results[0].path",
+      note: "Pagination (startIndex) is not supported in batchSearch — always fetches from offset 0. Use search() with startIndex for paginated results.",
     },
     getFileContent: {
       signature: "env.opengrok.getFileContent(project, path, opts?)",

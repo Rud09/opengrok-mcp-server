@@ -63,6 +63,27 @@ Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protecti
 
 ---
 
+## [9.2.14] - 2026-04-11
+
+### 🐛 Bug Fix — Correct `fileType` API Parameter Values + API Spec Accuracy
+
+**`fileType` values were wrong:** The API spec documented `fileType` as a lowercase file extension (e.g. `'cpp'`, `'go'`, `'sh'`) but OpenGrok actually accepts the lowercased analyzer class name with the `'analyzer'` suffix stripped (e.g. `CxxAnalyzer` → `'cxx'`, `GolangAnalyzer` → `'golang'`, `ShAnalyzer` → `'sh'`). The screenshot-confirmed value `type=cxx` in the OpenGrok search URL is the canonical form, derived from `FileAnalyzer.getFileTypeName()` at runtime.
+
+**Updated `fileType_note` in `API_SPEC.methods.search` with the correct and complete list:**
+`'cxx'` (C++), `'c'` (C/headers), `'java'`, `'javascript'`, `'typescript'`, `'csharp'` (C#), `'python'`, `'sh'` (shell), `'powershell'`, `'golang'` (Go), `'rust'`, `'kotlin'`, `'scala'`, `'sql'`, `'plsql'`, `'perl'`, `'ruby'`, `'swift'`, `'php'`, `'xml'`, `'json'`, `'yaml'`, `'hcl'`, `'terraform'`, `'lua'`, `'ada'`, `'fortran'`, `'r'`, `'haskell'`, `'clojure'`, `'erlang'`, `'lisp'`, `'ocaml'`, `'tcl'`, `'pascal'`, `'eiffel'`, `'asm'`, `'vb'` (Visual Basic), `'verilog'`, `'plain'`.
+
+**Additional API spec fixes:**
+- `search()` opts: documented defaults — `searchType` defaults to `'full'`, `maxResults` to `5`, `startIndex` to `0`.
+- `search()` returns: added `_suggestions?: string[]` to the type signature (only present when `OPENGROK_ENABLE_SAMPLING=true` and `totalCount === 0`).
+- `search()` `project_note`: corrected — `OPENGROK_DEFAULT_PROJECT` is auto-injected for **all** search types (not just `defs`/`refs`).
+- `search()` `defs_refs_note`: corrected — defs/refs don't hard-fail without a project, but may return noisy cross-project results.
+- `batchSearch()` queries: documented `maxResults` default of `5`.
+- `batchSearch()` note: documented that pagination (`startIndex`) is not supported — always fetches from offset 0.
+- `return_rules[1]`: replaced "the default is too high" with accurate statement — default is `5`.
+- `important` note on `_suggestions`: clarified that auto-population only occurs when `OPENGROK_ENABLE_SAMPLING=true`.
+
+---
+
 ## [9.2.13] - 2026-04-11
 
 ### 🐛 Bug Fix — Code Mode Ignores `OPENGROK_DEFAULT_PROJECT` (+ API Spec Accuracy)
