@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 🛡️ **v9.2** — Security Hardening, SDK 1.29.0, Enterprise Reliability & Memory UX
 
-MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. v9.2.8: defs/refs search reliability — REST-first with project fallback, descriptive errors, fail-fast web UI retry, `batchSearch` per-query resilience. v9.2.10: `OPENGROK_ENABLE_SAMPLING` kill switch — sampling now off by default to prevent consuming premium requests in GitHub Copilot; surfaced in VS Code settings, config panel, and CLI wizard; wizard `defaultValue`→`initialValue` bug fix for validated fields. v9.2.11: full config surface audit — removed dead `OPENGROK_ENABLE_CACHE_HINTS`, surfaced `OPENGROK_TIMEOUT` and `OPENGROK_DEFAULT_MAX_RESULTS` in all UIs, added 5 missing env vars to `server.json`. **1,119 tests, ≥89% coverage.**
+MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. v9.2.8: defs/refs search reliability — REST-first with project fallback, descriptive errors, fail-fast web UI retry, `batchSearch` per-query resilience. v9.2.10: `OPENGROK_ENABLE_SAMPLING` kill switch — sampling now off by default to prevent consuming premium requests in GitHub Copilot; surfaced in VS Code settings, config panel, and CLI wizard; wizard `defaultValue`→`initialValue` bug fix for validated fields. v9.2.11: full config surface audit — removed dead `OPENGROK_ENABLE_CACHE_HINTS`, surfaced `OPENGROK_TIMEOUT` and `OPENGROK_DEFAULT_MAX_RESULTS` in all UIs, added 5 missing env vars to `server.json`. v9.2.12: setup re-run fix — `setup` is now idempotent; remove-before-add for both Claude Code CLI and Copilot CLI prevents errors when reconfiguring. **1,119 tests, ≥89% coverage.**
 
 - 🎨 **v9.1** — Five env-only settings surfaced in all UI surfaces (WebView, CLI wizard, VS Code Settings): Files API Cache, AI Sampling Model, AI Sampling Token Budget, Audit Log File, Request Rate Limit. Context budget default corrected (`minimal`→`standard`). Quick Configure command removed. `opengrok_api` and `opengrok_read_memory` no longer budget-capped (static/managed content must not be truncated). **1,078 tests.**
 
@@ -60,6 +60,19 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [9.2.12] - 2026-04-11
+
+### 🐛 Bug Fix — `setup` Re-Run Idempotence
+
+Running `npx opengrok-mcp-server setup` when the MCP server was already configured would fail because both the Claude Code CLI (`claude mcp add`) and Copilot CLI (`copilot mcp add`) reject duplicate server names.
+
+- **`configure.ts` — `configureClaudeCode()`**: Added `claude mcp remove --scope <scope> opengrok-mcp` (fire-and-forget, ignored if not present) before the `claude mcp add` call. Re-running setup is now fully idempotent regardless of scope.
+- **`configure.ts` — `configureCopilotCli()`**: Added `copilot mcp remove opengrok-mcp` before `copilot mcp add`. Same idempotence guarantee.
+- **`configure.ts` — `configureCodex()`** and **`configureVSCode()`** were already idempotent (filter-then-push and object merge, respectively) — no changes needed.
+- **`enableSampling` UI description**: Clarified wording — "Off by default to avoid consuming premium requests (e.g. GitHub Copilot)." — consistent with the VS Code setting description.
 
 ---
 

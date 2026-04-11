@@ -8,12 +8,12 @@
     "url": "https://github.com/IcyHot09/opengrok-mcp-server",
     "source": "github"
   },
-  "version": "9.2.11",
+  "version": "9.2.12",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "opengrok-mcp-server",
-      "version": "9.2.11",
+      "version": "9.2.12",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
