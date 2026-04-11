@@ -97,13 +97,16 @@ export async function runSetup(): Promise<void> {
   const storedSamplingMaxTokens = stored['OPENGROK_SAMPLING_MAX_TOKENS'] ?? '256';
   const storedAuditLogFile = stored['OPENGROK_AUDIT_LOG_FILE'] ?? '';
   const storedRateLimitRpm = stored['OPENGROK_RATELIMIT_RPM'] ?? '60';
+  const storedTimeout = stored['OPENGROK_TIMEOUT'] ?? '30';
+  const storedDefaultMaxResults = stored['OPENGROK_DEFAULT_MAX_RESULTS'] ?? '25';
   const storedEnableObservationMasker = stored['OPENGROK_ENABLE_OBSERVATION_MASKER'] === 'true';
   const storedObservationMaskerTurns = stored['OPENGROK_OBSERVATION_MASKER_TURNS'] ?? '10';
 
   const hasStoredAdvanced = storedProxy || storedApiVersion !== 'v1' || storedResponseFormat ||
     storedMemoryBankDir || storedCompileDbPaths || storedEnableFilesApi || storedEnableSampling ||
     storedSamplingModel || storedSamplingMaxTokens !== '256' || storedAuditLogFile ||
-    storedRateLimitRpm !== '60' || storedEnableObservationMasker || storedObservationMaskerTurns !== '10';
+    storedRateLimitRpm !== '60' || storedTimeout !== '30' || storedDefaultMaxResults !== '25' ||
+    storedEnableObservationMasker || storedObservationMaskerTurns !== '10';
 
   const wantsAdvanced = await p.confirm({
     message: 'Configure advanced settings? (proxy, API version, response format, memory bank, audit log, rate limit)',
@@ -122,6 +125,8 @@ export async function runSetup(): Promise<void> {
   let samplingMaxTokens = storedSamplingMaxTokens;
   let auditLogFile = storedAuditLogFile;
   let rateLimitRpm = storedRateLimitRpm;
+  let timeout = storedTimeout;
+  let defaultMaxResults = storedDefaultMaxResults;
   let enableObservationMasker = storedEnableObservationMasker;
   let observationMaskerTurns = storedObservationMaskerTurns;
 
@@ -227,6 +232,28 @@ export async function runSetup(): Promise<void> {
     if (p.isCancel(rateLimitRpmVal)) { p.cancel('Setup cancelled'); process.exit(0); }
     rateLimitRpm = String(rateLimitRpmVal);
 
+    const timeoutVal = await p.text({
+      message: 'Request timeout in seconds (default: 30)',
+      initialValue: storedTimeout,
+      validate: (v) => {
+        const n = parseInt(v ?? '', 10);
+        if (isNaN(n) || n < 1) return 'Enter a positive integer';
+      },
+    });
+    if (p.isCancel(timeoutVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    timeout = String(timeoutVal);
+
+    const defaultMaxResultsVal = await p.text({
+      message: 'Default max results per search (default: 25)',
+      initialValue: storedDefaultMaxResults,
+      validate: (v) => {
+        const n = parseInt(v ?? '', 10);
+        if (isNaN(n) || n < 1) return 'Enter a positive integer';
+      },
+    });
+    if (p.isCancel(defaultMaxResultsVal)) { p.cancel('Setup cancelled'); process.exit(0); }
+    defaultMaxResults = String(defaultMaxResultsVal);
+
     const enableObservationMaskerVal = await p.confirm({
       message: 'Enable Observation Masker? (prepend compact history summaries to results after N turns — only useful for clients that truncate context; no benefit for Claude Code or Cursor)',
       initialValue: storedEnableObservationMasker,
@@ -273,6 +300,8 @@ export async function runSetup(): Promise<void> {
     samplingMaxTokens,
     auditLogFile,
     rateLimitRpm,
+    timeout,
+    defaultMaxResults,
     enableObservationMasker,
     observationMaskerTurns,
   };

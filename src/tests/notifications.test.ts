@@ -38,7 +38,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     OPENGROK_MEMORY_BANK_DIR: '',
     OPENGROK_CONTEXT_BUDGET: 'minimal',
     OPENGROK_RESPONSE_FORMAT_OVERRIDE: '',
-    OPENGROK_ENABLE_CACHE_HINTS: false,
     OPENGROK_PER_TOOL_RATELIMIT: '',
     OPENGROK_ALLOWED_CLIENT_IDS: '',
     ...overrides,

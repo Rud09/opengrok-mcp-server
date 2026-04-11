@@ -383,6 +383,16 @@
                     <input type="number" id="rateLimitRpm" placeholder="60" min="1">
                     <div class="hint">Maximum requests per minute sent to the OpenGrok server.</div>
                 </div>
+                <div class="field">
+                    <label for="timeout">Request Timeout (seconds)</label>
+                    <input type="number" id="timeout" placeholder="30" min="1">
+                    <div class="hint">HTTP request timeout for OpenGrok API calls. Increase for slow servers. Default: 30.</div>
+                </div>
+                <div class="field">
+                    <label for="defaultMaxResults">Default Max Results</label>
+                    <input type="number" id="defaultMaxResults" placeholder="25" min="1">
+                    <div class="hint">Default number of results returned per search query. Default: 25.</div>
+                </div>
                 <div class="checkbox-field">
                     <input type="checkbox" id="enableObservationMasker">
                     <div class="checkbox-content">
@@ -524,6 +534,8 @@
             var samplingMaxTokens = parseInt(document.getElementById('samplingMaxTokens').value, 10) || 256;
             var auditLogFile = document.getElementById('auditLogFile').value.trim();
             var rateLimitRpm = parseInt(document.getElementById('rateLimitRpm').value, 10) || 60;
+            var timeout = parseInt(document.getElementById('timeout').value, 10) || 30;
+            var defaultMaxResults = parseInt(document.getElementById('defaultMaxResults').value, 10) || 25;
             var enableObservationMasker = document.getElementById('enableObservationMasker').checked;
             var observationMaskerTurns = parseInt(document.getElementById('observationMaskerTurns').value, 10) || 10;
 
@@ -541,7 +553,7 @@
             clearStatusBar();
             vscode.postMessage({
                 type: 'saveConfiguration',
-                data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, defaultProject: defaultProject, contextBudget: contextBudget, responseFormatOverride: responseFormatOverride, apiVersion: apiVersion, codeMode: codeMode, memoryBankDir: memoryBankDir, compileDbPaths: compileDbPaths, codeModeChanged: codeModeChanged, enableElicitation: enableElicitation, enableFilesApi: enableFilesApi, enableSampling: enableSampling, samplingModel: samplingModel, samplingMaxTokens: samplingMaxTokens, auditLogFile: auditLogFile, rateLimitRpm: rateLimitRpm, enableObservationMasker: enableObservationMasker, observationMaskerTurns: observationMaskerTurns }
+                data: { baseUrl: baseUrl, username: username, password: password, proxy: proxy, verifySsl: verifySsl, defaultProject: defaultProject, contextBudget: contextBudget, responseFormatOverride: responseFormatOverride, apiVersion: apiVersion, codeMode: codeMode, memoryBankDir: memoryBankDir, compileDbPaths: compileDbPaths, codeModeChanged: codeModeChanged, enableElicitation: enableElicitation, enableFilesApi: enableFilesApi, enableSampling: enableSampling, samplingModel: samplingModel, samplingMaxTokens: samplingMaxTokens, auditLogFile: auditLogFile, rateLimitRpm: rateLimitRpm, timeout: timeout, defaultMaxResults: defaultMaxResults, enableObservationMasker: enableObservationMasker, observationMaskerTurns: observationMaskerTurns }
             });
         }
 
@@ -578,6 +590,12 @@
                     if (currentConfig.rateLimitRpm !== undefined) {
                         document.getElementById('rateLimitRpm').value = currentConfig.rateLimitRpm || 60;
                     }
+                    if (currentConfig.timeout !== undefined) {
+                        document.getElementById('timeout').value = currentConfig.timeout || 30;
+                    }
+                    if (currentConfig.defaultMaxResults !== undefined) {
+                        document.getElementById('defaultMaxResults').value = currentConfig.defaultMaxResults || 25;
+                    }
                     if (currentConfig.enableObservationMasker !== undefined) {
                         document.getElementById('enableObservationMasker').checked = currentConfig.enableObservationMasker;
                     }
@@ -603,6 +621,8 @@
                         (currentConfig.samplingMaxTokens && currentConfig.samplingMaxTokens !== 256) ||
                         currentConfig.auditLogFile ||
                         (currentConfig.rateLimitRpm && currentConfig.rateLimitRpm !== 60) ||
+                        (currentConfig.timeout && currentConfig.timeout !== 30) ||
+                        (currentConfig.defaultMaxResults && currentConfig.defaultMaxResults !== 25) ||
                         currentConfig.enableObservationMasker ||
                         (currentConfig.observationMaskerTurns && currentConfig.observationMaskerTurns !== 10));
                     if (hasAdvanced) {

@@ -2,7 +2,7 @@
   "name": "opengrok-mcp-server",
   "displayName": "OpenGrok MCP Server",
   "description": "MCP server bridging OpenGrok search engine with AI for instant context across massive codebases",
-  "version": "9.2.10",
+  "version": "9.2.11",
   "mcpName": "io.github.IcyHot09/opengrok-mcp-server",
   "license": "PolyForm-Noncommercial-1.0.0",
   "publisher": "IcyHot09",
@@ -245,25 +245,32 @@
           "markdownDescription": "Maximum requests per minute sent to the OpenGrok server. Default: 60. Maps to `OPENGROK_RATELIMIT_RPM` env var.",
           "order": 18
         },
+        "opengrok-mcp.timeout": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 1,
+          "markdownDescription": "HTTP request timeout in seconds for OpenGrok API calls. Increase for slow servers. Default: 30. Maps to `OPENGROK_TIMEOUT` env var.",
+          "order": 19
+        },
+        "opengrok-mcp.defaultMaxResults": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 1,
+          "markdownDescription": "Default maximum number of results returned per search query. Default: 25. Maps to `OPENGROK_DEFAULT_MAX_RESULTS` env var.",
+          "order": 20
+        },
         "opengrok-mcp.enableObservationMasker": {
           "type": "boolean",
           "default": false,
           "markdownDescription": "**Observation Masker** — Prepend compact history summaries to `opengrok_execute` results after N turns. Only useful for MCP clients that truncate context. No benefit for Claude Code or Cursor. Maps to `OPENGROK_ENABLE_OBSERVATION_MASKER` env var.",
-          "order": 19
+          "order": 21
         },
         "opengrok-mcp.observationMaskerTurns": {
           "type": "integer",
           "default": 10,
           "minimum": 1,
           "markdownDescription": "Number of the most-recent `opengrok_execute` results to keep as full text. Once this many results accumulate, older ones are replaced with compact summaries in future result headers. Default: 10. Maps to `OPENGROK_OBSERVATION_MASKER_TURNS` env var.",
-          "order": 20
-        },
-        "opengrok-mcp.enableCacheHints": {
-          "type": "boolean",
-          "default": false,
-          "markdownDeprecationMessage": "This setting is a no-op. The MCP SDK does not yet expose cache_control breakpoints. It will be removed in a future release.",
-          "markdownDescription": "**Deprecated — no-op.** The SDK does not yet support explicit cache_control headers. This setting has no effect.",
-          "order": 21
+          "order": 22
         }
       }
     }

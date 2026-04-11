@@ -26,6 +26,8 @@ export interface McpConfig {
   samplingMaxTokens?: string;
   auditLogFile?: string;
   rateLimitRpm?: string;
+  timeout?: string;
+  defaultMaxResults?: string;
   enableObservationMasker?: boolean;
   observationMaskerTurns?: string;
 }
@@ -56,6 +58,9 @@ export function buildEnv(config: McpConfig): Record<string, string> {
   if (config.auditLogFile)                                 env['OPENGROK_AUDIT_LOG_FILE'] = config.auditLogFile;
   if (config.rateLimitRpm && config.rateLimitRpm !== '60')
                                                            env['OPENGROK_RATELIMIT_RPM'] = config.rateLimitRpm;
+  if (config.timeout && config.timeout !== '30')           env['OPENGROK_TIMEOUT'] = config.timeout;
+  if (config.defaultMaxResults && config.defaultMaxResults !== '25')
+                                                           env['OPENGROK_DEFAULT_MAX_RESULTS'] = config.defaultMaxResults;
   if (config.enableObservationMasker)                      env['OPENGROK_ENABLE_OBSERVATION_MASKER'] = 'true';
   if (config.observationMaskerTurns && config.observationMaskerTurns !== '10')
                                                            env['OPENGROK_OBSERVATION_MASKER_TURNS'] = config.observationMaskerTurns;

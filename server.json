@@ -8,12 +8,12 @@
     "url": "https://github.com/IcyHot09/opengrok-mcp-server",
     "source": "github"
   },
-  "version": "9.2.10",
+  "version": "9.2.11",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "opengrok-mcp-server",
-      "version": "9.2.10",
+      "version": "9.2.11",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -76,6 +76,54 @@
             "standard",
             "generous"
           ]
+        },
+        {
+          "name": "OPENGROK_API_VERSION",
+          "description": "OpenGrok REST API version. Use v2 for call graph features (requires OpenGrok 1.12+).",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "v1",
+          "choices": [
+            "v1",
+            "v2"
+          ]
+        },
+        {
+          "name": "HTTP_PROXY",
+          "description": "HTTP/HTTPS proxy URL for all OpenGrok API requests (e.g. http://proxy.company.com:8080). Also set as HTTPS_PROXY.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "OPENGROK_RESPONSE_FORMAT_OVERRIDE",
+          "description": "Force a specific response format for all tools. Leave unset for per-tool auto-selection (recommended).",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "choices": [
+            "markdown",
+            "json",
+            "tsv",
+            "toon",
+            "yaml",
+            "text"
+          ]
+        },
+        {
+          "name": "OPENGROK_MEMORY_BANK_DIR",
+          "description": "Directory where the AI stores investigation notes (active-task.md, investigation-log.md). Defaults to ~/.config/opengrok-mcp/memory-bank/ or workspace-relative when set by the VS Code extension.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "OPENGROK_LOCAL_COMPILE_DB_PATHS",
+          "description": "Comma-separated paths to compile_commands.json for C/C++ compiler flag and include-path extraction. Leave unset for automatic workspace discovery.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
         },
         {
           "name": "OPENGROK_ENABLE_ELICITATION",

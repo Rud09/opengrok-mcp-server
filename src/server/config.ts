@@ -102,8 +102,6 @@ const ConfigSchema = z.object({
   OPENGROK_RESPONSE_FORMAT_OVERRIDE: z.string().default(""),
   // Audit log file path (appended to, in addition to stderr)
   OPENGROK_AUDIT_LOG_FILE: z.string().default(""),
-  // Prompt caching hints (reserved for future explicit cache-control headers)
-  OPENGROK_ENABLE_CACHE_HINTS: z.coerce.boolean().default(false),
   // MCP Elicitation — ask user for input during tool execution (e.g., pick project)
   OPENGROK_ENABLE_ELICITATION: z.coerce.boolean().default(false),
   // Files API cache layer — tracks investigation-log.md uploads to avoid re-sending unchanged content

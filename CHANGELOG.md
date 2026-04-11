@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 🛡️ **v9.2** — Security Hardening, SDK 1.29.0, Enterprise Reliability & Memory UX
 
-MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. v9.2.8: defs/refs search reliability — REST-first with project fallback, descriptive errors, fail-fast web UI retry, `batchSearch` per-query resilience. v9.2.10: `OPENGROK_ENABLE_SAMPLING` kill switch — sampling now off by default to prevent consuming premium requests in GitHub Copilot; surfaced in VS Code settings, config panel, and CLI wizard; wizard `defaultValue`→`initialValue` bug fix for validated fields. **1,121 tests, ≥89% coverage.**
+MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. v9.2.8: defs/refs search reliability — REST-first with project fallback, descriptive errors, fail-fast web UI retry, `batchSearch` per-query resilience. v9.2.10: `OPENGROK_ENABLE_SAMPLING` kill switch — sampling now off by default to prevent consuming premium requests in GitHub Copilot; surfaced in VS Code settings, config panel, and CLI wizard; wizard `defaultValue`→`initialValue` bug fix for validated fields. v9.2.11: full config surface audit — removed dead `OPENGROK_ENABLE_CACHE_HINTS`, surfaced `OPENGROK_TIMEOUT` and `OPENGROK_DEFAULT_MAX_RESULTS` in all UIs, added 5 missing env vars to `server.json`. **1,119 tests, ≥89% coverage.**
 
 - 🎨 **v9.1** — Five env-only settings surfaced in all UI surfaces (WebView, CLI wizard, VS Code Settings): Files API Cache, AI Sampling Model, AI Sampling Token Budget, Audit Log File, Request Rate Limit. Context budget default corrected (`minimal`→`standard`). Quick Configure command removed. `opengrok_api` and `opengrok_read_memory` no longer budget-capped (static/managed content must not be truncated). **1,078 tests.**
 
@@ -60,6 +60,31 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [9.2.11] - 2026-04-11
+
+### ✨ Feature — Full Configuration Surface Audit & Fixes
+
+Complete audit of all 33 env vars against VS Code settings, config panel webview, CLI wizard, `configure.ts`, `extension.ts`, and `server.json`. All gaps resolved.
+
+**Removed `OPENGROK_ENABLE_CACHE_HINTS` (dead code):**
+- Removed from `config.ts`, `server.ts` (the log-message branch), `package.json` (deprecated VS Code setting), and all test fixtures. The MCP SDK does not expose `cache_control` breakpoints at the server level; Claude Code handles prompt caching automatically.
+
+**Surfaced `OPENGROK_TIMEOUT` and `OPENGROK_DEFAULT_MAX_RESULTS` in all UI surfaces:**
+- VS Code settings: `opengrok-mcp.timeout` (integer, default 30 s) and `opengrok-mcp.defaultMaxResults` (integer, default 25).
+- Config panel webview: two new number inputs in the Advanced section; `hasAdvanced` detection updated.
+- CLI wizard: two new `p.text` prompts with `initialValue` pre-fill and positive-integer validation.
+- `configure.ts` `McpConfig`: `timeout` and `defaultMaxResults` fields; only written to env when non-default.
+- `extension.ts`: read both settings, write to MCP server env when non-default, include in `loadConfig` webview message, handle in `handleSaveConfiguration`.
+
+**`server.json` gaps filled — 5 missing env vars added:**
+- `OPENGROK_API_VERSION` (choices: v1, v2)
+- `HTTP_PROXY` (combined HTTP+HTTPS proxy)
+- `OPENGROK_RESPONSE_FORMAT_OVERRIDE` (choices: markdown/json/tsv/toon/yaml/text)
+- `OPENGROK_MEMORY_BANK_DIR`
+- `OPENGROK_LOCAL_COMPILE_DB_PATHS`
 
 ---
 

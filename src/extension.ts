@@ -599,6 +599,8 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         const rateLimitRpm = config.get<number>('rateLimitRpm') ?? 60;
         const enableObservationMasker = config.get<boolean>('enableObservationMasker') ?? false;
         const observationMaskerTurns = config.get<number>('observationMaskerTurns') ?? 10;
+        const timeout = config.get<number>('timeout') ?? 30;
+        const defaultMaxResults = config.get<number>('defaultMaxResults') ?? 25;
         if (defaultProject) env.OPENGROK_DEFAULT_PROJECT = defaultProject;
         if (responseFormatOverride) env.OPENGROK_RESPONSE_FORMAT_OVERRIDE = responseFormatOverride;
         if (enableFilesApi) env.OPENGROK_ENABLE_FILES_API = 'true';
@@ -609,6 +611,8 @@ class OpenGrokMcpProvider implements vscode.McpServerDefinitionProvider {
         if (rateLimitRpm !== 60) env.OPENGROK_RATELIMIT_RPM = String(rateLimitRpm);
         if (enableObservationMasker) env.OPENGROK_ENABLE_OBSERVATION_MASKER = 'true';
         if (observationMaskerTurns !== 10) env.OPENGROK_OBSERVATION_MASKER_TURNS = String(observationMaskerTurns);
+        if (timeout !== 30) env.OPENGROK_TIMEOUT = String(timeout);
+        if (defaultMaxResults !== 25) env.OPENGROK_DEFAULT_MAX_RESULTS = String(defaultMaxResults);
 
         if (!_credentialsSynced && password) {
             try {
@@ -775,6 +779,8 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
     const rateLimitRpm = config.get<number>('rateLimitRpm') ?? 60;
     const enableObservationMasker = config.get<boolean>('enableObservationMasker') ?? false;
     const observationMaskerTurns = config.get<number>('observationMaskerTurns') ?? 10;
+    const timeout = config.get<number>('timeout') ?? 30;
+    const defaultMaxResults = config.get<number>('defaultMaxResults') ?? 25;
 
     let hasPassword = false;
     if (username) {
@@ -784,7 +790,7 @@ async function _sendCurrentConfig(webview: vscode.Webview): Promise<void> {
 
     webview.postMessage({
         type: 'loadConfig',
-        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, apiVersion, enableElicitation, enableFilesApi, enableSampling, samplingModel, samplingMaxTokens, auditLogFile, rateLimitRpm, enableObservationMasker, observationMaskerTurns }
+        config: { baseUrl, username, verifySsl, proxy, hasPassword, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, apiVersion, enableElicitation, enableFilesApi, enableSampling, samplingModel, samplingMaxTokens, auditLogFile, rateLimitRpm, timeout, defaultMaxResults, enableObservationMasker, observationMaskerTurns }
     });
 }
 
@@ -831,6 +837,8 @@ async function _handleSaveConfiguration(webview: vscode.Webview, data: {
     samplingMaxTokens?: number;
     auditLogFile?: string;
     rateLimitRpm?: number;
+    timeout?: number;
+    defaultMaxResults?: number;
     enableObservationMasker?: boolean;
     observationMaskerTurns?: number;
 }): Promise<void> {
@@ -901,13 +909,15 @@ async function handleSaveConfiguration(
         samplingMaxTokens?: number;
         auditLogFile?: string;
         rateLimitRpm?: number;
+        timeout?: number;
+        defaultMaxResults?: number;
         enableObservationMasker?: boolean;
         observationMaskerTurns?: number;
     }
 ): Promise<void> {
     const { baseUrl, username, password, proxy, verifySsl, defaultProject, contextBudget, responseFormatOverride, codeMode, memoryBankDir, compileDbPaths, codeModeChanged, apiVersion, enableElicitation,
             enableFilesApi, enableSampling, samplingModel, samplingMaxTokens, auditLogFile, rateLimitRpm,
-            enableObservationMasker, observationMaskerTurns } = data;
+            timeout, defaultMaxResults, enableObservationMasker, observationMaskerTurns } = data;
 
     const config = vscode.workspace.getConfiguration('opengrok-mcp');
     const oldUsername = config.get<string>('username');
@@ -965,6 +975,8 @@ async function handleSaveConfiguration(
     if (samplingMaxTokens !== undefined)    updates.push(config.update('samplingMaxTokens', samplingMaxTokens, G));
     if (auditLogFile !== undefined)              updates.push(config.update('auditLogFile', auditLogFile || undefined, G));
     if (rateLimitRpm !== undefined)              updates.push(config.update('rateLimitRpm', rateLimitRpm, G));
+    if (timeout !== undefined)                   updates.push(config.update('timeout', timeout, G));
+    if (defaultMaxResults !== undefined)         updates.push(config.update('defaultMaxResults', defaultMaxResults, G));
     if (enableObservationMasker !== undefined)   updates.push(config.update('enableObservationMasker', enableObservationMasker, G));
     if (observationMaskerTurns !== undefined)    updates.push(config.update('observationMaskerTurns', observationMaskerTurns, G));
     await Promise.all(updates);

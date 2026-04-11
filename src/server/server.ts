@@ -1718,18 +1718,6 @@ export function createServer(
     { instructions }
   );
 
-  // Prompt caching hints — the MCP SDK (current version) does not expose cache_control
-  // breakpoints at the server level. Claude Code caches the system prompt and tool schemas
-  // automatically for stdio clients. For HTTP clients (Cursor, Windsurf, Zed, Continue),
-  // configure cache_control breakpoints at the transport/proxy layer if needed.
-  if (config.OPENGROK_ENABLE_CACHE_HINTS) {
-    logger.info(
-      "OPENGROK_ENABLE_CACHE_HINTS=true: prompt caching active. " +
-      "Claude Code handles caching automatically. For other clients, " +
-      "configure cache_control breakpoints at the transport or proxy layer."
-    );
-  }
-
   const local = buildLocalLayer(config);
 
   // Initialize per-tool rate limiter

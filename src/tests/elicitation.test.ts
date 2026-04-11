@@ -63,7 +63,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     OPENGROK_CODE_MODE: false,
     OPENGROK_MEMORY_BANK_DIR: '',
     OPENGROK_RESPONSE_FORMAT_OVERRIDE: '',
-    OPENGROK_ENABLE_CACHE_HINTS: false,
     OPENGROK_ENABLE_ELICITATION: false,
     OPENGROK_PER_TOOL_RATELIMIT: '',
     OPENGROK_ALLOWED_CLIENT_IDS: '',
