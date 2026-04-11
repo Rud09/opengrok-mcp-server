@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 🛡️ **v9.2** — Security Hardening, SDK 1.29.0, Enterprise Reliability & Memory UX
 
-MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. v9.2.8: defs/refs search reliability — REST-first with project fallback, descriptive errors, fail-fast web UI retry, `batchSearch` per-query resilience. v9.2.10: `OPENGROK_ENABLE_SAMPLING` kill switch — sampling now off by default to prevent consuming premium requests in GitHub Copilot; surfaced in VS Code settings, config panel, and CLI wizard; wizard `defaultValue`→`initialValue` bug fix for validated fields. v9.2.11: full config surface audit — removed dead `OPENGROK_ENABLE_CACHE_HINTS`, surfaced `OPENGROK_TIMEOUT` and `OPENGROK_DEFAULT_MAX_RESULTS` in all UIs, added 5 missing env vars to `server.json`. v9.2.12: setup re-run fix — `setup` is now idempotent; remove-before-add for both Claude Code CLI and Copilot CLI prevents errors when reconfiguring. **1,119 tests, ≥89% coverage.**
+MCP SDK 1.29.0 with `registerResource()` API, 3 new modules (unified redaction, sandbox protocol, per-tool rate limiting), comprehensive security hardening (async audit, stable credential keys, SSRF downgrade prevention, sandbox allowlist), auto response format selection (~50% token savings on search), and 15+ bug fixes. v9.2.7: memory bank read/write instructions for all AI clients, observation masker defaulted off with configurable full-text window, setup wizard pre-fill from stored config. v9.2.8: defs/refs search reliability — REST-first with project fallback, descriptive errors, fail-fast web UI retry, `batchSearch` per-query resilience. v9.2.10: `OPENGROK_ENABLE_SAMPLING` kill switch — sampling now off by default to prevent consuming premium requests in GitHub Copilot; surfaced in VS Code settings, config panel, and CLI wizard; wizard `defaultValue`→`initialValue` bug fix for validated fields. v9.2.11: full config surface audit — removed dead `OPENGROK_ENABLE_CACHE_HINTS`, surfaced `OPENGROK_TIMEOUT` and `OPENGROK_DEFAULT_MAX_RESULTS` in all UIs, added 5 missing env vars to `server.json`. v9.2.12: setup re-run fix — `setup` is now idempotent; remove-before-add for both Claude Code CLI and Copilot CLI. v9.2.13: Code Mode default-project fix — `OPENGROK_DEFAULT_PROJECT` is now honored in sandbox `search`, `batchSearch`, `getSymbolContext`, `findFile`, `traceCallChain`, and `searchSuggest`; elicitation-chosen project is also persisted as the session default for all subsequent `opengrok_execute` calls. API spec accuracy improvements: `startIndex`/`endIndex` in search results, `fileType` format, `_error` field in `batchSearch`, pagination guidance, and `browseDir`/`findFile` notes. **1,126 tests, ≥89% coverage.**
 
 - 🎨 **v9.1** — Five env-only settings surfaced in all UI surfaces (WebView, CLI wizard, VS Code Settings): Files API Cache, AI Sampling Model, AI Sampling Token Budget, Audit Log File, Request Rate Limit. Context budget default corrected (`minimal`→`standard`). Quick Configure command removed. `opengrok_api` and `opengrok_read_memory` no longer budget-capped (static/managed content must not be truncated). **1,078 tests.**
 
@@ -60,6 +60,34 @@ McpServer high-level API, `opengrok_` prefixed tool names, tool annotations, str
 Native MCP integration, OS keychain credentials, 8 OpenGrok tools, SSRF protection, and 45 unit tests. The foundation everything else is built on.
 
 - 🎨 **v2.1** — Brand-new Configuration Manager UI. Dark/light mode, auto-test on save, no more setup prompts.
+
+---
+
+## [9.2.13] - 2026-04-11
+
+### 🐛 Bug Fix — Code Mode Ignores `OPENGROK_DEFAULT_PROJECT` (+ API Spec Accuracy)
+
+**Root cause:** All six sandbox methods that accept a `projects` parameter were passing the caller-supplied value straight through to `client.search()` without applying `OPENGROK_DEFAULT_PROJECT`. In Code Mode (the default), every search ran against all indexed projects regardless of configuration — causing results from wrong projects and 404s when follow-up file fetches used a different project than the one the user intended.
+
+Additionally, the project chosen via the `opengrok_api` elicitation prompt was never fed back into subsequent `opengrok_execute` calls — it was advisory text only. The LLM frequently forgot to include `projects:` in generated code, re-introducing the unscoped search problem.
+
+**Fixes:**
+- **`sandbox.ts` — `createSandboxAPI()`**: Added `defaultProject?: string` to `SandboxOpts`. A local `applyDefault(projects)` helper injects the default only when `projects` is `undefined` — an explicit empty array `[]` still searches all projects. Applied to `search()`, `batchSearch()`, `getSymbolContext()`, `findFile()`, `traceCallChain()`, and `searchSuggest()`.
+- **`server.ts` — `registerCodeModeTools()`**: Added `sessionDefaultProject` variable initialized from `OPENGROK_DEFAULT_PROJECT`. When elicitation picks a project in `opengrok_api`, the chosen project is stored in `sessionDefaultProject` and passed as `defaultProject` to `createSandboxAPI` on every subsequent `opengrok_execute` call.
+
+**API spec accuracy improvements (`API_SPEC` in `sandbox.ts`):**
+- `search()` returns: added `startIndex` and `endIndex` (required for pagination); added pagination note ("set `startIndex` to previous `endIndex`").
+- `search()`: added `fileType_note` documenting accepted values (`'java'`, `'cpp'`, `'py'`, `'go'`, `'ts'`, etc.).
+- `search()`: added `project_note` — always use `result.project` / `result.path` for follow-up calls, never hardcode.
+- `batchSearch()` returns: documented `_error` field on failed per-query results.
+- `getFileContent()`: added note that `startLine`/`endLine` are 1-indexed and inclusive.
+- `getSymbolContext()`: updated defs/refs project note to reflect auto-injection.
+- `browseDir()`: added note that entry paths are relative to project root.
+- `findFile()`: added note clarifying pattern format.
+- `return_rules`: added rule about always deriving project/path from search results.
+- `important[3]`: expanded project-name guidance — use `browseDir({project:''})` or search `result.project` fields to get exact names.
+
+**Tests:** 7 new unit tests covering `defaultProject` injection in all 5 affected methods + override semantics (`explicit projects`, explicit `[]`).
 
 ---
 

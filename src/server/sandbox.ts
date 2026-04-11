@@ -91,7 +91,7 @@ export const API_SPEC = {
     "IMPORTANT: Do NOT write Promise.all(...) in your sandbox JS — the Atomics bridge serializes calls from inside the VM. Use env.opengrok.batchSearch() instead — it runs queries in parallel on the host event loop.",
     "Prefer env.opengrok.getSymbolContext() over separate search+getFileContent.",
     "Prefer env.opengrok.batchSearch() over multiple env.opengrok.search() calls.",
-    "Pass project as a string array: projects: ['myproject'], not a bare string.",
+    "Pass projects as a string array: projects: ['myproject']. Never pass a bare string. Use exact project names from browseDir({project:''}) or from search result.project fields.",
     "env.opengrok.traceCallChain() callees direction returns empty (requires AST, not yet supported).",
     "env.opengrok.readMemory() returns null for uninitialized files — handle gracefully.",
     "When findFile() or search() returns multiple path matches and you cannot determine the correct file, call env.opengrok.elicit() with an enum of the top paths (≤10) before fetching content.",
@@ -104,33 +104,39 @@ export const API_SPEC = {
     "Never return raw API result objects — always map to the minimum string representation the caller needs.",
     "Always set maxResults to the minimum you need — the default is too high and wastes tokens.",
     "Return early with a short string when results are empty instead of returning an empty structure.",
+    "For getFileContent/getFileHistory/getFileSymbols: always derive project and path from prior search results — never guess or hardcode them.",
   ],
 
   methods: {
     search: {
       signature: "env.opengrok.search(query, opts?)",
       opts: "{ searchType?: 'full'|'defs'|'refs'|'path'|'hist', projects?: string[], maxResults?: number, startIndex?: number, fileType?: string }",
-      returns: "SearchAPIResult: { query, searchType, totalCount, results: [{project,path,matches:[{lineNumber,lineContent}]}] }",
-      note: "defs and refs use the web search UI which requires a project. Always pass projects when using these types — omitting it throws an error.",
+      fileType_note: "fileType is a lowercase file extension without the dot: 'java', 'cpp', 'c', 'h', 'py', 'go', 'ts', 'js', 'cs', 'xml', etc.",
+      returns: "SearchAPIResult: { query, searchType, totalCount, startIndex, endIndex, results: [{project,path,matches:[{lineNumber,lineContent}]}] }",
+      pagination_note: "To fetch the next page: set startIndex to the previous result's endIndex. Compare endIndex < totalCount to check if more results exist.",
+      project_note: "Always use result.project and result.path from these results for getFileContent/getFileHistory/getFileSymbols calls — never hardcode project names.",
+      defs_refs_note: "defs and refs require a project. OPENGROK_DEFAULT_PROJECT is auto-injected when configured. Otherwise pass projects explicitly — omitting throws an error.",
     },
     batchSearch: {
       signature: "env.opengrok.batchSearch(queries, opts?)",
       queries: "Array<{ query: string, searchType?: string, maxResults?: number }>",
       opts: "{ projects?: string[], fileType?: string }",
       returns:
-        "SearchAPIResult[] — one result-set per query. " +
+        "SearchAPIResult[] — one result-set per query (same order as input). " +
+        "Failed queries return { totalCount:0, results:[], _error: string } instead of throwing. " +
         "Access: const results = env.opengrok.batchSearch([...]); results[0].results[0].path",
     },
     getFileContent: {
       signature: "env.opengrok.getFileContent(project, path, opts?)",
       opts: "{ startLine?: number, endLine?: number }",
+      note: "project and path come from search result fields. startLine/endLine are 1-indexed and inclusive. Omitting them returns the full file.",
       returns: "FileContentAPIResult: { project, path, content, lineCount, sizeBytes, startLine }",
     },
     getSymbolContext: {
       signature: "env.opengrok.getSymbolContext(symbol, opts?)",
       opts: "{ projects?: string[], contextLines?: number, maxRefs?: number, includeHeader?: boolean, fileType?: string }",
       returns: "SymbolContextAPIResult: { found, symbol, kind, definition: {project,path,line,context,lang}, header: {context,lang}, references: {totalFound, samples: [{path,project,lineNumber,content}]}, fileSymbols }",
-      note: "Internally uses defs and refs search — projects must be specified for the same reason as search().",
+      note: "Internally uses defs and refs — OPENGROK_DEFAULT_PROJECT is auto-injected when configured. Pass projects explicitly when there is no default.",
     },
     getFileSymbols: {
       signature: "env.opengrok.getFileSymbols(project, path)",
@@ -147,10 +153,12 @@ export const API_SPEC = {
     },
     browseDir: {
       signature: "env.opengrok.browseDir(project, path?)",
+      note: "path defaults to '' (project root). Entry paths are relative to project root — prepend with project for follow-up calls.",
       returns: "DirAPIResult: { project, path, entries: [{name,isDirectory,path,size}] }",
     },
     findFile: {
       signature: "env.opengrok.findFile(pattern, opts?)",
+      note: "pattern is a file path glob/substring, e.g. 'AuthService.java' or '*/auth/*.ts'. Uses path search internally.",
       opts: "{ projects?: string[], maxResults?: number }",
       returns: "SearchAPIResult (search_type=path)",
     },

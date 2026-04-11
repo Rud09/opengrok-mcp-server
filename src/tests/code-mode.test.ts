@@ -347,10 +347,10 @@ describe('Standard Mode — memory tools are Code Mode only (Task 8)', () => {
 import { API_SPEC } from '../server/sandbox.js';
 
 describe('API_SPEC — return_rules and memory filenames', () => {
-  it('API_SPEC has return_rules with 3 micro-optimization rules', () => {
+  it('API_SPEC has return_rules array', () => {
     expect(API_SPEC).toHaveProperty('return_rules');
     expect(Array.isArray(API_SPEC.return_rules)).toBe(true);
-    expect(API_SPEC.return_rules).toHaveLength(3);
+    expect(API_SPEC.return_rules.length).toBeGreaterThanOrEqual(3);
   });
 
   it('return_rules[0] advises against returning raw objects', () => {
