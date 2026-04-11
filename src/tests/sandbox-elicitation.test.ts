@@ -337,3 +337,84 @@ describe('API_SPEC', () => {
     expect(hasSampleGuidance).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 6: defaultProject — OPENGROK_DEFAULT_PROJECT honored in Code Mode
+// ---------------------------------------------------------------------------
+
+describe('createSandboxAPI — defaultProject', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('search() injects defaultProject when projects not specified', async () => {
+    const mockClient = makeMinimalClient();
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      query: 'q', searchType: 'full', totalCount: 1,
+      timeMs: 1, results: [{ project: 'myproject', path: 'a.ts', matches: [] }], startIndex: 0, endIndex: 1,
+    });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { defaultProject: 'myproject' });
+    await api.search('q');
+    expect(mockClient.search).toHaveBeenCalledWith('q', 'full', ['myproject'], 5, 0, undefined);
+  });
+
+  it('search() does not override explicit projects array', async () => {
+    const mockClient = makeMinimalClient();
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      query: 'q', searchType: 'full', totalCount: 0, timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { defaultProject: 'myproject' });
+    await api.search('q', { projects: ['other'] });
+    expect(mockClient.search).toHaveBeenCalledWith('q', 'full', ['other'], 5, 0, undefined);
+  });
+
+  it('search() does not override explicit empty array (search all)', async () => {
+    const mockClient = makeMinimalClient();
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      query: 'q', searchType: 'full', totalCount: 0, timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { defaultProject: 'myproject' });
+    await api.search('q', { projects: [] });
+    expect(mockClient.search).toHaveBeenCalledWith('q', 'full', [], 5, 0, undefined);
+  });
+
+  it('batchSearch() injects defaultProject when projects not specified', async () => {
+    const mockClient = makeMinimalClient();
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      query: 'q', searchType: 'full', totalCount: 0, timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { defaultProject: 'myproject' });
+    await api.batchSearch([{ query: 'q' }]);
+    expect(mockClient.search).toHaveBeenCalledWith('q', 'full', ['myproject'], 5, 0, undefined);
+  });
+
+  it('getSymbolContext() injects defaultProject when projects not specified', async () => {
+    const mockClient = makeMinimalClient();
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      query: 'sym', searchType: 'defs', totalCount: 0, timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { defaultProject: 'myproject' });
+    await api.getSymbolContext('sym');
+    expect(mockClient.search).toHaveBeenCalledWith('sym', 'defs', ['myproject'], 5, 0, undefined);
+  });
+
+  it('findFile() injects defaultProject when projects not specified', async () => {
+    const mockClient = makeMinimalClient();
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      query: '*.ts', searchType: 'path', totalCount: 0, timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), { defaultProject: 'myproject' });
+    await api.findFile('*.ts');
+    expect(mockClient.search).toHaveBeenCalledWith('*.ts', 'path', ['myproject'], 10, 0);
+  });
+
+  it('no defaultProject configured → passes undefined (searches all)', async () => {
+    const mockClient = makeMinimalClient();
+    vi.mocked(mockClient.search as ReturnType<typeof vi.fn>).mockResolvedValue({
+      query: 'q', searchType: 'full', totalCount: 0, timeMs: 1, results: [], startIndex: 0, endIndex: 0,
+    });
+    const api = createSandboxAPI(mockClient, makeMinimalMemoryBank(), {});
+    await api.search('q');
+    expect(mockClient.search).toHaveBeenCalledWith('q', 'full', undefined, 5, 0, undefined);
+  });
+});

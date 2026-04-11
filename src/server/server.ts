@@ -1904,6 +1904,8 @@ function registerCodeModeTools(
   // Per-session masker (created once per server, tracks all turns)
   const masker = new ObservationMasker(config.OPENGROK_OBSERVATION_MASKER_TURNS);
   let turn = 0;
+  // Effective default project: starts from env, can be updated by elicitation in opengrok_api.
+  let sessionDefaultProject: string | undefined = config.OPENGROK_DEFAULT_PROJECT?.trim() || undefined;
 
   // Build getCompileInfoFn callback when local layer is available
   const getCompileInfoFn = local.enabled && local.index.size > 0
@@ -1984,8 +1986,9 @@ function registerCodeModeTools(
               }
             );
             if (result.action === "accept" && typeof result.content?.project === "string" && result.content.project) {
+              sessionDefaultProject = result.content.project;
               projectHint =
-                `\n\n**Working project: ${result.content.project}**` +
+                `\n\n**Working project: ${sessionDefaultProject}**` +
                 ` — use this project in all env.opengrok calls unless the user specifies otherwise.`;
             }
           }
@@ -2037,6 +2040,7 @@ function registerCodeModeTools(
           mcpServer: server,
           elicitEnabled: config.OPENGROK_ENABLE_ELICITATION,
           samplingEnabled: config.OPENGROK_ENABLE_SAMPLING,
+          defaultProject: sessionDefaultProject,
         });
         const workerHandle = workerPool.acquire();
         let result: string;

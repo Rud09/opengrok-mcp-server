@@ -343,6 +343,7 @@ export interface SandboxOpts {
   mcpServer?: McpServer;
   elicitEnabled?: boolean;
   samplingEnabled?: boolean;
+  defaultProject?: string;
 }
 
 const MAX_SANDBOX_WRITES_PER_EXECUTION = 5;
@@ -352,15 +353,23 @@ export function createSandboxAPI(
   memoryBank: MemoryBank,
   sandboxOpts: SandboxOpts = {}
 ): SandboxAPI {
-  const { getCompileInfoFn, mcpServer, elicitEnabled, samplingEnabled = false } = sandboxOpts;
+  const { getCompileInfoFn, mcpServer, elicitEnabled, samplingEnabled = false, defaultProject } = sandboxOpts;
   let writeCallCount = 0;
+
+  // Apply default project only when projects was not provided (undefined).
+  // An explicit empty array means "search all projects" and must not be overridden.
+  function applyDefault(projects: string[] | undefined): string[] | undefined {
+    if (projects !== undefined) return projects;
+    return defaultProject ? [defaultProject] : undefined;
+  }
+
   return {
     async search(query, opts = {}) {
       const { searchType = "full", projects, maxResults = 5, startIndex = 0, fileType } = opts;
       const cached = await client.search(
         query,
         searchType as "full" | "defs" | "refs" | "path" | "hist",
-        projects, maxResults, startIndex, fileType
+        applyDefault(projects), maxResults, startIndex, fileType
       );
       // Shallow-clone before any mutation so the TTLCache entry is not modified.
       const result = { ...cached };
@@ -389,8 +398,9 @@ export function createSandboxAPI(
 
     async batchSearch(queries, opts = {}) {
       const { projects, fileType } = opts;
+      const effectiveProjects = applyDefault(projects);
       const settled = await Promise.allSettled(queries.map((q) =>
-        client.search(q.query, (q.searchType ?? "full") as "full" | "defs" | "refs" | "path" | "hist", projects, q.maxResults ?? 5, 0, fileType)
+        client.search(q.query, (q.searchType ?? "full") as "full" | "defs" | "refs" | "path" | "hist", effectiveProjects, q.maxResults ?? 5, 0, fileType)
       ));
       return settled.map((r, i) => {
         if (r.status === "fulfilled") return r.value;
@@ -415,10 +425,11 @@ export function createSandboxAPI(
 
     async getSymbolContext(symbol, opts = {}) {
       const { projects, contextLines = 10, maxRefs = 5, includeHeader = true, fileType } = opts;
+      const effectiveProjects = applyDefault(projects);
       // maxResults=5 covers both the definition lookup and the C++ header search below.
       const [defResults, refResults] = await Promise.all([
-        client.search(symbol, "defs", projects, 5, 0, fileType),
-        client.search(symbol, "refs", projects, maxRefs, 0, fileType),
+        client.search(symbol, "defs", effectiveProjects, 5, 0, fileType),
+        client.search(symbol, "refs", effectiveProjects, maxRefs, 0, fileType),
       ]);
 
       if (!defResults.results.length || !defResults.results[0].matches.length) {
@@ -495,7 +506,7 @@ export function createSandboxAPI(
     },
 
     async findFile(pattern, opts = {}) {
-      return client.search(pattern, "path", opts.projects, opts.maxResults ?? 10, 0);
+      return client.search(pattern, "path", applyDefault(opts.projects), opts.maxResults ?? 10, 0);
     },
 
     async getFileOverview(project, path) {
@@ -504,11 +515,11 @@ export function createSandboxAPI(
 
     async traceCallChain(symbol, opts = {}) {
       const { direction = "callers", depth = 2, project } = opts;
-      return buildCallChain(client, symbol, direction, depth, project);
+      return buildCallChain(client, symbol, direction, depth, project ?? defaultProject);
     },
 
     async searchSuggest(query, opts = {}) {
-      const result = await client.suggest(query, opts.project, (opts.field ?? "full") as "full" | "defs" | "refs" | "path");
+      const result = await client.suggest(query, opts.project ?? defaultProject, (opts.field ?? "full") as "full" | "defs" | "refs" | "path");
       return { query, field: opts.field ?? "full", suggestions: result.suggestions, time: result.time };
     },
 
